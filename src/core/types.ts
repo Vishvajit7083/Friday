@@ -290,7 +290,7 @@ export interface ApiConnectionStatus {
   checking: boolean;
   provider: string;
   model: string;
-  engine?: 'ollama' | 'local-core' | 'gemini';
+  engine?: 'ollama' | 'local-openai' | 'local-core' | 'gemini';
   freeWebReady?: boolean;
   requiresPaidKey?: boolean;
   latencyMs?: number;

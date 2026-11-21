@@ -11,17 +11,9 @@ This guide walks you through running, testing, and packaging **F.R.I.D.A.Y.** na
    node -v
    npm -v
    ```
-2. **Ollama (Recommended Local AI Engine — Free & Private)**:
-   - Download and install Ollama for Windows: `https://ollama.com/download/windows`
-   - Pull a fast local model (recommended for laptops with 8–16 GB RAM):
-     ```powershell
-     ollama pull llama3.2
-     ```
-   - Verify Ollama is serving locally (`http://127.0.0.1:11434`):
-     ```powershell
-     ollama list
-     ```
-   - *(Note: Even if Ollama is stopped, F.R.I.D.A.Y. stays online using its instant Local Core & Free Web Research tools.)*
+2. **AI Engine (Zero Extra Installs Required by Default)**:
+   - Out of the box, F.R.I.D.A.Y. runs on its **Built-In Local Core + Live Web Knowledge** engine — **no Ollama and no paid API key required**.
+   - *(Optional alternative if you ever want an external local LLM)*: Configure any OpenAI-compatible server such as **LM Studio** (`http://127.0.0.1:1234/v1`), **Jan** (`http://127.0.0.1:1337/v1`), or **llama.cpp `llama-server`** (`http://127.0.0.1:8080/v1`) via `LOCAL_AI_BASE_URL` in `.env` (Ollama is also supported if installed, but completely optional).
 
 ---
 
@@ -34,7 +26,7 @@ cd D:\Friday-main
 npm install
 ```
 
-Create your local `.env` file from `.env.example` (no `GEMINI_API_KEY` required):
+Create your local `.env` file from `.env.example` (no Ollama or `GEMINI_API_KEY` required):
 
 ```powershell
 Copy-Item .env.example .env
@@ -42,8 +34,6 @@ Copy-Item .env.example .env
 
 Default `.env` values:
 ```env
-OLLAMA_HOST="http://127.0.0.1:11434"
-OLLAMA_MODEL=""
 PORT="3000"
 FRIDAY_FULLSCREEN="true"
 FRIDAY_REOPEN_SHORTCUT="CommandOrControl+Shift+Space"

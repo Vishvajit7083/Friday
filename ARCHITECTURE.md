@@ -11,12 +11,11 @@ F.R.I.D.A.Y. (**Fully Responsive Intelligent Digital Assistant for You**) runs a
 ## 2. AI & Execution Pipeline
 
 ### Inference Routing (`server/aiService.ts` + `server/localAiService.ts`)
-1. **`local-auto` (Default)**:
-   - Checks local Ollama (`OLLAMA_HOST`, default `http://127.0.0.1:11434`) with a short cached probe.
-   - Executes local tool agents first for deterministic accuracy (hardware stats, file index search, app/window actions, media playback, calendar/memory, or free live web search).
-   - Streams final response tokens via Ollama (`/api/chat` NDJSON with `keep_alive: '10m'`) or immediately via the deterministic Local Core formatter if Ollama is not running.
-2. **`ollama`**: Forces local Ollama inference when running.
-3. **`local-core`**: Zero-latency offline tool/deterministic mode (no LLM wait).
+1. **`local-auto` (Default — Zero External Installs Required)**:
+   - Runs F.R.I.D.A.Y.'s **Built-In Local Core + Live Web Knowledge** engine: executes hardware/app/file/media/calendar/memory tools locally, evaluates safe arithmetic offline, and automatically answers factual/general questions via free DuckDuckGo + Wikipedia summary lookup (`searchFreeWeb`).
+   - Also auto-detects optional external local LLM servers if running: any OpenAI-compatible runtime (`LOCAL_AI_BASE_URL` for LM Studio / `llama.cpp` / Jan) or Ollama (`127.0.0.1:11434`).
+2. **`local-core`**: Strictly built-in Local Core + Live Web (zero external LLM calls).
+3. **`ollama`**: External local LLM mode (OpenAI-compatible `LOCAL_AI_BASE_URL` or Ollama).
 4. **Optional Gemini (`gemini-*`)**: Used *only* if `GEMINI_API_KEY` is explicitly configured in `.env`.
 
 ### Streaming & Latency Telemetry (`POST /api/assistant/stream`)

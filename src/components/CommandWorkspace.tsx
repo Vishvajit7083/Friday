@@ -422,7 +422,7 @@ export function CommandWorkspace({
                 onClick={onCheckApiConnection}
                 title={
                   apiStatus.checking
-                    ? 'Checking local AI engine & Ollama runtime...'
+                    ? 'Checking built-in Local AI & live web engine...'
                     : apiStatus.connected
                       ? `${apiStatus.provider} · ${apiStatus.model}${apiStatus.latencyMs ? ` (${apiStatus.latencyMs}ms)` : ''}${apiStatus.freeWebReady ? ' · Free Web Ready' : ''} — Click to re-check`
                       : `${apiStatus.error || 'AI engine offline'} — Click to retry`

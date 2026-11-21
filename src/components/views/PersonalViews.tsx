@@ -767,9 +767,9 @@ export function SettingsView({
             }
             className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
           >
-            <option value="local-auto">Local-First Auto (Ollama + Instant Local Core · Free)</option>
-            <option value="ollama">Local Ollama LLM (Streaming)</option>
-            <option value="local-core">Local Deterministic Core (Zero-Key Instant)</option>
+            <option value="local-auto">Local-First Auto (Built-In Local Core + Live Web · Free)</option>
+            <option value="local-core">Built-In Local Core Only (Zero External LLM)</option>
+            <option value="ollama">External Local LLM (Ollama / LM Studio · Optional)</option>
             <option value="gemini-4-hydrogen">Gemini 4 Hydrogen (Optional Cloud Key)</option>
             <option value="gemini-4-neon">Gemini 4 Neon (Optional Cloud Key)</option>
             <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Optional Cloud Key)</option>
@@ -777,12 +777,12 @@ export function SettingsView({
         </label>
 
         <label className="block space-y-1.5">
-          <span className="text-slate-300 font-medium">Local Ollama Model (Optional)</span>
+          <span className="text-slate-300 font-medium">Optional Local LLM Model Name</span>
           <input
             type="text"
             value={settings.ollamaModel || ''}
             onChange={(e) => onUpdateSettings({ ollamaModel: e.target.value })}
-            placeholder="Auto-detect (e.g., llama3.2, qwen2.5, mistral)"
+            placeholder="Not required (only if using LM Studio / Ollama)"
             className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
           />
         </label>

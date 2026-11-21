@@ -209,7 +209,8 @@ async function searchDuckDuckGoHtml(query: string): Promise<WebSearchResultItem[
 
 async function searchWikipediaOpen(query: string): Promise<WebSearchResultItem[]> {
   const cleanQ = query
-    .replace(/^(what is|who is|tell me about|search( for)?|latest information about|news about)\s+/i, '')
+    .replace(/^(what is|what are|who is|who was|explain|define|tell me about|search( for)?|latest information about|news about)\s+/i, '')
+    .replace(/[?!.]+$/g, '')
     .trim();
   const url = `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(
     cleanQ || query
@@ -223,13 +224,36 @@ async function searchWikipediaOpen(query: string): Promise<WebSearchResultItem[]
   const titles = Array.isArray(data?.[1]) ? data[1] : [];
   const descs = Array.isArray(data?.[2]) ? data[2] : [];
   const urls = Array.isArray(data?.[3]) ? data[3] : [];
+
+  let topExtract = '';
+  if (titles[0]) {
+    try {
+      const sumRes = await fetch(
+        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(titles[0].replace(/\s+/g, '_'))}`,
+        {
+          headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+          signal: AbortSignal.timeout(2500),
+        }
+      );
+      if (sumRes.ok) {
+        const sumData = (await sumRes.json()) as { extract?: string };
+        if (sumData.extract) topExtract = sumData.extract.trim();
+      }
+    } catch {
+      // Non-fatal; OpenSearch entry remains valid
+    }
+  }
+
   const results: WebSearchResultItem[] = [];
   for (let i = 0; i < titles.length; i += 1) {
     if (urls[i]) {
       results.push({
         title: `${titles[i]} — Wikipedia`,
         uri: urls[i],
-        snippet: descs[i] || `Reference article for ${titles[i]}.`,
+        snippet:
+          (i === 0 && topExtract) ||
+          descs[i] ||
+          `Reference article for ${titles[i]}.`,
       });
     }
   }

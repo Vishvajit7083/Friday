@@ -8,7 +8,7 @@ import type {
   PipelineTimings,
   SystemTelemetry,
 } from '../src/core/types.ts';
-import { analyzeUserCommand } from '../src/core/intentEngine.ts';
+import { analyzeUserCommand, isKnowledgeQuestion, tryEvaluateSafeMath } from '../src/core/intentEngine.ts';
 import { searchIndexedFiles, formatBytes } from '../src/core/fileIndex.ts';
 import { appendActionLog, loadDb, saveDb } from './store.ts';
 import { getSystemTelemetry, handleAppOrWindowCommand } from './systemService.ts';
@@ -25,8 +25,10 @@ import {
 import {
   buildLocalDeterministicReply,
   checkOllamaStatus,
+  checkOpenAiCompatibleStatus,
   getOllamaHost,
   streamOllamaChat,
+  streamOpenAiCompatibleChat,
 } from './localAiService.ts';
 
 export interface AIProviderAdapter {
@@ -155,7 +157,7 @@ export async function checkAiHealth(
   connected: boolean;
   provider: string;
   model: string;
-  engine: 'ollama' | 'local-core' | 'gemini';
+  engine: 'ollama' | 'local-openai' | 'local-core' | 'gemini';
   freeWebReady: boolean;
   requiresPaidKey: boolean;
   latencyMs: number;
@@ -182,30 +184,45 @@ export async function checkAiHealth(
     }
   }
 
-  const ollama = await checkOllamaStatus(targetOllama);
-  if (ollama.available && ollama.selectedModel && pref !== 'local-core') {
-    return {
-      connected: true,
-      provider: 'Local Ollama Engine',
-      model: ollama.selectedModel,
-      engine: 'ollama',
-      freeWebReady: true,
-      requiresPaidKey: false,
-      latencyMs: Date.now() - started,
-      ollamaModels: ollama.models,
-    };
+  if (pref !== 'local-core') {
+    const openaiLocal = await checkOpenAiCompatibleStatus(targetOllama);
+    if (openaiLocal.available && openaiLocal.selectedModel) {
+      return {
+        connected: true,
+        provider: 'Local OpenAI-Compatible Engine',
+        model: openaiLocal.selectedModel,
+        engine: 'local-openai',
+        freeWebReady: true,
+        requiresPaidKey: false,
+        latencyMs: Date.now() - started,
+        ollamaModels: openaiLocal.models,
+      };
+    }
+
+    const ollama = await checkOllamaStatus(targetOllama);
+    if (ollama.available && ollama.selectedModel) {
+      return {
+        connected: true,
+        provider: 'Local Ollama Engine',
+        model: ollama.selectedModel,
+        engine: 'ollama',
+        freeWebReady: true,
+        requiresPaidKey: false,
+        latencyMs: Date.now() - started,
+        ollamaModels: ollama.models,
+      };
+    }
   }
 
   return {
     connected: true,
-    provider: 'F.R.I.D.A.Y. Local Core + Free Web',
-    model: pref === 'ollama' ? 'local-core (Ollama offline)' : 'local-core-v2',
+    provider: 'F.R.I.D.A.Y. Built-In Local Core + Live Web',
+    model: 'local-core-v2',
     engine: 'local-core',
     freeWebReady: true,
     requiresPaidKey: false,
     latencyMs: Date.now() - started,
-    ollamaModels: ollama.models,
-    error: pref === 'ollama' ? ollama.error : undefined,
+    ollamaModels: [],
   };
 }
 
@@ -639,7 +656,8 @@ export async function streamAssistantCommand(
   const isInstantDeterministicAction =
     parsed.category === 'media_control' ||
     parsed.category === 'app_control' ||
-    Boolean(memorySaved);
+    Boolean(memorySaved) ||
+    tryEvaluateSafeMath(userCommand) !== null;
 
   const memorySummary = db.memory
     .filter((m) => m.approved)
@@ -658,7 +676,36 @@ ${memorySummary || 'None'}`;
   const pref = settings.aiModel || 'local-auto';
   const wantsGemini = pref.startsWith('gemini-') && hasValidGeminiKey();
 
-  if (isInstantDeterministicAction || pref === 'local-core') {
+  const streamDeterministicReply = async (engineLabel: string) => {
+    // When running without an external LLM, automatically look up live web/Wikipedia facts for open knowledge questions
+    if (
+      parsed.category === 'general_assistant' &&
+      (!webResults || webResults.length === 0) &&
+      !webPage &&
+      !weatherData &&
+      tryEvaluateSafeMath(userCommand) === null &&
+      isKnowledgeQuestion(userCommand)
+    ) {
+      emitEvent({
+        type: 'status',
+        phase: 'searching',
+        agents: ['core', 'browser'],
+        steps,
+        intent: parsed.category,
+      });
+      const autoSearch = await searchFreeWeb(userCommand, 'web').catch(() => ({
+        results: [] as WebSearchResultItem[],
+        sources: [] as GroundingSource[],
+        online: false,
+      }));
+      webResults = autoSearch.results;
+      for (const s of autoSearch.sources) {
+        if (!collectedSources.some((x) => x.uri === s.uri)) {
+          collectedSources.push(s);
+        }
+      }
+    }
+
     finalText = buildLocalDeterministicReply({
       userCommand,
       category: parsed.category,
@@ -674,10 +721,15 @@ ${memorySummary || 'None'}`;
       webPage,
       weather: weatherData,
       memorySaved,
+      memoryEntries: db.memory,
     });
     firstTokenMs = Date.now() - tStart;
     emitChunkedTokens(finalText, (token) => emitEvent({ type: 'token', token }));
-    engineUsed = 'local-core';
+    engineUsed = engineLabel;
+  };
+
+  if (isInstantDeterministicAction || pref === 'local-core') {
+    await streamDeterministicReply('local-core');
   } else if (wantsGemini) {
     try {
       const aiRes = await geminiProvider.generateText({
@@ -695,29 +747,11 @@ ${memorySummary || 'None'}`;
       emitChunkedTokens(finalText, (token) => emitEvent({ type: 'token', token }));
       engineUsed = pref;
     } catch {
-      finalText = buildLocalDeterministicReply({
-        userCommand,
-        category: parsed.category,
-        userName: settings.userName,
-        telemetry,
-        files: matchedFiles,
-        appNotice,
-        runningWindows,
-        availableApps: db.apps,
-        mediaNotice,
-        calendar: upcomingCalendar,
-        webResults,
-        webPage,
-        weather: weatherData,
-        memorySaved,
-      });
-      firstTokenMs = Date.now() - tStart;
-      emitChunkedTokens(finalText, (token) => emitEvent({ type: 'token', token }));
-      engineUsed = 'local-core (fallback)';
+      await streamDeterministicReply('local-core (fallback)');
     }
   } else {
-    const ollama = await checkOllamaStatus(settings.ollamaModel);
-    if (ollama.available && ollama.selectedModel) {
+    const openaiLocal = await checkOpenAiCompatibleStatus(settings.ollamaModel);
+    if (openaiLocal.available && openaiLocal.selectedModel) {
       try {
         const recentHistory = db.chatHistory
           .slice(-6)
@@ -727,8 +761,9 @@ ${memorySummary || 'None'}`;
             content: m.content.slice(0, 800),
           }));
 
-        const streamRes = await streamOllamaChat({
-          model: ollama.selectedModel,
+        const streamRes = await streamOpenAiCompatibleChat({
+          baseUrl: openaiLocal.baseUrl,
+          model: openaiLocal.selectedModel,
           messages: [
             { role: 'system', content: systemInstruction },
             ...recentHistory,
@@ -741,49 +776,45 @@ ${memorySummary || 'None'}`;
           },
         });
         finalText = streamRes.text;
-        engineUsed = `ollama:${ollama.selectedModel}`;
+        engineUsed = `local-openai:${openaiLocal.selectedModel}`;
       } catch (err) {
         if ((err as Error).name === 'AbortError') throw err;
-        finalText = buildLocalDeterministicReply({
-          userCommand,
-          category: parsed.category,
-          userName: settings.userName,
-          telemetry,
-          files: matchedFiles,
-          appNotice,
-          runningWindows,
-          availableApps: db.apps,
-          mediaNotice,
-          calendar: upcomingCalendar,
-          webResults,
-          webPage,
-          weather: weatherData,
-          memorySaved,
-        });
-        firstTokenMs = Date.now() - tStart;
-        emitChunkedTokens(finalText, (token) => emitEvent({ type: 'token', token }));
-        engineUsed = 'local-core (ollama fallback)';
+        await streamDeterministicReply('local-core (fallback)');
       }
     } else {
-      finalText = buildLocalDeterministicReply({
-        userCommand,
-        category: parsed.category,
-        userName: settings.userName,
-        telemetry,
-        files: matchedFiles,
-        appNotice,
-        runningWindows,
-        availableApps: db.apps,
-        mediaNotice,
-        calendar: upcomingCalendar,
-        webResults,
-        webPage,
-        weather: weatherData,
-        memorySaved,
-      });
-      firstTokenMs = Date.now() - tStart;
-      emitChunkedTokens(finalText, (token) => emitEvent({ type: 'token', token }));
-      engineUsed = 'local-core';
+      const ollama = await checkOllamaStatus(settings.ollamaModel);
+      if (ollama.available && ollama.selectedModel) {
+        try {
+          const recentHistory = db.chatHistory
+            .slice(-6)
+            .filter((m) => m.content && !m.pendingConfirmation)
+            .map((m) => ({
+              role: m.role as 'user' | 'assistant',
+              content: m.content.slice(0, 800),
+            }));
+
+          const streamRes = await streamOllamaChat({
+            model: ollama.selectedModel,
+            messages: [
+              { role: 'system', content: systemInstruction },
+              ...recentHistory,
+              { role: 'user', content: prompt },
+            ],
+            signal,
+            onToken: (token) => {
+              if (!firstTokenMs) firstTokenMs = Date.now() - tStart;
+              emitEvent({ type: 'token', token });
+            },
+          });
+          finalText = streamRes.text;
+          engineUsed = `ollama:${ollama.selectedModel}`;
+        } catch (err) {
+          if ((err as Error).name === 'AbortError') throw err;
+          await streamDeterministicReply('local-core (fallback)');
+        }
+      } else {
+        await streamDeterministicReply('local-core');
+      }
     }
   }
 

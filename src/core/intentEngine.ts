@@ -287,3 +287,117 @@ export function extractVoiceCommand(
     command: stripped || trimmed,
   };
 }
+
+export function isKnowledgeQuestion(rawCommand: string): boolean {
+  const clean = rawCommand.trim().toLowerCase();
+  if (!clean) return false;
+  if (
+    /^(hi|hello|hey|thanks|thank you|good morning|good afternoon|good evening|bye|who are you|what can you do|help)\b/.test(
+      clean
+    )
+  ) {
+    return false;
+  }
+  if (/\b(time|date|day is it|remember|my name)\b/.test(clean) && !/\b(history|world|meaning|explain|who)\b/.test(clean)) {
+    return false;
+  }
+  if (/^(what|who|where|when|why|how|explain|define|tell me|compare|describe|summarize|difference between|meaning of)\b/.test(clean)) {
+    return true;
+  }
+  return clean.endsWith('?') && clean.split(/\s+/).length >= 2;
+}
+
+export function tryEvaluateSafeMath(rawCommand: string): string | null {
+  const cleaned = rawCommand
+    .trim()
+    .toLowerCase()
+    .replace(/^(what is|calculate|compute|evaluate|solve|find)\s+/i, '')
+    .replace(/[?=\s]+$/g, '')
+    .trim();
+
+  if (!cleaned) return null;
+
+  const percentMatch = cleaned.match(/^(-?\d+(?:\.\d+)?)\s*%\s*of\s*(-?\d+(?:\.\d+)?)$/);
+  if (percentMatch) {
+    const pct = Number(percentMatch[1]);
+    const base = Number(percentMatch[2]);
+    const result = (pct / 100) * base;
+    return Number.isFinite(result)
+      ? Number.isInteger(result)
+        ? String(result)
+        : Number(result.toFixed(6)).toString()
+      : null;
+  }
+
+  const expr = cleaned.replace(/\bx\b/g, '*').replace(/\s+/g, '');
+  if (!/^[0-9+\-*/%^().]+$/.test(expr) || !/[+\-*/%^]/.test(expr)) {
+    return null;
+  }
+
+  let pos = 0;
+
+  function parseExpression(): number {
+    let left = parseTerm();
+    while (pos < expr.length && (expr[pos] === '+' || expr[pos] === '-')) {
+      const op = expr[pos++];
+      const right = parseTerm();
+      left = op === '+' ? left + right : left - right;
+    }
+    return left;
+  }
+
+  function parseTerm(): number {
+    let left = parsePower();
+    while (pos < expr.length && (expr[pos] === '*' || expr[pos] === '/' || expr[pos] === '%')) {
+      const op = expr[pos++];
+      const right = parsePower();
+      if ((op === '/' || op === '%') && right === 0) return Number.NaN;
+      left = op === '*' ? left * right : op === '/' ? left / right : left % right;
+    }
+    return left;
+  }
+
+  function parsePower(): number {
+    const base = parseUnary();
+    if (pos < expr.length && expr[pos] === '^') {
+      pos += 1;
+      const exp = parsePower();
+      return Math.pow(base, exp);
+    }
+    return base;
+  }
+
+  function parseUnary(): number {
+    if (expr[pos] === '-') {
+      pos += 1;
+      return -parseUnary();
+    }
+    if (expr[pos] === '+') {
+      pos += 1;
+      return parseUnary();
+    }
+    return parsePrimary();
+  }
+
+  function parsePrimary(): number {
+    if (expr[pos] === '(') {
+      pos += 1;
+      const val = parseExpression();
+      if (expr[pos] !== ')') return Number.NaN;
+      pos += 1;
+      return val;
+    }
+    const start = pos;
+    let seenDot = false;
+    while (pos < expr.length && (/\d/.test(expr[pos]) || (expr[pos] === '.' && !seenDot))) {
+      if (expr[pos] === '.') seenDot = true;
+      pos += 1;
+    }
+    if (pos === start) return Number.NaN;
+    return Number(expr.slice(start, pos));
+  }
+
+  const value = parseExpression();
+  if (pos !== expr.length || !Number.isFinite(value)) return null;
+  return Number.isInteger(value) ? String(value) : Number(value.toFixed(6)).toString();
+}

@@ -232,9 +232,18 @@ export async function runSafeDiagnosticsSuite(): Promise<DiagnosticsReportPayloa
   await runCheck(
     'ollama-runtime',
     'AI & Connectivity',
-    'Ollama Local LLM Runtime (Optional Enhanced Reasoning)',
-    'Detect local Ollama server (127.0.0.1:11434) and pulled models',
+    'Optional External Local LLM Runtime (LM Studio / llama.cpp / Ollama)',
+    'Check optional local LLM endpoint if installed; built-in Local Core works without it',
     async () => {
+      const openaiCompat = await import('./localAiService.ts').then((m) =>
+        m.checkOpenAiCompatibleStatus(db.settings.ollamaModel)
+      );
+      if (openaiCompat.available && openaiCompat.selectedModel) {
+        return {
+          actual: `Local OpenAI-compatible server active at ${openaiCompat.baseUrl} (${openaiCompat.selectedModel}) in ${openaiCompat.latencyMs}ms`,
+          status: 'pass',
+        };
+      }
       const ollama = await checkOllamaStatus(db.settings.ollamaModel);
       if (ollama.available && ollama.selectedModel) {
         return {
@@ -243,9 +252,8 @@ export async function runSafeDiagnosticsSuite(): Promise<DiagnosticsReportPayloa
         };
       }
       return {
-        actual: `Ollama not detected at ${ollama.host}; deterministic Local Core active`,
-        status: 'unavailable',
-        recommendation: 'Install Ollama on Windows and run "ollama pull llama3.2" for full local LLM streaming.',
+        actual: 'No external LLM server running — using Built-In Local Core + Live Web Knowledge',
+        status: 'pass',
       };
     }
   );

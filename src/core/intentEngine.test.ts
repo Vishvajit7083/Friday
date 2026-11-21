@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeUserCommand, extractVoiceCommand, isInterruptionCommand } from './intentEngine';
+import {
+  analyzeUserCommand,
+  extractVoiceCommand,
+  isInterruptionCommand,
+  isKnowledgeQuestion,
+  tryEvaluateSafeMath,
+} from './intentEngine';
 import { evaluateFileMatch, parseFileSearchIntent, searchIndexedFiles } from './fileIndex';
 import { sanitizeSettingsPatch } from './diagnostics';
 import type { AssistantSettings, IndexedFileItem } from './types';
@@ -187,5 +193,20 @@ test('sanitizes local-first AI model settings and rejects unsafe ollamaModel cha
   );
   assert.equal(rejectedUpdate.aiModel, 'local-auto');
   assert.equal(rejectedUpdate.ollamaModel, 'llama3.2:3b');
+});
+
+test('evaluates safe math and percentage expressions without eval', () => {
+  assert.equal(tryEvaluateSafeMath('what is 125 * 48'), '6000');
+  assert.equal(tryEvaluateSafeMath('15% of 2400'), '360');
+  assert.equal(tryEvaluateSafeMath('calculate (10 + 5) * 4 / 3'), '20');
+  assert.equal(tryEvaluateSafeMath('open chrome'), null);
+  assert.equal(tryEvaluateSafeMath('10 / 0'), null);
+});
+
+test('identifies knowledge questions for keyless live web lookup while skipping greetings', () => {
+  assert.equal(isKnowledgeQuestion('what is quantum computing?'), true);
+  assert.equal(isKnowledgeQuestion('explain Docker containers'), true);
+  assert.equal(isKnowledgeQuestion('hello Friday'), false);
+  assert.equal(isKnowledgeQuestion('what time is it'), false);
 });
 
