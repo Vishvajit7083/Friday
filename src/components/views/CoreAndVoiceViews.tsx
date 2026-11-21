@@ -23,6 +23,7 @@ import type {
   HologramMode,
   HologramSettings,
   ProcessInfo,
+  RunningWindowInfo,
   VoiceState,
 } from '../../core/types';
 import { VOICE_STATE_META } from '../../core/agentRegistry';
@@ -400,7 +401,7 @@ export function VoiceAssistantView({
       <div className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3">
         <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
           <Volume2 className="w-4 h-4 text-cyan-400" aria-hidden="true" />
-          <span>Gemini Neural Text-to-Speech Test</span>
+          <span>Local Windows / Neural Text-to-Speech Test</span>
         </h3>
         <div className="flex flex-col sm:flex-row gap-2">
           <input
@@ -437,17 +438,45 @@ export function ApplicationsView({
   const [filter, setFilter] = useState<'all' | DesktopAppItem['category']>('all');
   const [query, setQuery] = useState('');
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
+  const [windowsList, setWindowsList] = useState<RunningWindowInfo[]>([]);
+  const [windowActionMsg, setWindowActionMsg] = useState<string | null>(null);
+  const [pendingCloseTarget, setPendingCloseTarget] = useState<string | null>(null);
   const [loadingProc, setLoadingProc] = useState(false);
 
   const loadProcesses = async () => {
     setLoadingProc(true);
     try {
-      const res = await fetch('/api/system/processes');
-      const data = await res.json();
-      setProcesses(data.processes ?? []);
+      const [procRes, winRes] = await Promise.all([
+        fetch('/api/system/processes'),
+        fetch('/api/apps/windows'),
+      ]);
+      const procData = await procRes.json();
+      const winData = await winRes.json();
+      setProcesses(procData.processes ?? []);
+      setWindowsList(winData.windows ?? []);
     } finally {
       setLoadingProc(false);
     }
+  };
+
+  const handleWindowAction = async (
+    processName: string,
+    action: 'focus' | 'minimize' | 'maximize' | 'close',
+    confirmed = false
+  ) => {
+    if (action === 'close' && !confirmed) {
+      setPendingCloseTarget(processName);
+      return;
+    }
+    setPendingCloseTarget(null);
+    const res = await fetch('/api/apps/window-action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ processName, action, confirmed }),
+    });
+    const data = await res.json();
+    setWindowActionMsg(data.detail || data.error || 'Action completed');
+    if (action === 'close') void loadProcesses();
   };
 
   useEffect(() => {
@@ -590,6 +619,90 @@ export function ApplicationsView({
             </tbody>
           </table>
         </div>
+      </section>
+
+      {/* Active Desktop Windows (Windows 10/11) */}
+      <section className="rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-slate-200">
+            Active Desktop Windows ({windowsList.length})
+          </h3>
+          {windowActionMsg && (
+            <span className="text-xs text-cyan-300 truncate">{windowActionMsg}</span>
+          )}
+        </div>
+
+        {pendingCloseTarget && (
+          <div className="p-3 rounded-lg bg-amber-950/50 border border-amber-500/40 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-200">
+            <span>Confirm closing window &ldquo;{pendingCloseTarget}&rdquo;? Unsaved work may be lost.</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleWindowAction(pendingCloseTarget, 'close', true)}
+                className="px-2.5 py-1 rounded bg-rose-500/25 border border-rose-400/50 text-rose-100 font-semibold"
+              >
+                Confirm Close
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingCloseTarget(null)}
+                className="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {windowsList.length === 0 ? (
+          <p className="text-xs text-slate-400">
+            No active Windows GUI windows detected in this environment (live on Windows 10/11 desktop).
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {windowsList.slice(0, 12).map((w) => (
+              <div
+                key={`${w.id}-${w.name}`}
+                className="p-2.5 rounded-lg bg-slate-900/75 border border-slate-800 flex items-center justify-between gap-3 text-xs"
+              >
+                <div className="min-w-0">
+                  <div className="font-medium text-slate-100 truncate">{w.title}</div>
+                  <div className="text-[11px] font-mono-tabular text-slate-400">{w.name} · PID {w.id}</div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleWindowAction(w.name, 'focus')}
+                    className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-cyan-200 hover:border-cyan-400/50"
+                  >
+                    Focus
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleWindowAction(w.name, 'minimize')}
+                    className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300"
+                  >
+                    Min
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleWindowAction(w.name, 'maximize')}
+                    className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300"
+                  >
+                    Max
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleWindowAction(w.name, 'close', false)}
+                    className="px-2 py-1 rounded bg-rose-500/15 border border-rose-500/35 text-rose-200"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

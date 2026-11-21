@@ -3,7 +3,8 @@
     "assistantName": "F.R.I.D.A.Y.",
     "userName": "Vishvajit",
     "wakeWord": "Hey Friday",
-    "aiModel": "gemini-4-hydrogen",
+    "aiModel": "local-auto",
+    "ollamaModel": "",
     "voiceName": "Kore",
     "voiceGender": "female",
     "speakingSpeed": 0.95,
@@ -12,7 +13,7 @@
     "wakeWordEnabled": true,
     "autoSpeakReplies": false,
     "pushToTalkKey": "Space",
-    "reopenShortcut": "Ctrl+Space",
+    "reopenShortcut": "Ctrl+Shift+Space",
     "startFullscreen": true,
     "launchOnStartup": false,
     "themeAccent": "cyan",
@@ -189,9 +190,326 @@
         }
       ],
       "sources": []
+    },
+    {
+      "id": "msg-1795281385773-u",
+      "role": "user",
+      "content": "check laptop performance",
+      "timestamp": "2026-11-21T17:16:25.773Z",
+      "intent": "system_telemetry"
+    },
+    {
+      "id": "msg-1795281387797-a",
+      "role": "assistant",
+      "content": "Telemetry analysis complete, Vishvajit.\n\nSystem performance is currently nominal. CPU load is moderate at 54% across 4 cores, likely due to background processing. Memory usage is low at 10% (1.3/12 GB), and storage and network activity are effectively idle.\n\nEverything is running within normal parameters. Do you require a deeper diagnostic or specific process monitoring?",
+      "timestamp": "2026-11-21T17:16:27.797Z",
+      "intent": "system_telemetry",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Classify hardware diagnostics request",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "system",
+          "title": "Query live CPU, memory, storage & network sensors",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "gemini-4-hydrogen",
+        "intentMs": 2,
+        "toolMs": 149,
+        "firstTokenMs": 2025,
+        "modelMs": 1874,
+        "totalMs": 2026
+      }
+    },
+    {
+      "id": "msg-1795281440426-u",
+      "role": "user",
+      "content": "what is my cpu and ram usage",
+      "timestamp": "2026-11-21T17:17:20.426Z",
+      "intent": "system_telemetry"
+    },
+    {
+      "id": "msg-1795281440615-a",
+      "role": "assistant",
+      "content": "System status on localhost (Ubuntu (x64)): CPU is at 21% across 4 cores. Memory is 1.2 / 12 GB (10%). Storage is 0.3 / 188.4 GB (0%). Network: ↓ 0 KB/s · ↑ 0 KB/s.",
+      "timestamp": "2026-11-21T17:17:20.615Z",
+      "intent": "system_telemetry",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Classify hardware diagnostics request",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "system",
+          "title": "Query live CPU, memory, storage & network sensors",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 2,
+        "toolMs": 186,
+        "firstTokenMs": 190,
+        "modelMs": 3,
+        "totalMs": 191
+      }
+    },
+    {
+      "id": "msg-1795281502100-u",
+      "role": "user",
+      "content": "what is my cpu and ram usage",
+      "timestamp": "2026-11-21T17:18:22.100Z",
+      "intent": "system_telemetry"
+    },
+    {
+      "id": "msg-1795281502382-a",
+      "role": "assistant",
+      "content": "System status on localhost (Ubuntu (x64)): CPU is at 81% across 4 cores. Memory is 1.7 / 12 GB (14%). Storage is 0.3 / 188.4 GB (0%). Network: ↓ 0 KB/s · ↑ 0 KB/s.",
+      "timestamp": "2026-11-21T17:18:22.382Z",
+      "intent": "system_telemetry",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Classify hardware diagnostics request",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "system",
+          "title": "Query live CPU, memory, storage & network sensors",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 1,
+        "toolMs": 277,
+        "firstTokenMs": 282,
+        "modelMs": 5,
+        "totalMs": 283
+      }
+    },
+    {
+      "id": "msg-1795281536171-u",
+      "role": "user",
+      "content": "what is my cpu and ram usage",
+      "timestamp": "2026-11-21T17:18:56.171Z",
+      "intent": "system_telemetry"
+    },
+    {
+      "id": "msg-1795281536382-a",
+      "role": "assistant",
+      "content": "System status on localhost (Ubuntu (x64)): CPU is at 62% across 4 cores. Memory is 1.6 / 12 GB (14%). Storage is 0.3 / 188.4 GB (0%). Network: ↓ 0 KB/s · ↑ 0 KB/s.",
+      "timestamp": "2026-11-21T17:18:56.382Z",
+      "intent": "system_telemetry",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Classify hardware diagnostics request",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "system",
+          "title": "Query live CPU, memory, storage & network sensors",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 1,
+        "toolMs": 209,
+        "firstTokenMs": 212,
+        "modelMs": 2,
+        "totalMs": 212
+      }
+    },
+    {
+      "id": "msg-1795281845155-u",
+      "role": "user",
+      "content": "hey Friday",
+      "timestamp": "2026-11-21T17:24:05.155Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795281845158-a",
+      "role": "assistant",
+      "content": "Hello Vishvajit. F.R.I.D.A.Y. is online in fast local mode—ask me to open apps, find files, play music, check your system, or search the internet.",
+      "timestamp": "2026-11-21T17:24:05.158Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 18,
+        "toolMs": 0,
+        "firstTokenMs": 21,
+        "modelMs": 3,
+        "totalMs": 21
+      }
     }
   ],
   "actionLogs": [
+    {
+      "id": "log-1795281845158-h4g0",
+      "timestamp": "2026-11-21T17:24:05.158Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "hey Friday",
+      "status": "completed",
+      "detail": "Engine: local-core · 21ms"
+    },
+    {
+      "id": "log-1795281800191-cn9o",
+      "timestamp": "2026-11-21T17:23:20.191Z",
+      "agent": "file",
+      "action": "Preview Local File",
+      "target": "ARCHITECTURE.md",
+      "status": "completed"
+    },
+    {
+      "id": "log-1795281734044-qtb4",
+      "timestamp": "2026-11-21T17:22:14.044Z",
+      "agent": "system",
+      "action": "Run Safe Diagnostics Suite",
+      "target": "8/12 Passed",
+      "status": "completed",
+      "detail": "1 warning, 3 unavailable"
+    },
+    {
+      "id": "log-1795281688804-77ek",
+      "timestamp": "2026-11-21T17:21:28.804Z",
+      "agent": "system",
+      "action": "Run Safe Diagnostics Suite",
+      "target": "8/12 Passed",
+      "status": "completed",
+      "detail": "1 warning, 3 unavailable"
+    },
+    {
+      "id": "log-1795281642718-ijux",
+      "timestamp": "2026-11-21T17:20:42.718Z",
+      "agent": "system",
+      "action": "Run Safe Diagnostics Suite",
+      "target": "8/12 Passed",
+      "status": "completed",
+      "detail": "1 warning, 3 unavailable"
+    },
+    {
+      "id": "log-1795281536382-h2ap",
+      "timestamp": "2026-11-21T17:18:56.382Z",
+      "agent": "core",
+      "action": "Command (system_telemetry)",
+      "target": "what is my cpu and ram usage",
+      "status": "completed",
+      "detail": "Engine: local-core · 212ms"
+    },
+    {
+      "id": "log-1795281536380-ly8p",
+      "timestamp": "2026-11-21T17:18:56.380Z",
+      "agent": "system",
+      "action": "Read Hardware Telemetry",
+      "target": "localhost",
+      "status": "completed",
+      "detail": "CPU 62% · RAM 14%"
+    },
+    {
+      "id": "log-1795281502382-z4m8",
+      "timestamp": "2026-11-21T17:18:22.382Z",
+      "agent": "core",
+      "action": "Command (system_telemetry)",
+      "target": "what is my cpu and ram usage",
+      "status": "completed",
+      "detail": "Engine: local-core · 283ms"
+    },
+    {
+      "id": "log-1795281502377-sutr",
+      "timestamp": "2026-11-21T17:18:22.377Z",
+      "agent": "system",
+      "action": "Read Hardware Telemetry",
+      "target": "localhost",
+      "status": "completed",
+      "detail": "CPU 81% · RAM 14%"
+    },
+    {
+      "id": "log-1795281440615-idk9",
+      "timestamp": "2026-11-21T17:17:20.615Z",
+      "agent": "core",
+      "action": "Command (system_telemetry)",
+      "target": "what is my cpu and ram usage",
+      "status": "completed",
+      "detail": "Engine: local-core · 191ms"
+    },
+    {
+      "id": "log-1795281440611-wjqc",
+      "timestamp": "2026-11-21T17:17:20.611Z",
+      "agent": "system",
+      "action": "Read Hardware Telemetry",
+      "target": "localhost",
+      "status": "completed",
+      "detail": "CPU 21% · RAM 10%"
+    },
+    {
+      "id": "log-1795281440413-k9ve",
+      "timestamp": "2026-11-21T17:17:20.413Z",
+      "agent": "system",
+      "action": "Run Safe Diagnostics Suite",
+      "target": "8/12 Passed",
+      "status": "completed",
+      "detail": "1 warning, 3 unavailable"
+    },
+    {
+      "id": "log-1795281388937-0jcv",
+      "timestamp": "2026-11-21T17:16:28.937Z",
+      "agent": "browser",
+      "action": "Web Research (web)",
+      "target": "Electron framework security",
+      "status": "completed",
+      "detail": "6 source(s)"
+    },
+    {
+      "id": "log-1795281387797-xnv8",
+      "timestamp": "2026-11-21T17:16:27.797Z",
+      "agent": "core",
+      "action": "Command (system_telemetry)",
+      "target": "check laptop performance",
+      "status": "completed",
+      "detail": "Engine: gemini-4-hydrogen · 2026ms"
+    },
+    {
+      "id": "log-1795281385923-g7ih",
+      "timestamp": "2026-11-21T17:16:25.923Z",
+      "agent": "system",
+      "action": "Read Hardware Telemetry",
+      "target": "localhost",
+      "status": "completed",
+      "detail": "CPU 54% · RAM 10%"
+    },
+    {
+      "id": "log-1795281385762-l2m5",
+      "timestamp": "2026-11-21T17:16:25.762Z",
+      "agent": "system",
+      "action": "Run Safe Diagnostics Suite",
+      "target": "8/12 Passed",
+      "status": "completed",
+      "detail": "1 warning, 3 unavailable"
+    },
     {
       "id": "log-1795276879163-c6l5",
       "timestamp": "2026-11-21T16:01:19.163Z",

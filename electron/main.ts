@@ -1,7 +1,12 @@
 // Electron Main Process for F.R.I.D.A.Y. Windows Desktop Companion
 // Provides secure context-isolated window controls, system tray, floating companion mode,
 // ESC hide-to-desktop without terminating background services, and global reopen shortcut.
+import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { spawn, type ChildProcess } from 'child_process';
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 export interface ElectronWindowConfig {
   fullscreen: boolean;
@@ -21,7 +26,7 @@ export function getElectronConfig(): ElectronWindowConfig {
   return {
     fullscreen: process.env.FRIDAY_FULLSCREEN !== 'false',
     reopenShortcut: process.env.FRIDAY_REOPEN_SHORTCUT || 'CommandOrControl+Shift+Space',
-    serverUrl: process.env.FRIDAY_SERVER_URL || 'http://localhost:3000',
+    serverUrl: process.env.FRIDAY_SERVER_URL || 'http://127.0.0.1:3000',
   };
 }
 
@@ -37,10 +42,64 @@ const TRAY_SVG_DATA_URL =
     </svg>`
   ).toString('base64');
 
+async function probeServerHealth(baseUrl: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/health`, {
+      signal: AbortSignal.timeout(900),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureLocalServerRunning(baseUrl: string): Promise<ChildProcess | null> {
+  if (await probeServerHealth(baseUrl)) return null;
+
+  const rootDir = path.resolve(currentDir, '../..');
+  const distServer = path.join(rootDir, 'dist', 'index.html');
+  const isProdBundle = fs.existsSync(distServer);
+  const tsxBin =
+    process.platform === 'win32'
+      ? path.join(rootDir, 'node_modules', '.bin', 'tsx.cmd')
+      : path.join(rootDir, 'node_modules', '.bin', 'tsx');
+
+  const cmd = fs.existsSync(tsxBin) ? tsxBin : 'npx';
+  const args = fs.existsSync(tsxBin) ? ['server.ts'] : ['tsx', 'server.ts'];
+
+  const child = spawn(cmd, args, {
+    cwd: rootDir,
+    env: {
+      ...process.env,
+      NODE_ENV: isProdBundle ? 'production' : process.env.NODE_ENV || 'development',
+    },
+    stdio: 'ignore',
+    shell: false,
+  });
+
+  for (let i = 0; i < 24; i += 1) {
+    if (await probeServerHealth(baseUrl)) {
+      return child;
+    }
+    await new Promise((r) => setTimeout(r, 350));
+  }
+  return child;
+}
+
 export async function bootstrapElectronShell() {
   const electron = await import('electron' as string);
-  const { app, BrowserWindow, globalShortcut, ipcMain, Menu, Tray, nativeImage, session, shell } =
-    electron;
+  const {
+    app,
+    BrowserWindow,
+    desktopCapturer,
+    globalShortcut,
+    ipcMain,
+    Menu,
+    Tray,
+    nativeImage,
+    session,
+    shell,
+  } = electron;
 
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
@@ -50,6 +109,7 @@ export async function bootstrapElectronShell() {
 
   let mainWindow: InstanceType<typeof BrowserWindow> | null = null;
   let tray: InstanceType<typeof Tray> | null = null;
+  let embeddedServerProcess: ChildProcess | null = null;
   let isQuitting = false;
   let floatingMode = false;
   const config = getElectronConfig();
@@ -59,7 +119,11 @@ export async function bootstrapElectronShell() {
     try {
       const parsedTarget = new URL(targetUrl);
       const parsedBase = new URL(config.serverUrl);
-      return parsedTarget.origin === parsedBase.origin;
+      return (
+        parsedTarget.origin === parsedBase.origin ||
+        parsedTarget.hostname === 'localhost' ||
+        parsedTarget.hostname === '127.0.0.1'
+      );
     } catch {
       return false;
     }
@@ -129,7 +193,7 @@ export async function bootstrapElectronShell() {
       fullscreen: config.fullscreen,
       backgroundColor: '#050811',
       webPreferences: {
-        preload: path.join(__dirname, 'preload.js'),
+        preload: path.join(currentDir, 'preload.js'),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -137,6 +201,14 @@ export async function bootstrapElectronShell() {
     });
 
     mainWindow.loadURL(config.serverUrl);
+
+    mainWindow.webContents.on('render-process-gone', () => {
+      if (!isQuitting && mainWindow && !mainWindow.isDestroyed()) {
+        setTimeout(() => {
+          mainWindow?.loadURL(config.serverUrl).catch(() => {});
+        }, 500);
+      }
+    });
 
     mainWindow.webContents.on('will-navigate', (event: Event, url: string) => {
       if (!isTrustedAppUrl(url)) {
@@ -163,7 +235,9 @@ export async function bootstrapElectronShell() {
     toggleVisibility(true);
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    embeddedServerProcess = await ensureLocalServerRunning(config.serverUrl);
+
     const allowedPermissions = new Set(['media', 'audioCapture', 'display-capture', 'fullscreen']);
     session.defaultSession.setPermissionRequestHandler(
       (
@@ -175,6 +249,19 @@ export async function bootstrapElectronShell() {
         callback(originOk && allowedPermissions.has(permission));
       }
     );
+
+    if (typeof session.defaultSession.setDisplayMediaRequestHandler === 'function' && desktopCapturer) {
+      session.defaultSession.setDisplayMediaRequestHandler(
+        async (_request: unknown, callback: (streams: { video?: unknown }) => void) => {
+          try {
+            const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+            callback({ video: sources[0] });
+          } catch {
+            callback({});
+          }
+        }
+      );
+    }
 
     createWindow();
     registerShortcut(activeShortcut);
@@ -198,6 +285,7 @@ export async function bootstrapElectronShell() {
           label: 'Quit F.R.I.D.A.Y.',
           click: () => {
             isQuitting = true;
+            embeddedServerProcess?.kill();
             mainWindow?.destroy();
             app.quit();
           },
@@ -257,6 +345,7 @@ export async function bootstrapElectronShell() {
 
     ipcMain.handle('friday:quit-app', () => {
       isQuitting = true;
+      embeddedServerProcess?.kill();
       mainWindow?.destroy();
       app.quit();
       return { quitting: true };
@@ -265,6 +354,7 @@ export async function bootstrapElectronShell() {
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
+    embeddedServerProcess?.kill();
   });
 }
 

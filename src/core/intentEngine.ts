@@ -5,6 +5,7 @@ export type IntentCategory =
   | 'file_search'
   | 'web_search'
   | 'app_control'
+  | 'media_control'
   | 'calendar_schedule'
   | 'memory_manage'
   | 'vision_screen'
@@ -24,27 +25,39 @@ export interface ParsedIntent {
 
 const SENSITIVE_PATTERNS = [
   /\b(delete|remove|erase|wipe|format|overwrite|destroy)\b/i,
-  /\b(send\s+(email|message|whatsapp)|purchase|buy|pay|transfer)\b/i,
+  /\b(send\s+(email|message|whatsapp)|purchase|buy|pay|transfer|install\s+software)\b/i,
   /\b(cancel\s+(all|meeting|event)|shutdown|restart\s+pc)\b/i,
+  /\b(close|kill|terminate)\s+[a-z0-9._-]+/i,
 ];
 
 const SYSTEM_PATTERNS = [
-  /\b(cpu|ram|memory\s+usage|gpu|battery|network|disk|storage|performance|system\s+monitor|diagnostics|uptime)\b/i,
+  /\b(cpu|ram|memory\s+usage|gpu|battery|network|disk|storage|performance|system\s+monitor|diagnostics|uptime|running\s+processes)\b/i,
+];
+
+const MEDIA_CONTROL_PATTERNS = [
+  /\b(play|listen\s+to|pause|resume|next\s+track|previous\s+track|skip\s+song|stop\s+music)\b.*\b(music|song|songs|track|playlist|audio|video|movie|clip)\b/i,
+  /\b(pause|resume)\s+(the\s+)?(video|music|audio|playback|song|media)\b/i,
+  /\b(increase|decrease|raise|lower|mute|unmute|turn\s+up|turn\s+down)\s+(the\s+)?(volume|sound|audio)\b/i,
+  /\b(next|previous)\s+(song|track)\b/i,
+  /\b(i\s+want\s+to\s+listen\s+to\s+music|play\s+my\s+(downloaded|favourite|favorite)\s+(music|song|video))\b/i,
 ];
 
 const FILE_PATTERNS = [
-  /\b(find|search|locate|open|show)\b.*\b(file|folder|resume|pdf|excel|spreadsheet|presentation|ppt|docx|document|image|picture|photo|video|code|downloads|desktop|project)\b/i,
+  /\b(find|search|locate|open|show|where\s+is)\b.*\b(file|folder|resume|invoice|pdf|excel|spreadsheet|presentation|ppt|docx|document|image|picture|photo|video|code|downloads|desktop|documents|pictures|videos|music|project)\b/i,
+  /\b(latest\s+file|downloaded\s+yesterday|downloaded\s+recently|downloaded\s+last\s+week|working\s+on\s+yesterday)\b/i,
   /\b(duplicate\s+files|organize\s+.*downloads|create\s+(a\s+)?new\s+folder)\b/i,
 ];
 
 const WEB_PATTERNS = [
-  /\b(search\s+google|google\s+search|search\s+online|search\s+the\s+web|latest\s+news|research|youtube|website|summarize\s+https?:)\b/i,
+  /\b(search\s+google|google\s+search|search\s+online|search\s+the\s+(web|internet)|latest\s+news|latest\s+information|research|youtube|website|summarize\s+https?:)\b/i,
   /\b(what\s+is\s+the\s+latest|who\s+won|news\s+about|best\s+.*projects)\b/i,
+  /https?:\/\/\S+/i,
 ];
 
 const APP_PATTERNS = [
-  /\b(open|launch|start|switch\s+to|close)\s+(google\s+chrome|chrome|vs\s*code|visual\s+studio|whatsapp|android\s+studio|spotify|terminal|explorer|notepad|calculator|browser|music\s+player)\b/i,
-  /\b(take\s+a\s+screenshot|installed\s+apps)\b/i,
+  /\b(open|launch|start|switch\s+to|focus|minimize|maximize)\s+(google\s+chrome|chrome|edge|vs\s*code|vscode|visual\s+studio|whatsapp|android\s+studio|spotify|terminal|explorer|notepad|calculator|browser|music\s+player|vlc)\b/i,
+  /\b(open\s+the\s+app(lication)?\s+i\s+use\s+for\s+(coding|browsing|music|notes|messaging|files))\b/i,
+  /\b(show\s+me\s+(the\s+)?applications\s+currently\s+running|running\s+windows|installed\s+apps)\b/i,
 ];
 
 const CALENDAR_PATTERNS = [
@@ -56,10 +69,10 @@ const MEMORY_PATTERNS = [
 ];
 
 const VISION_PATTERNS = [
-  /\b(on\s+my\s+screen|what\s+is\s+showing|explain\s+this\s+(error|chart|screen)|analyze\s+this\s+(chart|screen|image))\b/i,
+  /\b(on\s+my\s+screen|what\s+is\s+showing|read\s+.*screen|explain\s+this\s+(error|chart|screen)|analyze\s+this\s+(chart|screen|image))\b/i,
 ];
 
-const MEDIA_PATTERNS = [
+const MEDIA_ANALYZE_PATTERNS = [
   /\b(transcribe|summarize\s+(this\s+)?(video|audio|recording|pdf|document)|explain\s+this\s+pdf)\b/i,
 ];
 
@@ -67,16 +80,30 @@ const WORKFLOW_PATTERNS = [
   /\b(run\s+workflow|morning\s+briefing|organize\s+.*workspace|project\s+startup)\b/i,
 ];
 
+export function isInterruptionCommand(rawTranscript: string): boolean {
+  const clean = rawTranscript
+    .trim()
+    .toLowerCase()
+    .replace(/[.,!?]+$/g, '')
+    .trim();
+  return /^(friday[,\s]+)?(stop|stop\s+(speaking|talking|reading|now)|quiet|be\s+quiet|shut\s+up|hush|cancel|abort)(\s+please)?$/.test(
+    clean
+  );
+}
+
 export function analyzeUserCommand(command: string): ParsedIntent {
   const trimmed = command.trim();
   const isSensitive = SENSITIVE_PATTERNS.some((rx) => rx.test(trimmed));
 
   if (isSensitive) {
+    const isWindowClose = /\b(close|kill|terminate)\s+[a-z0-9._-]+/i.test(trimmed);
     return {
       category: 'sensitive_action',
-      agents: ['core', 'automation'],
+      agents: isWindowClose ? ['core', 'application', 'automation'] : ['core', 'automation'],
       requiresConfirmation: true,
-      confirmationReason: 'Action modifies or deletes files, sends external communication, or alters important schedule state.',
+      confirmationReason: isWindowClose
+        ? 'Closing a running Windows application can discard unsaved work and requires confirmation.'
+        : 'Action modifies or deletes files, sends external communication, or alters important schedule state.',
       extractedTarget: trimmed,
       steps: [
         { id: 'step-1', agent: 'core', title: 'Evaluate command intent & safety boundaries', status: 'completed' },
@@ -111,7 +138,7 @@ export function analyzeUserCommand(command: string): ParsedIntent {
     };
   }
 
-  if (MEDIA_PATTERNS.some((rx) => rx.test(trimmed))) {
+  if (MEDIA_ANALYZE_PATTERNS.some((rx) => rx.test(trimmed))) {
     return {
       category: 'media_analyze',
       agents: ['core', 'media', 'file'],
@@ -120,6 +147,19 @@ export function analyzeUserCommand(command: string): ParsedIntent {
       steps: [
         { id: 'step-1', agent: 'core', title: 'Identify document or media analysis target', status: 'completed' },
         { id: 'step-2', agent: 'media', title: 'Extract content & generate summary', status: 'running' },
+      ],
+    };
+  }
+
+  if (MEDIA_CONTROL_PATTERNS.some((rx) => rx.test(trimmed))) {
+    return {
+      category: 'media_control',
+      agents: ['core', 'media', 'file'],
+      requiresConfirmation: false,
+      extractedTarget: trimmed,
+      steps: [
+        { id: 'step-1', agent: 'core', title: 'Parse media or volume control command', status: 'completed' },
+        { id: 'step-2', agent: 'media', title: 'Locate local media or dispatch Windows media control', status: 'running' },
       ],
     };
   }
@@ -144,8 +184,8 @@ export function analyzeUserCommand(command: string): ParsedIntent {
       requiresConfirmation: false,
       extractedTarget: trimmed,
       steps: [
-        { id: 'step-1', agent: 'core', title: 'Identify target desktop application', status: 'completed' },
-        { id: 'step-2', agent: 'application', title: 'Resolve executable & dispatch launch control', status: 'running' },
+        { id: 'step-1', agent: 'core', title: 'Identify target desktop application or window', status: 'completed' },
+        { id: 'step-2', agent: 'application', title: 'Resolve executable or active window & dispatch action', status: 'running' },
       ],
     };
   }
@@ -157,8 +197,8 @@ export function analyzeUserCommand(command: string): ParsedIntent {
       requiresConfirmation: false,
       extractedTarget: trimmed,
       steps: [
-        { id: 'step-1', agent: 'core', title: 'Extract file attributes & natural query terms', status: 'completed' },
-        { id: 'step-2', agent: 'file', title: 'Search permitted local directories', status: 'running' },
+        { id: 'step-1', agent: 'core', title: 'Extract file attributes, date & folder intent', status: 'completed' },
+        { id: 'step-2', agent: 'file', title: 'Search permitted local directories & rank matches', status: 'running' },
       ],
     };
   }
@@ -170,8 +210,8 @@ export function analyzeUserCommand(command: string): ParsedIntent {
       requiresConfirmation: false,
       extractedTarget: trimmed,
       steps: [
-        { id: 'step-1', agent: 'core', title: 'Formulate grounded web research query', status: 'completed' },
-        { id: 'step-2', agent: 'browser', title: 'Fetch verified search results & citations', status: 'running' },
+        { id: 'step-1', agent: 'core', title: 'Formulate live web research query', status: 'completed' },
+        { id: 'step-2', agent: 'browser', title: 'Fetch live web results & verified links', status: 'running' },
       ],
     };
   }
@@ -211,7 +251,7 @@ export function analyzeUserCommand(command: string): ParsedIntent {
     requiresConfirmation: false,
     extractedTarget: trimmed,
     steps: [
-      { id: 'step-1', agent: 'core', title: 'Synthesize contextual response', status: 'running' },
+      { id: 'step-1', agent: 'core', title: 'Synthesize local contextual response', status: 'running' },
     ],
   };
 }

@@ -4,19 +4,41 @@ import fs from 'fs';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { appendActionLog, loadDb, saveDb } from './server/store.ts';
-import { detectInstalledApps, getSystemTelemetry, getTopProcesses, launchApplication } from './server/systemService.ts';
+import {
+  closeWindowSafe,
+  detectInstalledApps,
+  getSystemTelemetry,
+  getTopProcesses,
+  launchApplication,
+} from './server/systemService.ts';
 import { getWeatherForLocation } from './server/weatherService.ts';
-import { isPathPermitted, readPermittedFilePreview, scanPermittedFolders } from './server/fileService.ts';
+import {
+  getCachedFileIndex,
+  invalidateFileIndexCache,
+  isPathPermitted,
+  readPermittedFilePreview,
+} from './server/fileService.ts';
 import {
   analyzeMediaOrScreen,
-  checkGeminiConnection,
+  checkAiHealth,
   generateDailyBriefing,
+  getRecentPipelineTimings,
+  hasValidGeminiKey,
   runAssistantCommand,
   runBrowserResearch,
+  streamAssistantCommand,
   summarizeLocalFile,
   synthesizeSpeechWav,
   transcribeAudioBase64,
 } from './server/aiService.ts';
+import {
+  closeWindowsWindow,
+  focusWindowsWindow,
+  listActiveWindows,
+  openLocalPathInDefaultApp,
+  sendWindowsMediaKey,
+  setWindowsWindowState,
+} from './electron/windowsAutomation.ts';
 import {
   getWindowsCompatibilityAudit,
   runSafeDiagnosticsSuite,
@@ -29,7 +51,7 @@ import {
   sanitizeSettingsPatch,
 } from './src/core/diagnostics.ts';
 import { findDuplicateGroups, searchIndexedFiles } from './src/core/fileIndex.ts';
-import type { CalendarEvent, MemoryItem } from './src/core/types.ts';
+import type { CalendarEvent, MediaControlAction, MemoryItem } from './src/core/types.ts';
 
 async function startServer() {
   const app = express();
@@ -42,7 +64,7 @@ async function startServer() {
     const key = `${req.ip || 'local'}:${req.path}`;
     const now = Date.now();
     const recent = (rateBuckets.get(key) ?? []).filter((ts) => now - ts < 60_000);
-    if (recent.length >= 25) {
+    if (recent.length >= 30) {
       return res.status(429).json({ error: 'Rate limit exceeded. Wait a few seconds before sending another AI request.' });
     }
     recent.push(now);
@@ -54,13 +76,14 @@ async function startServer() {
 
   let cachedAiHealth: {
     checkedAt: number;
-    status: Awaited<ReturnType<typeof checkGeminiConnection>>;
+    status: Awaited<ReturnType<typeof checkAiHealth>>;
   } | null = null;
 
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
-      hasApiKey: Boolean(process.env.GEMINI_API_KEY),
+      hasApiKey: hasValidGeminiKey(),
+      localEngineReady: true,
       timestamp: new Date().toISOString(),
     });
   });
@@ -68,12 +91,17 @@ async function startServer() {
   app.get('/api/health/ai', async (req, res) => {
     const forceRefresh = req.query.refresh === '1';
     const now = Date.now();
-    if (!forceRefresh && cachedAiHealth && now - cachedAiHealth.checkedAt < 60_000) {
+    if (!forceRefresh && cachedAiHealth && now - cachedAiHealth.checkedAt < 30_000) {
       return res.json(cachedAiHealth.status);
     }
-    const status = await checkGeminiConnection();
+    const db = loadDb();
+    const status = await checkAiHealth(db.settings.aiModel, db.settings.ollamaModel);
     cachedAiHealth = { checkedAt: now, status };
     res.json(status);
+  });
+
+  app.get('/api/diagnostics/latency', (_req, res) => {
+    res.json({ timings: getRecentPipelineTimings() });
   });
 
   app.get('/api/bootstrap', async (_req, res) => {
@@ -186,7 +214,7 @@ async function startServer() {
         | 'spreadsheet'
         | 'presentation'
         | 'other';
-      const indexed = scanPermittedFolders(db.settings.allowedFolders, db.settings.pausedIndexing, 250);
+      const indexed = getCachedFileIndex(db.settings.allowedFolders, db.settings.pausedIndexing, 300);
       const matches = searchIndexedFiles(indexed, query, category);
       const duplicates = findDuplicateGroups(indexed);
       res.json({
@@ -221,6 +249,50 @@ async function startServer() {
     }
   });
 
+  app.post('/api/files/open', async (req, res) => {
+    try {
+      const { filePath } = req.body as { filePath?: string };
+      if (!filePath) return res.status(400).json({ error: 'filePath is required' });
+      const db = loadDb();
+      const resolved = path.resolve(filePath);
+      if (!isPathPermitted(resolved, db.settings.allowedFolders)) {
+        return res.status(403).json({ error: 'Access denied: file is outside user-permitted folders.' });
+      }
+      if (!fs.existsSync(resolved)) {
+        return res.status(404).json({ error: 'File not found.' });
+      }
+      const result = await openLocalPathInDefaultApp(resolved);
+      appendActionLog(db, {
+        agent: 'file',
+        action: 'Open Local File in Default App',
+        target: path.basename(resolved),
+        status: result.opened ? 'completed' : 'blocked',
+        detail: result.detail,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/files/stream', (req, res) => {
+    try {
+      const rawPath = String(req.query.path ?? '');
+      if (!rawPath) return res.status(400).json({ error: 'path query parameter is required' });
+      const db = loadDb();
+      const resolved = path.resolve(rawPath);
+      if (!isPathPermitted(resolved, db.settings.allowedFolders)) {
+        return res.status(403).json({ error: 'Access denied: file is outside permitted directories.' });
+      }
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+        return res.status(404).json({ error: 'File not found.' });
+      }
+      res.sendFile(resolved);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.post('/api/files/folder', (req, res) => {
     try {
       const { folderPath, confirmCreate } = req.body as { folderPath?: string; confirmCreate?: boolean };
@@ -236,6 +308,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Explicit confirmation is required to create a folder.' });
       }
       fs.mkdirSync(resolved, { recursive: true });
+      invalidateFileIndexCache();
       appendActionLog(db, {
         agent: 'file',
         action: 'Create Directory',
@@ -259,6 +332,47 @@ async function startServer() {
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/assistant/stream', async (req, res) => {
+    const { command } = req.body as { command?: string };
+    if (!command || !command.trim()) {
+      return res.status(400).json({ error: 'Command text is required.' });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    const controller = new AbortController();
+    let closed = false;
+    res.on('close', () => {
+      closed = true;
+      controller.abort();
+    });
+
+    try {
+      const db = loadDb();
+      await streamAssistantCommand(
+        command.trim(),
+        db.settings,
+        (ev) => {
+          if (!closed) {
+            res.write(`data: ${JSON.stringify(ev)}\n\n`);
+          }
+        },
+        controller.signal
+      );
+    } catch (err) {
+      if (!closed && (err as Error).name !== 'AbortError') {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: (err as Error).message })}\n\n`);
+      }
+    } finally {
+      if (!closed) {
+        res.end();
+      }
     }
   });
 
@@ -318,12 +432,61 @@ async function startServer() {
         return res.json({ message: msg, calendarEvent: evt });
       }
 
+      if (actionType === 'sensitive_action' && /\b(close|kill|terminate)\s+/i.test(summary)) {
+        const closeRes = await closeWindowSafe(summary);
+        appendActionLog(db, {
+          agent: 'application',
+          action: closeRes.closed ? 'Closed Window' : 'Window Close Check',
+          target: summary.slice(0, 48),
+          status: closeRes.closed ? 'completed' : 'blocked',
+          detail: closeRes.detail,
+        });
+        const msg = {
+          id: `msg-${Date.now()}-a`,
+          role: 'assistant' as const,
+          content: closeRes.detail,
+          timestamp: new Date().toISOString(),
+          intent: actionType,
+        };
+        db.chatHistory = [...db.chatHistory, msg].slice(-100);
+        saveDb(db);
+        return res.json({ message: msg });
+      }
+
+      if (actionType === 'sensitive_action' && /\bcreate\s+(?:a\s+)?(?:new\s+)?folder\s+([a-zA-Z0-9._-]+)/i.test(summary)) {
+        const match = summary.match(/\bcreate\s+(?:a\s+)?(?:new\s+)?folder\s+([a-zA-Z0-9._-]+)/i);
+        const folderName = match?.[1]?.replace(/[^a-zA-Z0-9._-]/g, '_') || 'NewFolder';
+        const base = db.settings.allowedFolders[0] || process.cwd();
+        const target = path.resolve(base, folderName);
+        if (!isPathPermitted(target, db.settings.allowedFolders)) {
+          return res.status(403).json({ error: 'Target folder outside permitted workspace.' });
+        }
+        fs.mkdirSync(target, { recursive: true });
+        invalidateFileIndexCache();
+        appendActionLog(db, {
+          agent: 'file',
+          action: 'Create Permitted Folder',
+          target: folderName,
+          status: 'completed',
+        });
+        const msg = {
+          id: `msg-${Date.now()}-a`,
+          role: 'assistant' as const,
+          content: `Confirmed. Created folder "${target}".`,
+          timestamp: new Date().toISOString(),
+          intent: actionType,
+        };
+        db.chatHistory = [...db.chatHistory, msg].slice(-100);
+        saveDb(db);
+        return res.json({ message: msg });
+      }
+
       appendActionLog(db, {
         agent: 'automation',
         action: 'Confirmed Safe Execution',
         target: summary.slice(0, 48),
         status: 'completed',
-        detail: 'Simulated safe confirmation inside sandbox',
+        detail: 'User-approved safety gate recorded',
       });
       const msg = {
         id: `msg-${Date.now()}-a`,
@@ -416,8 +579,13 @@ async function startServer() {
         return res.status(400).json({ error: 'text is required' });
       }
       const db = loadDb();
-      const audioBase64 = await synthesizeSpeechWav(text.trim(), voiceName || db.settings.voiceName);
-      res.json({ audioBase64, mimeType: 'audio/wav' });
+      const tts = await synthesizeSpeechWav(text.trim(), voiceName || db.settings.voiceName);
+      res.json({
+        audioBase64: tts.audioBase64,
+        mimeType: tts.audioBase64 ? 'audio/wav' : null,
+        localFallback: tts.localFallback,
+        reason: tts.reason,
+      });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -429,8 +597,77 @@ async function startServer() {
       if (!base64Data) {
         return res.status(400).json({ error: 'base64Data is required' });
       }
-      const text = await transcribeAudioBase64(base64Data, mimeType || 'audio/webm');
-      res.json({ text });
+      const result = await transcribeAudioBase64(base64Data, mimeType || 'audio/webm');
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/apps/windows', async (_req, res) => {
+    try {
+      const windows = await listActiveWindows();
+      res.json({ windows, platform: process.platform });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/apps/window-action', async (req, res) => {
+    try {
+      const { processName, action, confirmed } = req.body as {
+        processName?: string;
+        action?: 'focus' | 'minimize' | 'maximize' | 'close';
+        confirmed?: boolean;
+      };
+      if (!processName || !action) {
+        return res.status(400).json({ error: 'processName and action are required.' });
+      }
+      const db = loadDb();
+      if (action === 'close') {
+        if (!confirmed) {
+          return res.status(400).json({ error: 'Explicit confirmation is required before closing a window.' });
+        }
+        const closeRes = await closeWindowsWindow(processName);
+        appendActionLog(db, {
+          agent: 'application',
+          action: 'Close Desktop Window',
+          target: processName,
+          status: closeRes.closed ? 'completed' : 'blocked',
+          detail: closeRes.detail,
+        });
+        return res.json(closeRes);
+      }
+      if (action === 'focus') {
+        const ok = await focusWindowsWindow(processName);
+        return res.json({ ok, detail: ok ? `Focused ${processName}` : `Window "${processName}" not found.` });
+      }
+      if (action === 'minimize' || action === 'maximize') {
+        const ok = await setWindowsWindowState(processName, action);
+        return res.json({ ok, detail: ok ? `${action}d ${processName}` : `Window "${processName}" not found.` });
+      }
+      res.status(400).json({ error: 'Unsupported window action.' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/media/control', async (req, res) => {
+    try {
+      const { action } = req.body as { action?: MediaControlAction };
+      const allowed = new Set<MediaControlAction>([
+        'play_pause',
+        'next',
+        'previous',
+        'volume_up',
+        'volume_down',
+        'mute',
+      ]);
+      if (!action || !allowed.has(action)) {
+        return res.status(400).json({ error: 'Invalid media control action.' });
+      }
+      const result = await sendWindowsMediaKey(action);
+      res.json(result);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -604,6 +841,8 @@ async function startServer() {
   app.patch('/api/settings', (req, res) => {
     const db = loadDb();
     db.settings = sanitizeSettingsPatch(req.body, db.settings);
+    cachedAiHealth = null;
+    invalidateFileIndexCache();
     saveDb(db);
     res.json(db.settings);
   });

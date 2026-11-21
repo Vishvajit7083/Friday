@@ -759,7 +759,7 @@ export function SettingsView({
         </label>
 
         <label className="block space-y-1.5">
-          <span className="text-slate-300 font-medium">Primary AI Model</span>
+          <span className="text-slate-300 font-medium">Primary AI Engine</span>
           <select
             value={settings.aiModel}
             onChange={(e) =>
@@ -767,10 +767,24 @@ export function SettingsView({
             }
             className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
           >
-            <option value="gemini-4-hydrogen">Gemini 4 Hydrogen (Fast Balanced)</option>
-            <option value="gemini-4-neon">Gemini 4 Neon (Complex Reasoning)</option>
-            <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Low Latency)</option>
+            <option value="local-auto">Local-First Auto (Ollama + Instant Local Core · Free)</option>
+            <option value="ollama">Local Ollama LLM (Streaming)</option>
+            <option value="local-core">Local Deterministic Core (Zero-Key Instant)</option>
+            <option value="gemini-4-hydrogen">Gemini 4 Hydrogen (Optional Cloud Key)</option>
+            <option value="gemini-4-neon">Gemini 4 Neon (Optional Cloud Key)</option>
+            <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Optional Cloud Key)</option>
           </select>
+        </label>
+
+        <label className="block space-y-1.5">
+          <span className="text-slate-300 font-medium">Local Ollama Model (Optional)</span>
+          <input
+            type="text"
+            value={settings.ollamaModel || ''}
+            onChange={(e) => onUpdateSettings({ ollamaModel: e.target.value })}
+            placeholder="Auto-detect (e.g., llama3.2, qwen2.5, mistral)"
+            className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
+          />
         </label>
 
         <label className="block space-y-1.5">

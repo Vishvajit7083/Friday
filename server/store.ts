@@ -9,6 +9,7 @@ import type {
   DesktopAppItem,
   MemoryItem,
 } from '../src/core/types.ts';
+import { getDefaultPermittedFolders } from './fileService.ts';
 
 export interface FridayDatabase {
   settings: AssistantSettings;
@@ -34,7 +35,8 @@ const DEFAULT_DB: FridayDatabase = {
     assistantName: 'F.R.I.D.A.Y.',
     userName: 'Vishvajit',
     wakeWord: 'Hey Friday',
-    aiModel: 'gemini-4-hydrogen',
+    aiModel: 'local-auto',
+    ollamaModel: '',
     voiceName: 'Kore',
     voiceGender: 'female',
     speakingSpeed: 1.0,
@@ -43,13 +45,13 @@ const DEFAULT_DB: FridayDatabase = {
     wakeWordEnabled: true,
     autoSpeakReplies: false,
     pushToTalkKey: 'Space',
-    reopenShortcut: 'Ctrl+Space',
+    reopenShortcut: 'Ctrl+Shift+Space',
     startFullscreen: true,
     launchOnStartup: false,
     themeAccent: 'cyan',
     animationQuality: 'high',
     weatherLocation: 'San Francisco, US',
-    allowedFolders: [path.resolve(process.cwd())],
+    allowedFolders: getDefaultPermittedFolders(),
     pausedIndexing: false,
     screenCaptureConsent: false,
     wallpaper: {
@@ -288,14 +290,35 @@ export function loadDb(): FridayDatabase {
   try {
     const raw = fs.readFileSync(DB_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as Partial<FridayDatabase>;
+    const hasGemKey = Boolean(
+      process.env.GEMINI_API_KEY?.trim() && process.env.GEMINI_API_KEY.trim() !== 'MY_GEMINI_API_KEY'
+    );
+    const mergedSettings: AssistantSettings = {
+      ...DEFAULT_DB.settings,
+      ...parsed.settings,
+      wallpaper: { ...DEFAULT_DB.settings.wallpaper, ...(parsed.settings?.wallpaper || {}) },
+      hologram: { ...DEFAULT_DB.settings.hologram, ...(parsed.settings?.hologram || {}) },
+      enabledAgents: { ...DEFAULT_DB.settings.enabledAgents, ...(parsed.settings?.enabledAgents || {}) },
+    };
+
+    if (!hasGemKey && mergedSettings.aiModel?.startsWith('gemini-')) {
+      mergedSettings.aiModel = 'local-auto';
+    }
+    if (mergedSettings.reopenShortcut === 'Ctrl+Space') {
+      mergedSettings.reopenShortcut = 'Ctrl+Shift+Space';
+    }
+    if (
+      !Array.isArray(mergedSettings.allowedFolders) ||
+      mergedSettings.allowedFolders.length === 0 ||
+      (process.platform === 'win32' &&
+        mergedSettings.allowedFolders.length === 1 &&
+        path.resolve(mergedSettings.allowedFolders[0]) === path.resolve(process.cwd()))
+    ) {
+      mergedSettings.allowedFolders = getDefaultPermittedFolders();
+    }
+
     return {
-      settings: {
-        ...DEFAULT_DB.settings,
-        ...parsed.settings,
-        wallpaper: { ...DEFAULT_DB.settings.wallpaper, ...(parsed.settings?.wallpaper || {}) },
-        hologram: { ...DEFAULT_DB.settings.hologram, ...(parsed.settings?.hologram || {}) },
-        enabledAgents: { ...DEFAULT_DB.settings.enabledAgents, ...(parsed.settings?.enabledAgents || {}) },
-      },
+      settings: mergedSettings,
       calendar: Array.isArray(parsed.calendar) ? parsed.calendar : DEFAULT_DB.calendar,
       memory: Array.isArray(parsed.memory) ? parsed.memory : DEFAULT_DB.memory,
       chatHistory: Array.isArray(parsed.chatHistory) ? parsed.chatHistory : DEFAULT_DB.chatHistory,

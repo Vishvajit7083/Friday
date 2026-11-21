@@ -1,17 +1,33 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import type {
+  AgentId,
   AssistantSettings,
   ChatMessage,
   ExecutionStep,
   GroundingSource,
+  PipelineTimings,
   SystemTelemetry,
 } from '../src/core/types.ts';
 import { analyzeUserCommand } from '../src/core/intentEngine.ts';
 import { searchIndexedFiles, formatBytes } from '../src/core/fileIndex.ts';
 import { appendActionLog, loadDb, saveDb } from './store.ts';
-import { getSystemTelemetry, launchApplication } from './systemService.ts';
+import { getSystemTelemetry, handleAppOrWindowCommand } from './systemService.ts';
 import { getWeatherForLocation } from './weatherService.ts';
-import { scanPermittedFolders } from './fileService.ts';
+import { getCachedFileIndex } from './fileService.ts';
+import { handleMediaVoiceCommand } from './mediaService.ts';
+import {
+  buildExtractiveSummary,
+  fetchPublicWebPage,
+  searchFreeWeb,
+  type WebPageExtract,
+  type WebSearchResultItem,
+} from './internetResearchService.ts';
+import {
+  buildLocalDeterministicReply,
+  checkOllamaStatus,
+  getOllamaHost,
+  streamOllamaChat,
+} from './localAiService.ts';
 
 export interface AIProviderAdapter {
   readonly name: string;
@@ -24,17 +40,58 @@ export interface AIProviderAdapter {
   }): Promise<{ text: string; sources: GroundingSource[] }>;
 }
 
+export type StreamAssistantEvent =
+  | {
+      type: 'status';
+      phase: string;
+      agents: AgentId[];
+      steps: ExecutionStep[];
+      intent: string;
+    }
+  | {
+      type: 'token';
+      token: string;
+    }
+  | {
+      type: 'done';
+      userMessage: ChatMessage;
+      assistantMessage: ChatMessage;
+      activeAgents: AgentId[];
+    }
+  | {
+      type: 'error';
+      error: string;
+    };
+
+const recentPipelineTimings: PipelineTimings[] = [];
+
+export function getRecentPipelineTimings(): PipelineTimings[] {
+  return [...recentPipelineTimings];
+}
+
+function recordPipelineTiming(timing: PipelineTimings) {
+  recentPipelineTimings.unshift(timing);
+  if (recentPipelineTimings.length > 20) {
+    recentPipelineTimings.length = 20;
+  }
+}
+
+export function hasValidGeminiKey(): boolean {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  return Boolean(apiKey && apiKey !== 'MY_GEMINI_API_KEY');
+}
+
 function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
     throw new Error(
-      'GEMINI_API_KEY is not configured. Add your key in the AI Studio Settings > Secrets panel to enable F.R.I.D.A.Y. AI reasoning.'
+      'GEMINI_API_KEY is not configured. F.R.I.D.A.Y. is running in paid-key-free local AI mode.'
     );
   }
   return new GoogleGenAI({
     apiKey,
     httpOptions: {
-      timeout: 30000,
+      timeout: 20000,
       headers: {
         'User-Agent': 'aistudio-build',
       },
@@ -91,6 +148,67 @@ function isTransientGeminiError(err: unknown): boolean {
   );
 }
 
+export async function checkAiHealth(
+  preferredPreference?: string,
+  ollamaModel?: string
+): Promise<{
+  connected: boolean;
+  provider: string;
+  model: string;
+  engine: 'ollama' | 'local-core' | 'gemini';
+  freeWebReady: boolean;
+  requiresPaidKey: boolean;
+  latencyMs: number;
+  ollamaModels?: string[];
+  error?: string;
+}> {
+  const started = Date.now();
+  const db = loadDb();
+  const pref = preferredPreference || db.settings.aiModel || 'local-auto';
+  const targetOllama = ollamaModel || db.settings.ollamaModel;
+
+  if (pref.startsWith('gemini-') && hasValidGeminiKey()) {
+    const gem = await checkGeminiConnection();
+    if (gem.connected) {
+      return {
+        connected: true,
+        provider: gem.provider,
+        model: gem.model,
+        engine: 'gemini',
+        freeWebReady: true,
+        requiresPaidKey: false,
+        latencyMs: Date.now() - started,
+      };
+    }
+  }
+
+  const ollama = await checkOllamaStatus(targetOllama);
+  if (ollama.available && ollama.selectedModel && pref !== 'local-core') {
+    return {
+      connected: true,
+      provider: 'Local Ollama Engine',
+      model: ollama.selectedModel,
+      engine: 'ollama',
+      freeWebReady: true,
+      requiresPaidKey: false,
+      latencyMs: Date.now() - started,
+      ollamaModels: ollama.models,
+    };
+  }
+
+  return {
+    connected: true,
+    provider: 'F.R.I.D.A.Y. Local Core + Free Web',
+    model: pref === 'ollama' ? 'local-core (Ollama offline)' : 'local-core-v2',
+    engine: 'local-core',
+    freeWebReady: true,
+    requiresPaidKey: false,
+    latencyMs: Date.now() - started,
+    ollamaModels: ollama.models,
+    error: pref === 'ollama' ? ollama.error : undefined,
+  };
+}
+
 export async function checkGeminiConnection(): Promise<{
   connected: boolean;
   provider: string;
@@ -99,6 +217,16 @@ export async function checkGeminiConnection(): Promise<{
   error?: string;
 }> {
   const started = Date.now();
+  if (!hasValidGeminiKey()) {
+    return {
+      connected: false,
+      provider: 'Google Gemini (Optional)',
+      model: 'not-configured',
+      latencyMs: Date.now() - started,
+      error: 'GEMINI_API_KEY is not configured (optional — local AI active).',
+    };
+  }
+
   const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-4-hydrogen'] as const;
   let lastErr: unknown = null;
   try {
@@ -119,7 +247,7 @@ export async function checkGeminiConnection(): Promise<{
       } catch (err) {
         lastErr = err;
         if (!isTransientGeminiError(err)) break;
-        await new Promise((r) => setTimeout(r, 450));
+        await new Promise((r) => setTimeout(r, 350));
       }
     }
     return {
@@ -191,16 +319,27 @@ export const geminiProvider: AIProviderAdapter = {
   },
 };
 
-export async function runAssistantCommand(
+function emitChunkedTokens(text: string, onToken: (chunk: string) => void) {
+  const parts = text.match(/\S+\s*/g) ?? [text];
+  for (const part of parts) {
+    onToken(part);
+  }
+}
+
+export async function streamAssistantCommand(
   userCommand: string,
-  settings: AssistantSettings
+  settings: AssistantSettings,
+  emitEvent: (ev: StreamAssistantEvent) => void,
+  signal?: AbortSignal
 ): Promise<{
   userMessage: ChatMessage;
   assistantMessage: ChatMessage;
-  activeAgents: string[];
+  activeAgents: AgentId[];
 }> {
+  const tStart = Date.now();
   const db = loadDb();
   const parsed = analyzeUserCommand(userCommand);
+  const intentMs = Date.now() - tStart;
   const nowIso = new Date().toISOString();
 
   const userMessage: ChatMessage = {
@@ -211,15 +350,34 @@ export async function runAssistantCommand(
     intent: parsed.category,
   };
 
+  emitEvent({
+    type: 'status',
+    phase: 'routing',
+    agents: parsed.agents,
+    steps: parsed.steps,
+    intent: parsed.category,
+  });
+
   // Enforce agent enable/disable flags
   const disabledAgent = parsed.agents.find((a) => settings.enabledAgents[a] === false);
   if (disabledAgent) {
+    const text = `Cannot complete that command because the ${disabledAgent} agent is currently disabled in Settings. Re-enable it to proceed.`;
+    emitChunkedTokens(text, (token) => emitEvent({ type: 'token', token }));
+    const timings: PipelineTimings = {
+      engine: 'local-core',
+      intentMs,
+      toolMs: 0,
+      firstTokenMs: Date.now() - tStart,
+      modelMs: 0,
+      totalMs: Date.now() - tStart,
+    };
     const assistantMessage: ChatMessage = {
       id: `msg-${Date.now()}-a`,
       role: 'assistant',
-      content: `Cannot complete that command because the ${disabledAgent} agent is currently disabled in Settings. Re-enable it to proceed.`,
+      content: text,
       timestamp: new Date().toISOString(),
       intent: parsed.category,
+      timings,
       steps: [
         {
           id: 'step-disabled',
@@ -231,6 +389,7 @@ export async function runAssistantCommand(
     };
     db.chatHistory = [...db.chatHistory, userMessage, assistantMessage].slice(-100);
     saveDb(db);
+    emitEvent({ type: 'done', userMessage, assistantMessage, activeAgents: [disabledAgent] });
     return { userMessage, assistantMessage, activeAgents: [disabledAgent] };
   }
 
@@ -244,12 +403,23 @@ export async function runAssistantCommand(
       status: 'pending_confirmation',
       detail: parsed.confirmationReason,
     });
+    const text = `${parsed.confirmationReason ?? 'This action requires confirmation.'} Review the requested operation below and confirm if you want me to proceed.`;
+    emitChunkedTokens(text, (token) => emitEvent({ type: 'token', token }));
+    const timings: PipelineTimings = {
+      engine: 'local-core',
+      intentMs,
+      toolMs: 0,
+      firstTokenMs: Date.now() - tStart,
+      modelMs: 0,
+      totalMs: Date.now() - tStart,
+    };
     const assistantMessage: ChatMessage = {
       id: `msg-${Date.now()}-a`,
       role: 'assistant',
-      content: `${parsed.confirmationReason ?? 'This action requires confirmation.'} Review the requested operation below and confirm if you want me to proceed.`,
+      content: text,
       timestamp: new Date().toISOString(),
       intent: parsed.category,
+      timings,
       steps: parsed.steps,
       pendingConfirmation: {
         actionId,
@@ -260,16 +430,27 @@ export async function runAssistantCommand(
     };
     db.chatHistory = [...db.chatHistory, userMessage, assistantMessage].slice(-100);
     saveDb(db);
+    emitEvent({ type: 'done', userMessage, assistantMessage, activeAgents: parsed.agents });
     return { userMessage, assistantMessage, activeAgents: parsed.agents };
   }
 
-  // Gather real grounded context for specialist agents
+  // Stage 2: Tool Orchestration (Local OS, Files, Media, Calendar, Memory, Free Web)
+  const tToolStart = Date.now();
   const steps: ExecutionStep[] = [...parsed.steps];
   const contextParts: string[] = [];
-  let useSearch = false;
-  let useUrlContext = /https?:\/\//i.test(userCommand);
+  const collectedSources: GroundingSource[] = [];
 
   let telemetry: SystemTelemetry | null = null;
+  let matchedFiles: ReturnType<typeof searchIndexedFiles> | undefined;
+  let appNotice: string | null = null;
+  let runningWindows: Awaited<ReturnType<typeof handleAppOrWindowCommand>>['windows'];
+  let mediaNotice: string | null = null;
+  let upcomingCalendar: typeof db.calendar | undefined;
+  let webResults: WebSearchResultItem[] | undefined;
+  let webPage: WebPageExtract | null = null;
+  let memorySaved: string | null = null;
+  let weatherData: Awaited<ReturnType<typeof getWeatherForLocation>> | null = null;
+
   if (parsed.category === 'system_telemetry' || parsed.category === 'workflow_run') {
     telemetry = await getSystemTelemetry();
     contextParts.push(
@@ -284,18 +465,35 @@ export async function runAssistantCommand(
     });
   }
 
+  if (parsed.category === 'media_control') {
+    const mediaRes = await handleMediaVoiceCommand(
+      userCommand,
+      settings.allowedFolders,
+      settings.pausedIndexing
+    );
+    mediaNotice = mediaRes.message;
+    contextParts.push(`MEDIA CONTROL RESULT: ${mediaRes.message}`);
+    appendActionLog(db, {
+      agent: 'media',
+      action: mediaRes.mediaAction ? `Media (${mediaRes.mediaAction})` : 'Local Media Playback',
+      target: mediaRes.matchedFile?.name || userCommand.slice(0, 48),
+      status: 'completed',
+      detail: mediaRes.message,
+    });
+  }
+
   if (parsed.category === 'file_search' || parsed.category === 'media_analyze') {
-    const files = scanPermittedFolders(settings.allowedFolders, settings.pausedIndexing, 250);
-    const matches = searchIndexedFiles(files, userCommand).slice(0, 8);
+    const files = getCachedFileIndex(settings.allowedFolders, settings.pausedIndexing, 300);
+    matchedFiles = searchIndexedFiles(files, userCommand).slice(0, 8);
     contextParts.push(
-      matches.length > 0
-        ? `PERMITTED FILE SEARCH MATCHES (${matches.length}):\n` +
-            matches
+      matchedFiles.length > 0
+        ? `PERMITTED FILE SEARCH MATCHES (${matchedFiles.length}):\n` +
+            matchedFiles
               .map(
                 (m) =>
                   `- ${m.name} (${m.category}, ${formatBytes(m.sizeBytes)}, modified ${m.modifiedAt}) at ${m.relativePath}${
-                    m.previewText ? ` | snippet: ${m.previewText.slice(0, 140).replace(/\s+/g, ' ')}` : ''
-                  }`
+                    m.matchReason ? ` [${m.matchReason}]` : ''
+                  }${m.previewText ? ` | snippet: ${m.previewText.slice(0, 140).replace(/\s+/g, ' ')}` : ''}`
               )
               .join('\n')
         : `PERMITTED FILE SEARCH: No matching files found across ${settings.allowedFolders.length} permitted folder(s). Total indexed files: ${files.length}.`
@@ -305,53 +503,50 @@ export async function runAssistantCommand(
       action: 'Search Permitted Files',
       target: userCommand.slice(0, 48),
       status: 'completed',
-      detail: `${matches.length} matching file(s)`,
+      detail: `${matchedFiles.length} matching file(s)`,
     });
   }
 
   if (parsed.category === 'app_control') {
-    const lower = userCommand.toLowerCase();
-    const matchedApp = db.apps.find(
-      (a) => lower.includes(a.name.toLowerCase()) || lower.includes(a.command.toLowerCase())
-    );
-    if (matchedApp) {
-      const result = await launchApplication(matchedApp);
-      matchedApp.lastUsed = new Date().toISOString();
-      contextParts.push(`APPLICATION CONTROL RESULT: ${result.message}`);
-      appendActionLog(db, {
-        agent: 'application',
-        action: result.launched ? 'Launch Application' : 'App Discovery Check',
-        target: matchedApp.name,
-        status: result.launched ? 'completed' : 'blocked',
-        detail: result.message,
-      });
-    } else {
-      contextParts.push(
-        `AVAILABLE APPLICATIONS: ${db.apps.map((a) => `${a.name} (${a.installed ? 'available' : 'desktop-only'})`).join(', ')}`
-      );
+    const appRes = await handleAppOrWindowCommand(userCommand, db.apps);
+    appNotice = appRes.message;
+    runningWindows = appRes.windows;
+    if (appRes.launchedApp) {
+      const target = db.apps.find((a) => a.id === appRes.launchedApp!.id);
+      if (target) target.lastUsed = new Date().toISOString();
     }
+    contextParts.push(`APPLICATION CONTROL RESULT: ${appRes.message}`);
+    appendActionLog(db, {
+      agent: 'application',
+      action: appRes.windows ? 'Inspect Running Windows' : 'Application / Window Control',
+      target: appRes.launchedApp?.name || userCommand.slice(0, 48),
+      status: 'completed',
+      detail: appRes.message.slice(0, 140),
+    });
   }
 
   if (parsed.category === 'calendar_schedule' || parsed.category === 'workflow_run') {
     const today = new Date().toISOString().slice(0, 10);
-    const upcoming = db.calendar.filter((e) => e.date >= today);
+    upcomingCalendar = db.calendar.filter((e) => e.date >= today);
     contextParts.push(
       `CALENDAR SCHEDULE:\n` +
-        (upcoming.length > 0
-          ? upcoming.map((e) => `- [${e.date} ${e.time}] ${e.title} (${e.category}, completed=${e.completed})`).join('\n')
+        (upcomingCalendar.length > 0
+          ? upcomingCalendar
+              .map((e) => `- [${e.date} ${e.time}] ${e.title} (${e.category}, completed=${e.completed})`)
+              .join('\n')
           : 'No upcoming events scheduled.')
     );
     appendActionLog(db, {
       agent: 'calendar',
       action: 'Query Schedule',
-      target: `${upcoming.length} upcoming items`,
+      target: `${upcomingCalendar.length} upcoming items`,
       status: 'completed',
     });
   }
 
   if (parsed.category === 'memory_manage') {
     const rememberMatch = userCommand.match(/remember\s+(?:that\s+)?(.+)/i);
-    if (rememberMatch && rememberMatch[1]) {
+    if (rememberMatch && rememberMatch[1] && !/what\s+do\s+you\s+remember/i.test(userCommand)) {
       const value = rememberMatch[1].trim();
       db.memory.unshift({
         id: `mem-${Date.now()}`,
@@ -361,6 +556,7 @@ export async function runAssistantCommand(
         approved: true,
         updatedAt: new Date().toISOString(),
       });
+      memorySaved = value;
       contextParts.push(`MEMORY SAVED: "${value}"`);
       appendActionLog(db, {
         agent: 'memory',
@@ -368,29 +564,82 @@ export async function runAssistantCommand(
         target: value.slice(0, 48),
         status: 'completed',
       });
+    } else {
+      contextParts.push(
+        `SAVED PERSONAL MEMORY:\n${
+          db.memory.map((m) => `- ${m.key}: ${m.value}`).join('\n') || 'None stored yet.'
+        }`
+      );
     }
   }
 
-  if (parsed.category === 'web_search') {
-    useSearch = true;
+  const urlMatch = userCommand.match(/https?:\/\/\S+/i);
+  if (parsed.category === 'web_search' || urlMatch) {
+    emitEvent({
+      type: 'status',
+      phase: 'searching',
+      agents: parsed.agents,
+      steps,
+      intent: parsed.category,
+    });
+    if (urlMatch) {
+      try {
+        webPage = await fetchPublicWebPage(urlMatch[0]);
+        collectedSources.push({ title: webPage.title, uri: webPage.uri });
+        contextParts.push(`PUBLIC WEBPAGE (${webPage.uri}) TITLE: ${webPage.title}\nEXCERPT:\n${webPage.excerpt.slice(0, 3500)}`);
+      } catch (err) {
+        contextParts.push(`URL FETCH NOTE: ${(err as Error).message}`);
+      }
+    }
+    if (!urlMatch || userCommand.replace(urlMatch[0], '').trim().length > 12) {
+      const searchRes = await searchFreeWeb(userCommand.replace(/https?:\/\/\S+/gi, '').trim() || userCommand, 'web');
+      webResults = searchRes.results;
+      for (const s of searchRes.sources) {
+        if (!collectedSources.some((x) => x.uri === s.uri)) {
+          collectedSources.push(s);
+        }
+      }
+      if (webResults.length > 0) {
+        contextParts.push(
+          `LIVE WEB SEARCH RESULTS:\n${webResults
+            .slice(0, 6)
+            .map((r, i) => `${i + 1}. ${r.title} (${r.uri}): ${r.snippet}`)
+            .join('\n')}`
+        );
+      }
+    }
     appendActionLog(db, {
       agent: 'browser',
-      action: 'Grounded Web Research',
+      action: 'Free Web Research',
       target: userCommand.slice(0, 56),
       status: 'completed',
+      detail: `${collectedSources.length} verified source(s)`,
     });
   }
 
   if (/\bweather|temperature|forecast\b/i.test(userCommand)) {
     try {
-      const weather = await getWeatherForLocation(settings.weatherLocation);
+      weatherData = await getWeatherForLocation(settings.weatherLocation);
       contextParts.push(
-        `LIVE WEATHER (${weather.location}): ${weather.temperature}°C, ${weather.condition}, Humidity ${weather.humidity}%, Wind ${weather.windSpeedKmh} km/h.`
+        `LIVE WEATHER (${weatherData.location}): ${weatherData.temperature}°C, ${weatherData.condition}, Humidity ${weatherData.humidity}%, Wind ${weatherData.windSpeedKmh} km/h.`
       );
     } catch {
       // Ignore transient weather failure if unrelated
     }
   }
+
+  const toolMs = Date.now() - tToolStart;
+
+  // Stage 3: Local-First Response Generation + Token Streaming
+  const tModelStart = Date.now();
+  let firstTokenMs = 0;
+  let finalText = '';
+  let engineUsed = 'local-core';
+
+  const isInstantDeterministicAction =
+    parsed.category === 'media_control' ||
+    parsed.category === 'app_control' ||
+    Boolean(memorySaved);
 
   const memorySummary = db.memory
     .filter((m) => m.approved)
@@ -398,21 +647,157 @@ export async function runAssistantCommand(
     .map((m) => `- ${m.key}: ${m.value}`)
     .join('\n');
 
-  const systemInstruction = `You are F.R.I.D.A.Y. (Fully Responsive Intelligent Digital Assistant for You), an intelligent, precise, trustworthy desktop AI companion speaking to ${settings.userName}.
-Respond concisely in clear, natural language. Never fabricate files, hardware numbers, or URLs—only cite facts present in the real context or grounded search results.
-If a desktop-only Windows operation cannot run inside a sandboxed Linux web host, explain honestly how it works and what was verified.
+  const systemInstruction = `You are F.R.I.D.A.Y. (Fully Responsive Intelligent Digital Assistant for You), a fast, precise desktop AI companion speaking to ${settings.userName}.
+Respond concisely in clear natural language suitable for both screen reading and spoken voice output.
+Never fabricate files, hardware numbers, or URLs—only cite facts present in the provided tool results.
 User-approved personal memory:
 ${memorySummary || 'None'}`;
 
   const prompt = `${contextParts.length > 0 ? contextParts.join('\n\n') + '\n\n' : ''}User Command: ${userCommand}`;
 
-  const aiResult = await geminiProvider.generateText({
-    model: settings.aiModel || 'gemini-4-hydrogen',
-    systemInstruction,
-    prompt,
-    useSearch,
-    useUrlContext,
-  });
+  const pref = settings.aiModel || 'local-auto';
+  const wantsGemini = pref.startsWith('gemini-') && hasValidGeminiKey();
+
+  if (isInstantDeterministicAction || pref === 'local-core') {
+    finalText = buildLocalDeterministicReply({
+      userCommand,
+      category: parsed.category,
+      userName: settings.userName,
+      telemetry,
+      files: matchedFiles,
+      appNotice,
+      runningWindows,
+      availableApps: db.apps,
+      mediaNotice,
+      calendar: upcomingCalendar,
+      webResults,
+      webPage,
+      weather: weatherData,
+      memorySaved,
+    });
+    firstTokenMs = Date.now() - tStart;
+    emitChunkedTokens(finalText, (token) => emitEvent({ type: 'token', token }));
+    engineUsed = 'local-core';
+  } else if (wantsGemini) {
+    try {
+      const aiRes = await geminiProvider.generateText({
+        model: pref,
+        systemInstruction,
+        prompt,
+        useSearch: parsed.category === 'web_search',
+        useUrlContext: Boolean(urlMatch),
+      });
+      finalText = aiRes.text;
+      for (const s of aiRes.sources) {
+        if (!collectedSources.some((x) => x.uri === s.uri)) collectedSources.push(s);
+      }
+      firstTokenMs = Date.now() - tStart;
+      emitChunkedTokens(finalText, (token) => emitEvent({ type: 'token', token }));
+      engineUsed = pref;
+    } catch {
+      finalText = buildLocalDeterministicReply({
+        userCommand,
+        category: parsed.category,
+        userName: settings.userName,
+        telemetry,
+        files: matchedFiles,
+        appNotice,
+        runningWindows,
+        availableApps: db.apps,
+        mediaNotice,
+        calendar: upcomingCalendar,
+        webResults,
+        webPage,
+        weather: weatherData,
+        memorySaved,
+      });
+      firstTokenMs = Date.now() - tStart;
+      emitChunkedTokens(finalText, (token) => emitEvent({ type: 'token', token }));
+      engineUsed = 'local-core (fallback)';
+    }
+  } else {
+    const ollama = await checkOllamaStatus(settings.ollamaModel);
+    if (ollama.available && ollama.selectedModel) {
+      try {
+        const recentHistory = db.chatHistory
+          .slice(-6)
+          .filter((m) => m.content && !m.pendingConfirmation)
+          .map((m) => ({
+            role: m.role as 'user' | 'assistant',
+            content: m.content.slice(0, 800),
+          }));
+
+        const streamRes = await streamOllamaChat({
+          model: ollama.selectedModel,
+          messages: [
+            { role: 'system', content: systemInstruction },
+            ...recentHistory,
+            { role: 'user', content: prompt },
+          ],
+          signal,
+          onToken: (token) => {
+            if (!firstTokenMs) firstTokenMs = Date.now() - tStart;
+            emitEvent({ type: 'token', token });
+          },
+        });
+        finalText = streamRes.text;
+        engineUsed = `ollama:${ollama.selectedModel}`;
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') throw err;
+        finalText = buildLocalDeterministicReply({
+          userCommand,
+          category: parsed.category,
+          userName: settings.userName,
+          telemetry,
+          files: matchedFiles,
+          appNotice,
+          runningWindows,
+          availableApps: db.apps,
+          mediaNotice,
+          calendar: upcomingCalendar,
+          webResults,
+          webPage,
+          weather: weatherData,
+          memorySaved,
+        });
+        firstTokenMs = Date.now() - tStart;
+        emitChunkedTokens(finalText, (token) => emitEvent({ type: 'token', token }));
+        engineUsed = 'local-core (ollama fallback)';
+      }
+    } else {
+      finalText = buildLocalDeterministicReply({
+        userCommand,
+        category: parsed.category,
+        userName: settings.userName,
+        telemetry,
+        files: matchedFiles,
+        appNotice,
+        runningWindows,
+        availableApps: db.apps,
+        mediaNotice,
+        calendar: upcomingCalendar,
+        webResults,
+        webPage,
+        weather: weatherData,
+        memorySaved,
+      });
+      firstTokenMs = Date.now() - tStart;
+      emitChunkedTokens(finalText, (token) => emitEvent({ type: 'token', token }));
+      engineUsed = 'local-core';
+    }
+  }
+
+  const modelMs = Date.now() - tModelStart;
+  const totalMs = Date.now() - tStart;
+  const timings: PipelineTimings = {
+    engine: engineUsed,
+    intentMs,
+    toolMs,
+    firstTokenMs: firstTokenMs || totalMs,
+    modelMs,
+    totalMs,
+  };
+  recordPipelineTiming(timings);
 
   const finalizedSteps: ExecutionStep[] = steps.map((s) => ({
     ...s,
@@ -422,11 +807,12 @@ ${memorySummary || 'None'}`;
   const assistantMessage: ChatMessage = {
     id: `msg-${Date.now()}-a`,
     role: 'assistant',
-    content: aiResult.text || 'Command completed.',
+    content: finalText || 'Command completed.',
     timestamp: new Date().toISOString(),
     intent: parsed.category,
     steps: finalizedSteps,
-    sources: aiResult.sources,
+    sources: collectedSources.length > 0 ? collectedSources : undefined,
+    timings,
   };
 
   db.chatHistory = [...db.chatHistory, userMessage, assistantMessage].slice(-100);
@@ -435,9 +821,16 @@ ${memorySummary || 'None'}`;
     action: `Command (${parsed.category})`,
     target: userCommand.slice(0, 52),
     status: 'completed',
-    detail: `Agents: ${parsed.agents.join(', ')}`,
+    detail: `Engine: ${engineUsed} · ${totalMs}ms`,
   });
   saveDb(db);
+
+  emitEvent({
+    type: 'done',
+    userMessage,
+    assistantMessage,
+    activeAgents: parsed.agents,
+  });
 
   return {
     userMessage,
@@ -446,47 +839,129 @@ ${memorySummary || 'None'}`;
   };
 }
 
+export async function runAssistantCommand(
+  userCommand: string,
+  settings: AssistantSettings
+): Promise<{
+  userMessage: ChatMessage;
+  assistantMessage: ChatMessage;
+  activeAgents: AgentId[];
+}> {
+  return streamAssistantCommand(userCommand, settings, () => {});
+}
+
 export async function runBrowserResearch(
   query: string,
   url?: string,
-  model = 'gemini-4-hydrogen',
+  model = 'local-auto',
   mode: 'web' | 'news' | 'docs' | 'video' = 'web'
 ) {
-  const ai = getGeminiClient();
-  const modePromptMap = {
-    web: 'Provide a clear, well-structured research briefing with verified findings and citations.',
-    news: 'Summarize the latest verified news developments, dates, and primary reporting sources.',
-    docs: 'Extract technical specifications, API details, and authoritative documentation links.',
-    video: 'Discover relevant YouTube videos, tutorials, and talks with direct verified links and descriptions.',
-  };
+  const collectedSources: GroundingSource[] = [];
+  let pageExtract: WebPageExtract | null = null;
+  let searchResults: WebSearchResultItem[] = [];
 
-  const prompt = url
-    ? `Analyze and summarize this URL thoroughly with key takeaways and verified details: ${url}\n\nFocus query: ${query}`
-    : `${modePromptMap[mode]}\n\nQuery: ${query}`;
+  if (url?.trim()) {
+    pageExtract = await fetchPublicWebPage(url.trim());
+    collectedSources.push({ title: pageExtract.title, uri: pageExtract.uri });
+  }
 
-  const tools = url ? [{ urlContext: {} }, { googleSearch: {} }] : [{ googleSearch: {} }];
-
-  const response = await ai.models.generateContent({
-    model,
-    contents: prompt,
-    config: {
-      systemInstruction:
-        'You are the F.R.I.D.A.Y. Browser Intelligence Agent. Synthesize accurate research summaries from grounded search results and URLs. Never fabricate links.',
-      tools,
-    },
-  });
+  if (query.trim()) {
+    const searchRes = await searchFreeWeb(query.trim(), mode);
+    searchResults = searchRes.results;
+    for (const s of searchRes.sources) {
+      if (!collectedSources.some((x) => x.uri === s.uri)) {
+        collectedSources.push(s);
+      }
+    }
+  }
 
   const db = loadDb();
+  let summary = '';
+
+  const contextBlock = [
+    pageExtract ? `PAGE (${pageExtract.uri}) — ${pageExtract.title}:\n${pageExtract.excerpt.slice(0, 5000)}` : '',
+    searchResults.length > 0
+      ? `LIVE SEARCH RESULTS (${mode}):\n${searchResults
+          .map((r, i) => `${i + 1}. ${r.title} (${r.uri}): ${r.snippet}`)
+          .join('\n')}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  if (model.startsWith('gemini-') && hasValidGeminiKey()) {
+    try {
+      const res = await geminiProvider.generateText({
+        model,
+        systemInstruction:
+          'You are the F.R.I.D.A.Y. Browser Intelligence Agent. Synthesize accurate research summaries strictly from the retrieved web results and URL content.',
+        prompt: `Focus: ${query || url}\nMode: ${mode}\n\n${contextBlock}`,
+        useSearch: true,
+        useUrlContext: Boolean(url),
+      });
+      summary = res.text;
+      for (const s of res.sources) {
+        if (!collectedSources.some((x) => x.uri === s.uri)) collectedSources.push(s);
+      }
+    } catch {
+      summary = '';
+    }
+  }
+
+  if (!summary) {
+    const ollama = await checkOllamaStatus(db.settings.ollamaModel);
+    if (ollama.available && ollama.selectedModel && contextBlock) {
+      try {
+        const res = await streamOllamaChat({
+          model: ollama.selectedModel,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are F.R.I.D.A.Y. Browser Intelligence. Summarize the retrieved web data concisely with clear takeaways. Never invent URLs.',
+            },
+            {
+              role: 'user',
+              content: `Query: ${query || url}\nMode: ${mode}\n\n${contextBlock}`,
+            },
+          ],
+        });
+        summary = res.text;
+      } catch {
+        summary = '';
+      }
+    }
+  }
+
+  if (!summary) {
+    if (pageExtract) {
+      summary = `**${pageExtract.title}** (${pageExtract.uri})\n\n${buildExtractiveSummary(
+        pageExtract.excerpt,
+        query,
+        7
+      )}`;
+    } else if (searchResults.length > 0) {
+      summary =
+        `Live ${mode.toUpperCase()} research results for "${query}":\n\n` +
+        searchResults
+          .map((r, i) => `${i + 1}. ${r.title}\n   ${r.snippet || 'Open linked source below for full details.'}`)
+          .join('\n\n');
+    } else {
+      summary = `No live web results were returned for "${query || url}". Verify internet connectivity or try refining your keywords.`;
+    }
+  }
+
   appendActionLog(db, {
     agent: 'browser',
     action: url ? 'URL Synthesis' : `Web Research (${mode})`,
     target: (url || query).slice(0, 56),
     status: 'completed',
+    detail: `${collectedSources.length} source(s)`,
   });
 
   return {
-    summary: (response.text ?? '').trim(),
-    sources: extractGroundingSources(response),
+    summary,
+    sources: collectedSources,
   };
 }
 
@@ -496,56 +971,131 @@ export async function summarizeLocalFile(params: {
   question?: string;
   model?: string;
 }) {
-  const ai = getGeminiClient();
-  const safeContent = params.content.slice(0, 24000);
-  const prompt = params.question?.trim()
-    ? `File: ${params.fileName}\n\nQuestion: ${params.question}\n\nContent:\n${safeContent}`
-    : `Summarize the purpose, key structure, and important details of "${params.fileName}":\n\n${safeContent}`;
-
-  const response = await ai.models.generateContent({
-    model: params.model || 'gemini-4-hydrogen',
-    contents: prompt,
-    config: {
-      systemInstruction:
-        'You are the F.R.I.D.A.Y. File Intelligence Agent. Analyze only the provided permitted file content accurately.',
-    },
-  });
-
+  const safeContent = params.content.slice(0, 18000);
   const db = loadDb();
+  let summary = '';
+
+  if (params.model?.startsWith('gemini-') && hasValidGeminiKey()) {
+    try {
+      const res = await geminiProvider.generateText({
+        model: params.model,
+        systemInstruction:
+          'You are the F.R.I.D.A.Y. File Intelligence Agent. Analyze only the provided permitted file content accurately.',
+        prompt: params.question?.trim()
+          ? `File: ${params.fileName}\n\nQuestion: ${params.question}\n\nContent:\n${safeContent}`
+          : `Summarize the purpose, key structure, and important details of "${params.fileName}":\n\n${safeContent}`,
+      });
+      summary = res.text;
+    } catch {
+      summary = '';
+    }
+  }
+
+  if (!summary) {
+    const ollama = await checkOllamaStatus(db.settings.ollamaModel);
+    if (ollama.available && ollama.selectedModel) {
+      try {
+        const res = await streamOllamaChat({
+          model: ollama.selectedModel,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are F.R.I.D.A.Y. File Intelligence. Analyze only the provided permitted file content concisely.',
+            },
+            {
+              role: 'user',
+              content: params.question?.trim()
+                ? `File: ${params.fileName}\nQuestion: ${params.question}\n\nContent:\n${safeContent}`
+                : `Summarize "${params.fileName}":\n\n${safeContent}`,
+            },
+          ],
+        });
+        summary = res.text;
+      } catch {
+        summary = '';
+      }
+    }
+  }
+
+  if (!summary) {
+    const lineCount = safeContent.split(/\r?\n/).length;
+    const excerpt = buildExtractiveSummary(safeContent, params.question, 6);
+    summary = `Local summary of "${params.fileName}" (${lineCount} lines, ${safeContent.length} chars):\n\n${excerpt}`;
+  }
+
   appendActionLog(db, {
     agent: 'file',
-    action: 'AI File Analysis',
+    action: 'Local File Analysis',
     target: params.fileName,
     status: 'completed',
   });
 
-  return {
-    summary: (response.text ?? '').trim(),
-  };
+  return { summary };
 }
 
-export async function generateDailyBriefing(model = 'gemini-4-hydrogen') {
-  const ai = getGeminiClient();
+export async function generateDailyBriefing(model = 'local-auto') {
   const db = loadDb();
   const telemetry = await getSystemTelemetry().catch(() => null);
   const weather = await getWeatherForLocation(db.settings.weatherLocation).catch(() => null);
   const today = new Date().toISOString().slice(0, 10);
   const events = db.calendar.filter((e) => e.date >= today).slice(0, 8);
 
-  const prompt = `Prepare a crisp executive daily briefing for ${db.settings.userName}.
+  const rawPrompt = `Prepare a crisp executive daily briefing for ${db.settings.userName}.
 Date: ${today}
 Weather: ${weather ? `${weather.location}: ${weather.temperature}°C, ${weather.condition}` : 'Unavailable'}
 System Health: ${telemetry ? `CPU ${telemetry.cpuLoad}%, RAM ${telemetry.ramPercent}%, Storage ${telemetry.storagePercent}%` : 'Unavailable'}
 Calendar Items:\n${events.map((e) => `- ${e.date} ${e.time}: ${e.title} (${e.category}, done=${e.completed})`).join('\n') || 'None scheduled'}`;
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: prompt,
-    config: {
-      systemInstruction:
-        'You are F.R.I.D.A.Y. Deliver a concise, actionable morning briefing covering schedule priorities, weather, and system readiness.',
-    },
-  });
+  let briefing = '';
+  if (model.startsWith('gemini-') && hasValidGeminiKey()) {
+    try {
+      const res = await geminiProvider.generateText({
+        model,
+        systemInstruction:
+          'You are F.R.I.D.A.Y. Deliver a concise, actionable morning briefing covering schedule priorities, weather, and system readiness.',
+        prompt: rawPrompt,
+      });
+      briefing = res.text;
+    } catch {
+      briefing = '';
+    }
+  }
+
+  if (!briefing) {
+    const ollama = await checkOllamaStatus(db.settings.ollamaModel);
+    if (ollama.available && ollama.selectedModel) {
+      try {
+        const res = await streamOllamaChat({
+          model: ollama.selectedModel,
+          messages: [
+            {
+              role: 'system',
+              content: 'Deliver a concise, actionable morning briefing for the user.',
+            },
+            { role: 'user', content: rawPrompt },
+          ],
+        });
+        briefing = res.text;
+      } catch {
+        briefing = '';
+      }
+    }
+  }
+
+  if (!briefing) {
+    const scheduleBlock =
+      events.length > 0
+        ? events.map((e) => `• ${e.date} ${e.time} — ${e.title} (${e.completed ? 'completed' : e.category})`).join('\n')
+        : '• No upcoming events scheduled.';
+    const weatherLine = weather
+      ? `${weather.location}: ${weather.temperature}°C (${weather.condition}), wind ${weather.windSpeedKmh} km/h`
+      : 'Weather telemetry unavailable.';
+    const sysLine = telemetry
+      ? `CPU ${telemetry.cpuLoad}% · RAM ${telemetry.ramPercent}% (${telemetry.ramUsedGb}/${telemetry.ramTotalGb} GB) · Storage ${telemetry.storagePercent}%`
+      : 'System sensors ready.';
+    briefing = `Good day, ${db.settings.userName}. Here is your local briefing for ${today}:\n\nWeather: ${weatherLine}\nSystem Readiness: ${sysLine}\n\nUpcoming Schedule:\n${scheduleBlock}`;
+  }
 
   appendActionLog(db, {
     agent: 'calendar',
@@ -554,7 +1104,7 @@ Calendar Items:\n${events.map((e) => `- ${e.date} ${e.time}: ${e.title} (${e.cat
     status: 'completed',
   });
 
-  return { briefing: (response.text ?? '').trim() };
+  return { briefing };
 }
 
 export async function analyzeMediaOrScreen(params: {
@@ -563,46 +1113,94 @@ export async function analyzeMediaOrScreen(params: {
   prompt: string;
   model?: string;
 }) {
-  const ai = getGeminiClient();
-  const isAudio = params.mimeType.startsWith('audio/');
-  const targetModel = isAudio ? 'gemini-3.5-transcribe' : params.model || 'gemini-4-hydrogen';
-
-  const response = await ai.models.generateContent({
-    model: targetModel,
-    contents: {
-      parts: [
-        {
-          inlineData: {
-            mimeType: params.mimeType,
-            data: params.base64Data,
-          },
-        },
-        {
-          text:
-            params.prompt ||
-            (isAudio
-              ? 'Transcribe this audio accurately and provide a concise summary.'
-              : 'Analyze this visual/document input clearly, extract key text/metrics, and explain any errors or insights.'),
-        },
-      ],
-    },
-  });
-
   const db = loadDb();
-  appendActionLog(db, {
-    agent: isAudio ? 'media' : 'vision',
-    action: isAudio ? 'Audio Transcription & Summary' : 'Visual / Document Analysis',
-    target: params.mimeType,
-    status: 'completed',
-  });
+  const isAudio = params.mimeType.startsWith('audio/');
+  const isImage = params.mimeType.startsWith('image/');
 
+  if (hasValidGeminiKey()) {
+    const ai = getGeminiClient();
+    const targetModel = isAudio ? 'gemini-3.5-transcribe' : 'gemini-3.1-flash-lite';
+    const response = await ai.models.generateContent({
+      model: targetModel,
+      contents: {
+        parts: [
+          { inlineData: { mimeType: params.mimeType, data: params.base64Data } },
+          {
+            text:
+              params.prompt ||
+              (isAudio
+                ? 'Transcribe this audio accurately and provide a concise summary.'
+                : 'Analyze this visual/document input clearly, extract key text/metrics, and explain any errors or insights.'),
+          },
+        ],
+      },
+    });
+    appendActionLog(db, {
+      agent: isAudio ? 'media' : 'vision',
+      action: isAudio ? 'Audio Transcription & Summary' : 'Visual / Document Analysis',
+      target: params.mimeType,
+      status: 'completed',
+    });
+    return { analysis: (response.text ?? '').trim(), modelUsed: targetModel };
+  }
+
+  if (isImage) {
+    const ollama = await checkOllamaStatus(db.settings.ollamaModel);
+    const visionModel = ollama.models.find((m) =>
+      /llava|vision|moondream|bakllava|minicpm-v/i.test(m)
+    );
+    if (ollama.available && visionModel) {
+      const host = getOllamaHost();
+      const res = await fetch(`${host}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: visionModel,
+          stream: false,
+          messages: [
+            {
+              role: 'user',
+              content: params.prompt || 'Analyze this image and extract key text or errors.',
+              images: [params.base64Data],
+            },
+          ],
+        }),
+        signal: AbortSignal.timeout(35_000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { message?: { content?: string } };
+        appendActionLog(db, {
+          agent: 'vision',
+          action: 'Local Ollama Vision Analysis',
+          target: visionModel,
+          status: 'completed',
+        });
+        return {
+          analysis: (data.message?.content ?? '').trim() || 'Vision analysis completed.',
+          modelUsed: `ollama:${visionModel}`,
+        };
+      }
+    }
+  }
+
+  const sizeKb = Math.round((params.base64Data.length * 3) / 4 / 1024);
   return {
-    analysis: (response.text ?? '').trim(),
-    modelUsed: targetModel,
+    analysis: `Captured ${params.mimeType} payload (${sizeKb} KB). For offline local multimodal image analysis, pull a local vision model in Ollama (e.g., "ollama pull llava" or "ollama pull llama3.2-vision"), or optionally configure GEMINI_API_KEY in .env.`,
+    modelUsed: 'local-core',
   };
 }
 
-export async function synthesizeSpeechWav(text: string, voiceName: string): Promise<string> {
+export async function synthesizeSpeechWav(
+  text: string,
+  voiceName: string
+): Promise<{ audioBase64: string | null; localFallback: boolean; reason?: string }> {
+  if (!hasValidGeminiKey()) {
+    return {
+      audioBase64: null,
+      localFallback: true,
+      reason: 'Using fast local Windows/Browser SpeechSynthesis.',
+    };
+  }
   const ai = getGeminiClient();
   const safeText = text.slice(0, 800);
   const response = await ai.models.generateContent({
@@ -634,12 +1232,26 @@ export async function synthesizeSpeechWav(text: string, voiceName: string): Prom
 
   const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
   if (!base64Audio) {
-    throw new Error('TTS model did not return audio data.');
+    return {
+      audioBase64: null,
+      localFallback: true,
+      reason: 'TTS model returned empty payload; using local SpeechSynthesis.',
+    };
   }
-  return base64Audio;
+  return { audioBase64: base64Audio, localFallback: false };
 }
 
-export async function transcribeAudioBase64(base64Data: string, mimeType: string): Promise<string> {
+export async function transcribeAudioBase64(
+  base64Data: string,
+  mimeType: string
+): Promise<{ text: string; localFallback: boolean; reason?: string }> {
+  if (!hasValidGeminiKey()) {
+    return {
+      text: '',
+      localFallback: true,
+      reason: 'Use the primary Microphone button (Web Speech API) or text command bar in local mode without a paid cloud key.',
+    };
+  }
   const ai = getGeminiClient();
   const cleanMime = (mimeType || 'audio/webm').split(';')[0].trim() || 'audio/webm';
   try {
@@ -647,38 +1259,24 @@ export async function transcribeAudioBase64(base64Data: string, mimeType: string
       model: 'gemini-3.5-transcribe',
       contents: {
         parts: [
-          {
-            inlineData: {
-              mimeType: cleanMime,
-              data: base64Data,
-            },
-          },
-          {
-            text: 'Transcribe the user voice command verbatim without extra commentary.',
-          },
+          { inlineData: { mimeType: cleanMime, data: base64Data } },
+          { text: 'Transcribe the user voice command verbatim without extra commentary.' },
         ],
       },
     });
-    return (response.text ?? '').trim();
+    return { text: (response.text ?? '').trim(), localFallback: false };
   } catch (err) {
     if (isTransientGeminiError(err)) {
       const fallback = await ai.models.generateContent({
         model: 'gemini-3.1-flash-lite',
         contents: {
           parts: [
-            {
-              inlineData: {
-                mimeType: cleanMime,
-                data: base64Data,
-              },
-            },
-            {
-              text: 'Transcribe the spoken audio accurately verbatim with no extra commentary.',
-            },
+            { inlineData: { mimeType: cleanMime, data: base64Data } },
+            { text: 'Transcribe the spoken audio accurately verbatim with no extra commentary.' },
           ],
         },
       });
-      return (fallback.text ?? '').trim();
+      return { text: (fallback.text ?? '').trim(), localFallback: false };
     }
     throw new Error(extractFriendlyError(err));
   }

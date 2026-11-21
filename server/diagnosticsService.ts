@@ -13,8 +13,10 @@ import type {
   DiagnosticsReportPayload,
   HardwareCompatibilityAudit,
 } from '../src/core/types.ts';
-import { checkGeminiConnection } from './aiService.ts';
+import { checkAiHealth, getRecentPipelineTimings, hasValidGeminiKey } from './aiService.ts';
 import { isPathPermitted, scanPermittedFolders } from './fileService.ts';
+import { searchFreeWeb } from './internetResearchService.ts';
+import { checkOllamaStatus } from './localAiService.ts';
 import { loadDb } from './store.ts';
 import { detectInstalledApps, getSystemTelemetry } from './systemService.ts';
 import { discoverWindowsStartApps } from '../electron/windowsAutomation.ts';
@@ -99,7 +101,7 @@ export async function getWindowsCompatibilityAudit(): Promise<HardwareCompatibil
     storageFreeGb,
     storageType,
     networkAvailable: activeNet || Object.keys(os.networkInterfaces()).length > 0,
-    hasApiKey: Boolean(process.env.GEMINI_API_KEY),
+    hasApiKey: hasValidGeminiKey(),
     electronConfigured,
     securityPosture: {
       contextIsolation: mainSource.includes('contextIsolation: true'),
@@ -214,29 +216,78 @@ export async function runSafeDiagnosticsSuite(): Promise<DiagnosticsReportPayloa
   );
 
   await runCheck(
-    'gemini-api',
+    'local-ai-engine',
     'AI & Connectivity',
-    'Gemini API Connectivity & Model Health',
-    'Server-side @google/genai round-trip latency check passes',
+    'Local-First AI Engine & Zero-Key Readiness',
+    'Assistant connects and operates cleanly without a paid cloud API key',
     async () => {
-      const conn = await checkGeminiConnection();
-      if (conn.connected) {
+      const health = await checkAiHealth(db.settings.aiModel, db.settings.ollamaModel);
+      return {
+        actual: `${health.provider} (${health.model}) active in ${health.latencyMs}ms · Paid key required: ${health.requiresPaidKey ? 'Yes' : 'No'}`,
+        status: health.connected ? 'pass' : 'fail',
+      };
+    }
+  );
+
+  await runCheck(
+    'ollama-runtime',
+    'AI & Connectivity',
+    'Ollama Local LLM Runtime (Optional Enhanced Reasoning)',
+    'Detect local Ollama server (127.0.0.1:11434) and pulled models',
+    async () => {
+      const ollama = await checkOllamaStatus(db.settings.ollamaModel);
+      if (ollama.available && ollama.selectedModel) {
         return {
-          actual: `Connected (${conn.model}) in ${conn.latencyMs}ms`,
+          actual: `Ollama ready at ${ollama.host} (${ollama.models.length} model(s), active: ${ollama.selectedModel}) in ${ollama.latencyMs}ms`,
           status: 'pass',
         };
       }
-      const errText = conn.error || 'No response from Gemini API';
-      const isKeyMissing = !audit.hasApiKey || /not configured/i.test(errText);
       return {
-        actual: isKeyMissing
-          ? 'GEMINI_API_KEY is not configured'
-          : `Gemini API key present, transient error: ${errText}`,
-        status: isKeyMissing ? 'fail' : 'warning',
-        error: errText,
-        recommendation: isKeyMissing
-          ? 'Set GEMINI_API_KEY in .env or AI Studio Secrets panel.'
-          : 'Temporary Gemini API demand spike or network latency; retry shortly or use Offline Basic Mode.',
+        actual: `Ollama not detected at ${ollama.host}; deterministic Local Core active`,
+        status: 'unavailable',
+        recommendation: 'Install Ollama on Windows and run "ollama pull llama3.2" for full local LLM streaming.',
+      };
+    }
+  );
+
+  await runCheck(
+    'free-web-research',
+    'AI & Connectivity',
+    'Free Direct Web Research (No Paid API Key)',
+    'Retrieve public search snippets and Wikipedia/DuckDuckGo links without API keys',
+    async () => {
+      const res = await searchFreeWeb('TypeScript', 'docs');
+      if (res.online && res.results.length > 0) {
+        return {
+          actual: `Retrieved ${res.results.length} live result(s) with verified links without paid API key`,
+          status: 'pass',
+        };
+      }
+      return {
+        actual: res.error ? `Search error: ${res.error}` : 'No search results returned (offline or rate-limited)',
+        status: 'warning',
+        recommendation: 'Verify internet connectivity or retry live web research.',
+      };
+    }
+  );
+
+  await runCheck(
+    'pipeline-latency',
+    'Performance',
+    'Pipeline Stage Latency Telemetry',
+    'Track intent, tool, first-token, and total response timing cleanly',
+    async () => {
+      const timings = getRecentPipelineTimings();
+      if (timings.length === 0) {
+        return {
+          actual: 'Latency tracker armed (send one command to populate live timing sample)',
+          status: 'pass',
+        };
+      }
+      const latest = timings[0];
+      return {
+        actual: `Latest (${latest.engine}): intent ${latest.intentMs}ms · tools ${latest.toolMs}ms · first-token ${latest.firstTokenMs}ms · total ${latest.totalMs}ms`,
+        status: 'pass',
       };
     }
   );

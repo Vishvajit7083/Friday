@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Maximize2 } from 'lucide-react';
 import { buildAgentList } from './core/agentRegistry';
-import { extractVoiceCommand } from './core/intentEngine';
+import { extractVoiceCommand, isInterruptionCommand } from './core/intentEngine';
 import type {
   ActionLogEntry,
   AgentId,
@@ -95,7 +95,8 @@ const DEFAULT_SETTINGS: AssistantSettings = {
   assistantName: 'F.R.I.D.A.Y.',
   userName: 'Vishvajit',
   wakeWord: 'Hey Friday',
-  aiModel: 'gemini-4-hydrogen',
+  aiModel: 'local-auto',
+  ollamaModel: '',
   voiceName: 'Kore',
   voiceGender: 'female',
   speakingSpeed: 1.0,
@@ -104,7 +105,7 @@ const DEFAULT_SETTINGS: AssistantSettings = {
   wakeWordEnabled: true,
   autoSpeakReplies: false,
   pushToTalkKey: 'Space',
-  reopenShortcut: 'Ctrl+Space',
+  reopenShortcut: 'Ctrl+Shift+Space',
   startFullscreen: true,
   launchOnStartup: false,
   themeAccent: 'cyan',
@@ -166,10 +167,13 @@ export default function App() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState<string | null>(null);
   const [apiStatus, setApiStatus] = useState<ApiConnectionStatus>({
-    connected: false,
+    connected: true,
     checking: true,
-    provider: 'Google Gemini (@google/genai)',
-    model: 'gemini-3.1-flash-lite',
+    provider: 'F.R.I.D.A.Y. Local Core + Free Web',
+    model: 'local-auto',
+    engine: 'local-core',
+    freeWebReady: true,
+    requiresPaidKey: false,
   });
   const [hiddenToDesktop, setHiddenToDesktop] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -182,6 +186,8 @@ export default function App() {
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const micRafRef = useRef<number>(0);
+  const speechQueueRef = useRef<string[]>([]);
+  const speechActiveRef = useRef<boolean>(false);
 
   const checkApiConnection = useCallback(async (force = false) => {
     setApiStatus((prev) => ({ ...prev, checking: true }));
@@ -191,8 +197,11 @@ export default function App() {
       setApiStatus({
         connected: Boolean(data.connected),
         checking: false,
-        provider: data.provider || 'Google Gemini',
-        model: data.model || 'gemini-3.1-flash-lite',
+        provider: data.provider || 'F.R.I.D.A.Y. Local Core + Free Web',
+        model: data.model || 'local-core-v2',
+        engine: data.engine || 'local-core',
+        freeWebReady: data.freeWebReady ?? true,
+        requiresPaidKey: data.requiresPaidKey ?? false,
         latencyMs: data.latencyMs,
         error: data.error,
       });
@@ -275,7 +284,7 @@ export default function App() {
     };
   }, [settings.weatherLocation]);
 
-  // ESC key hides F.R.I.D.A.Y. to desktop, Ctrl+Space restores
+  // ESC key hides F.R.I.D.A.Y. to desktop, Ctrl+Shift+Space / Ctrl+Space restores
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -297,6 +306,8 @@ export default function App() {
   }, []);
 
   const stopSpeaking = useCallback(() => {
+    speechQueueRef.current = [];
+    speechActiveRef.current = false;
     if (audioElRef.current) {
       audioElRef.current.pause();
       audioElRef.current = null;
@@ -306,19 +317,70 @@ export default function App() {
     }
     setIsSpeaking(false);
     setAudioLevel(0);
-    setVoiceState('standby');
+    setVoiceState((curr) => (curr === 'speaking' ? 'standby' : curr));
   }, []);
+
+  const pumpLocalSpeechQueue = useCallback(() => {
+    if (!('speechSynthesis' in window) || speechActiveRef.current) return;
+    const nextSentence = speechQueueRef.current.shift();
+    if (!nextSentence) {
+      setIsSpeaking(false);
+      setAudioLevel(0);
+      setVoiceState((curr) => (curr === 'speaking' ? 'standby' : curr));
+      return;
+    }
+    speechActiveRef.current = true;
+    setIsSpeaking(true);
+    setVoiceState('speaking');
+    setAudioLevel(0.6);
+
+    const utter = new SpeechSynthesisUtterance(nextSentence);
+    utter.rate = settings.speakingSpeed;
+    utter.lang = settings.language;
+    utter.onend = () => {
+      speechActiveRef.current = false;
+      pumpLocalSpeechQueue();
+    };
+    utter.onerror = () => {
+      speechActiveRef.current = false;
+      pumpLocalSpeechQueue();
+    };
+    window.speechSynthesis.speak(utter);
+  }, [settings.language, settings.speakingSpeed]);
+
+  const enqueueLocalSpeech = useCallback(
+    (sentence: string) => {
+      const clean = sentence.replace(/[*_`#]/g, '').trim();
+      if (!clean || !('speechSynthesis' in window)) return;
+      speechQueueRef.current.push(clean);
+      pumpLocalSpeechQueue();
+    },
+    [pumpLocalSpeechQueue]
+  );
 
   const speakText = useCallback(
     async (text: string) => {
       stopSpeaking();
+      const cleanText = text.replace(/[*_`#]/g, '').trim();
+      if (!cleanText) return;
+
+      // Fast path: instant local Windows/Browser SpeechSynthesis unless Gemini TTS is active
+      if (apiStatus.engine !== 'gemini' && 'speechSynthesis' in window) {
+        const sentences = cleanText.match(/[^.!?\n]+[.!?\n]*/g) ?? [cleanText];
+        for (const s of sentences) {
+          if (s.trim()) speechQueueRef.current.push(s.trim());
+        }
+        pumpLocalSpeechQueue();
+        return;
+      }
+
       setVoiceState('speaking');
       setIsSpeaking(true);
       try {
         const res = await fetch('/api/voice/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, voiceName: settings.voiceName }),
+          body: JSON.stringify({ text: cleanText, voiceName: settings.voiceName }),
         });
         const data = await res.json();
         if (res.ok && data.audioBase64) {
@@ -329,7 +391,7 @@ export default function App() {
             setIsSpeaking(false);
             setAudioLevel(0);
             setVoiceState('completed');
-            setTimeout(() => setVoiceState('standby'), 1600);
+            setTimeout(() => setVoiceState('standby'), 1400);
           };
           audio.onerror = () => {
             setIsSpeaking(false);
@@ -338,63 +400,178 @@ export default function App() {
           await audio.play();
           return;
         }
-        throw new Error(data.error || 'Neural TTS failed');
       } catch {
-        // Browser SpeechSynthesis fallback when offline/quota-limited
-        if ('speechSynthesis' in window) {
-          const utter = new SpeechSynthesisUtterance(text);
-          utter.rate = settings.speakingSpeed;
-          utter.lang = settings.language;
-          utter.onend = () => {
-            setIsSpeaking(false);
-            setVoiceState('standby');
-          };
-          window.speechSynthesis.speak(utter);
-        } else {
-          setIsSpeaking(false);
-          setVoiceState('standby');
-        }
+        // Fallback below
+      }
+
+      if ('speechSynthesis' in window) {
+        enqueueLocalSpeech(cleanText);
+      } else {
+        setIsSpeaking(false);
+        setVoiceState('standby');
       }
     },
-    [settings.language, settings.speakingSpeed, settings.voiceName, stopSpeaking]
+    [
+      apiStatus.engine,
+      enqueueLocalSpeech,
+      pumpLocalSpeechQueue,
+      settings.speakingSpeed,
+      settings.voiceName,
+      stopSpeaking,
+    ]
   );
 
   const handleSubmitCommand = useCallback(
     async (command: string): Promise<boolean> => {
+      const cleanCmd = command.trim();
+      if (!cleanCmd) return false;
+
+      if (isInterruptionCommand(cleanCmd)) {
+        abortRef.current?.abort();
+        stopSpeaking();
+        setActiveAgents([]);
+        setVoiceState('standby');
+        setLiveTranscript('Interrupted — standing by.');
+        return false;
+      }
+
+      abortRef.current?.abort();
+      stopSpeaking();
       setErrorBanner(null);
       setVoiceState('processing');
       setActiveAgents(['core']);
+
       const controller = new AbortController();
       abortRef.current = controller;
 
-      try {
-        setTimeout(() => {
-          setVoiceState((curr) => (curr === 'processing' ? 'executing' : curr));
-        }, 350);
+      const tempUserId = `msg-temp-u-${Date.now()}`;
+      const tempAssistantId = `msg-temp-a-${Date.now()}`;
+      const optimisticUser: ChatMessage = {
+        id: tempUserId,
+        role: 'user',
+        content: cleanCmd,
+        timestamp: new Date().toISOString(),
+      };
+      const optimisticAssistant: ChatMessage = {
+        id: tempAssistantId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date().toISOString(),
+      };
 
-        const res = await fetch('/api/assistant/command', {
+      setMessages((prev) => [...prev, optimisticUser, optimisticAssistant]);
+
+      let speechBuffer = '';
+      let streamedAnyText = false;
+
+      try {
+        const res = await fetch('/api/assistant/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command }),
+          body: JSON.stringify({ command: cleanCmd }),
           signal: controller.signal,
         });
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || 'Command execution failed');
+
+        if (!res.ok || !res.body) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson.error || 'Command execution failed');
         }
 
-        setMessages((prev) => [...prev, data.userMessage, data.assistantMessage]);
-        setActiveAgents(data.activeAgents ?? ['core']);
-        setVoiceState('completed');
-        await refreshBootstrap();
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = '';
 
-        if (settings.autoSpeakReplies && data.assistantMessage?.content) {
-          speakText(data.assistantMessage.content);
-        } else {
-          setTimeout(() => {
-            setVoiceState((curr) => (curr === 'completed' ? 'standby' : curr));
-            setActiveAgents([]);
-          }, 1800);
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          const frames = sseBuffer.split('\n\n');
+          sseBuffer = frames.pop() ?? '';
+
+          for (const frame of frames) {
+            const line = frame
+              .split('\n')
+              .find((l) => l.startsWith('data:'));
+            if (!line) continue;
+            const rawJson = line.slice(5).trim();
+            if (!rawJson) continue;
+            let ev: {
+              type?: string;
+              phase?: string;
+              agents?: AgentId[];
+              token?: string;
+              userMessage?: ChatMessage;
+              assistantMessage?: ChatMessage;
+              activeAgents?: AgentId[];
+              error?: string;
+            };
+            try {
+              ev = JSON.parse(rawJson);
+            } catch {
+              continue;
+            }
+
+            if (ev.type === 'status') {
+              if (ev.agents) setActiveAgents(ev.agents);
+              setVoiceState(ev.phase === 'searching' ? 'searching' : 'executing');
+            } else if (ev.type === 'token' && ev.token) {
+              streamedAnyText = true;
+              const tok = ev.token;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tempAssistantId ? { ...m, content: m.content + tok } : m
+                )
+              );
+
+              if (settings.autoSpeakReplies) {
+                speechBuffer += tok;
+                const match = speechBuffer.match(/^([\s\S]*?[.!?](?:\s+|$)|\S[\s\S]{18,}?\n)/);
+                if (match && match[1].trim().length >= 12) {
+                  enqueueLocalSpeech(match[1]);
+                  speechBuffer = speechBuffer.slice(match[1].length);
+                }
+              }
+            } else if (ev.type === 'done' && ev.userMessage && ev.assistantMessage) {
+              const finalUser = ev.userMessage;
+              const finalAssistant = ev.assistantMessage;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tempUserId
+                    ? finalUser
+                    : m.id === tempAssistantId
+                      ? finalAssistant
+                      : m
+                )
+              );
+              setActiveAgents(ev.activeAgents ?? ['core']);
+
+              if (settings.autoSpeakReplies) {
+                if (speechBuffer.trim()) {
+                  enqueueLocalSpeech(speechBuffer);
+                  speechBuffer = '';
+                } else if (!streamedAnyText && finalAssistant.content) {
+                  speakText(finalAssistant.content);
+                }
+              } else {
+                setVoiceState('completed');
+                setTimeout(() => {
+                  setVoiceState((curr) => (curr === 'completed' ? 'standby' : curr));
+                  setActiveAgents([]);
+                }, 1400);
+              }
+
+              // Refresh full state in background only if persistent lists mutated
+              if (
+                finalAssistant.intent === 'memory_manage' ||
+                finalAssistant.intent === 'calendar_schedule' ||
+                finalAssistant.intent === 'workflow_run'
+              ) {
+                void refreshBootstrap();
+              }
+            } else if (ev.type === 'error') {
+              throw new Error(ev.error || 'Command stream error');
+            }
+          }
         }
         return true;
       } catch (err) {
@@ -402,6 +579,7 @@ export default function App() {
           setVoiceState('standby');
           return false;
         }
+        setMessages((prev) => prev.filter((m) => m.id !== tempAssistantId));
         setVoiceState('error');
         setErrorBanner((err as Error).message);
         return false;
@@ -409,7 +587,7 @@ export default function App() {
         abortRef.current = null;
       }
     },
-    [refreshBootstrap, settings.autoSpeakReplies, speakText]
+    [enqueueLocalSpeech, refreshBootstrap, settings.autoSpeakReplies, speakText, stopSpeaking]
   );
 
   const handleConfirmAction = useCallback(
@@ -536,6 +714,13 @@ export default function App() {
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || 'Voice transcription failed');
+          if (data.localFallback && !data.text) {
+            setLiveTranscript(
+              data.reason || 'Audio recording transcription requires Gemini key; use live Microphone speech recognition or text command.'
+            );
+            setVoiceState('standby');
+            return;
+          }
           const rawText = String(data.text || '').trim();
           if (rawText) {
             const parsedVoice = extractVoiceCommand(rawText, settings.wakeWord, false);
@@ -557,7 +742,7 @@ export default function App() {
       setIsRecordingAudio(true);
       setIsListening(true);
       setVoiceState('listening');
-      setLiveTranscript('Listening via Gemini Voice Recorder — speak now, then click Mic to send.');
+      setLiveTranscript('Recording voice memo — speak now, then click Mic to send.');
     } catch (err) {
       setErrorBanner(`Microphone permission denied or unavailable: ${(err as Error).message}`);
       setIsRecordingAudio(false);
@@ -581,7 +766,11 @@ export default function App() {
 
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) {
-      await toggleRecordAudio();
+      if (apiStatus.engine === 'gemini') {
+        await toggleRecordAudio();
+      } else {
+        setLiveTranscript('Browser SpeechRecognition is unavailable in this window — use Chrome/Edge/Electron or type your command below.');
+      }
       return;
     }
 
@@ -617,9 +806,20 @@ export default function App() {
       if (interim) {
         setAudioLevel(0.8);
         setLiveTranscript(`Hearing: "${interim}"`);
+        if (isInterruptionCommand(interim)) {
+          abortRef.current?.abort();
+          stopSpeaking();
+        }
       }
 
       if (finalText) {
+        if (isInterruptionCommand(finalText)) {
+          abortRef.current?.abort();
+          stopSpeaking();
+          setLiveTranscript('Stopped speaking.');
+          if (!settings.continuousListening) stopMicCapture();
+          return;
+        }
         const parsedVoice = extractVoiceCommand(finalText, settings.wakeWord, false);
         if (parsedVoice.matched && parsedVoice.command) {
           setLiveTranscript(`Heard: "${parsedVoice.command}"`);
@@ -633,10 +833,11 @@ export default function App() {
 
     rec.onerror = (ev) => {
       if (
-        ev.error === 'network' ||
-        ev.error === 'service-not-allowed' ||
-        ev.error === 'audio-capture' ||
-        ev.error === 'language-not-supported'
+        (ev.error === 'network' ||
+          ev.error === 'service-not-allowed' ||
+          ev.error === 'audio-capture' ||
+          ev.error === 'language-not-supported') &&
+        apiStatus.engine === 'gemini'
       ) {
         stopMicCapture();
         toggleRecordAudio();
@@ -651,7 +852,7 @@ export default function App() {
         stopMicCapture();
         return;
       }
-      setErrorBanner(`Voice recognition error (${ev.error}). Check browser microphone permission.`);
+      setLiveTranscript(`Voice input status (${ev.error}). Ensure microphone permission is allowed or type your command.`);
       stopMicCapture();
     };
 
@@ -669,9 +870,12 @@ export default function App() {
       rec.start();
     } catch {
       stopMicCapture();
-      await toggleRecordAudio();
+      if (apiStatus.engine === 'gemini') {
+        await toggleRecordAudio();
+      }
     }
   }, [
+    apiStatus.engine,
     handleSubmitCommand,
     isListening,
     isRecordingAudio,
@@ -695,24 +899,41 @@ export default function App() {
     setVoiceState('standby');
   }, [isRecordingAudio, stopMicCapture, stopSpeaking]);
 
-  const updateSettings = useCallback(async (patch: Partial<AssistantSettings>) => {
-    setSettings((prev) => ({
-      ...prev,
-      ...patch,
-      wallpaper: { ...prev.wallpaper, ...(patch.wallpaper || {}) },
-      hologram: { ...prev.hologram, ...(patch.hologram || {}) },
-      enabledAgents: { ...prev.enabledAgents, ...(patch.enabledAgents || {}) },
-    }));
-    const res = await fetch('/api/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setSettings(updated);
-    }
-  }, []);
+  const updateSettings = useCallback(
+    async (patch: Partial<AssistantSettings>) => {
+      setSettings((prev) => ({
+        ...prev,
+        ...patch,
+        wallpaper: { ...prev.wallpaper, ...(patch.wallpaper || {}) },
+        hologram: { ...prev.hologram, ...(patch.hologram || {}) },
+        enabledAgents: { ...prev.enabledAgents, ...(patch.enabledAgents || {}) },
+      }));
+
+      if (patch.launchOnStartup !== undefined) {
+        window.fridayDesktop?.setStartupLaunch?.(patch.launchOnStartup).catch(() => {});
+      }
+      if (patch.startFullscreen !== undefined) {
+        window.fridayDesktop?.setFullscreen?.(patch.startFullscreen).catch(() => {});
+      }
+      if (patch.reopenShortcut !== undefined) {
+        window.fridayDesktop?.updateReopenShortcut?.(patch.reopenShortcut).catch(() => {});
+      }
+
+      const res = await fetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setSettings(updated);
+        if (patch.aiModel !== undefined || patch.ollamaModel !== undefined) {
+          void checkApiConnection(true);
+        }
+      }
+    },
+    [checkApiConnection]
+  );
 
   const handleUpdateHologram = useCallback(
     (patch: Partial<HologramSettings>) => {

@@ -422,12 +422,12 @@ export function CommandWorkspace({
                 onClick={onCheckApiConnection}
                 title={
                   apiStatus.checking
-                    ? 'Verifying Gemini API connectivity...'
+                    ? 'Checking local AI engine & Ollama runtime...'
                     : apiStatus.connected
-                      ? `${apiStatus.provider} · ${apiStatus.model}${apiStatus.latencyMs ? ` (${apiStatus.latencyMs}ms)` : ''} — Click to re-check`
-                      : `${apiStatus.error || 'Gemini API unreachable'} — Click to retry`
+                      ? `${apiStatus.provider} · ${apiStatus.model}${apiStatus.latencyMs ? ` (${apiStatus.latencyMs}ms)` : ''}${apiStatus.freeWebReady ? ' · Free Web Ready' : ''} — Click to re-check`
+                      : `${apiStatus.error || 'AI engine offline'} — Click to retry`
                 }
-                aria-label="Gemini API connection status"
+                aria-label="AI Engine connection status"
                 className={`inline-flex items-center gap-1.5 text-xs font-medium transition-opacity hover:opacity-85 ${
                   apiStatus.checking
                     ? 'text-amber-300'
@@ -693,7 +693,12 @@ export function CommandWorkspace({
                 <div className="flex items-center justify-between gap-2 text-[11px] text-cyan-300">
                   <span className="font-semibold flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span>F.R.I.D.A.Y. Response</span>
+                    <span>
+                      F.R.I.D.A.Y. Response
+                      {latestAssistant.timings
+                        ? ` · ${latestAssistant.timings.totalMs}ms (${latestAssistant.timings.engine})`
+                        : ''}
+                    </span>
                   </span>
                   <div className="flex items-center gap-2">
                     <button

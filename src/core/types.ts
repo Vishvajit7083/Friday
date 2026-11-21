@@ -128,6 +128,15 @@ export interface GroundingSource {
   uri: string;
 }
 
+export interface PipelineTimings {
+  engine: string;
+  intentMs: number;
+  toolMs: number;
+  firstTokenMs: number;
+  modelMs: number;
+  totalMs: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -136,6 +145,7 @@ export interface ChatMessage {
   intent?: string;
   steps?: ExecutionStep[];
   sources?: GroundingSource[];
+  timings?: PipelineTimings;
   pendingConfirmation?: {
     actionId: string;
     summary: string;
@@ -176,7 +186,22 @@ export interface IndexedFileItem {
   modifiedAt: string;
   createdAt: string;
   previewText?: string;
+  matchReason?: string;
 }
+
+export interface RunningWindowInfo {
+  id: number;
+  name: string;
+  title: string;
+}
+
+export type MediaControlAction =
+  | 'play_pause'
+  | 'next'
+  | 'previous'
+  | 'volume_up'
+  | 'volume_down'
+  | 'mute';
 
 export interface AutomationWorkflow {
   id: string;
@@ -224,11 +249,20 @@ export interface WallpaperSettings {
   performanceMode: boolean;
 }
 
+export type AIModelPreference =
+  | 'local-auto'
+  | 'ollama'
+  | 'local-core'
+  | 'gemini-4-hydrogen'
+  | 'gemini-4-neon'
+  | 'gemini-3.1-flash-lite';
+
 export interface AssistantSettings {
   assistantName: string;
   userName: string;
   wakeWord: string;
-  aiModel: 'gemini-4-hydrogen' | 'gemini-4-neon' | 'gemini-3.1-flash-lite';
+  aiModel: AIModelPreference;
+  ollamaModel?: string;
   voiceName: 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
   voiceGender: 'female' | 'male';
   speakingSpeed: number;
@@ -256,6 +290,9 @@ export interface ApiConnectionStatus {
   checking: boolean;
   provider: string;
   model: string;
+  engine?: 'ollama' | 'local-core' | 'gemini';
+  freeWebReady?: boolean;
+  requiresPaidKey?: boolean;
   latencyMs?: number;
   error?: string;
 }

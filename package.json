@@ -1,15 +1,17 @@
 {
-  "name": "react-example",
+  "name": "friday-command-center",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "main": "dist-electron/electron/main.js",
   "scripts": {
     "dev": "tsx server.ts",
     "start": "node server.ts",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "clean": "rm -rf dist dist-electron server.js",
+    "lint": "tsc --noEmit",
+    "electron:compile": "tsc -p tsconfig.electron.json"
   },
   "dependencies": {
     "@google/genai": "^3.6.1",

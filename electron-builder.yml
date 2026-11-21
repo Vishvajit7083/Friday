@@ -5,8 +5,10 @@ directories:
   buildResources: electron
 files:
   - dist/**/*
+  - dist-electron/**/*
   - server.ts
   - server/**/*
+  - src/core/**/*
   - electron/**/*
   - package.json
 win:

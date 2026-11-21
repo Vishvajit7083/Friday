@@ -119,6 +119,20 @@ export function FileExplorerView({
     }
   };
 
+  const handleOpenInDefaultApp = async (filePath: string) => {
+    try {
+      const res = await fetch('/api/files/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath }),
+      });
+      const data = await res.json();
+      setFolderStatus(data.detail || (res.ok ? 'Opened file in default OS handler.' : data.error));
+    } catch (err) {
+      setFolderStatus((err as Error).message);
+    }
+  };
+
   const handleSummarizeFile = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!selectedPreview) return;
@@ -396,6 +410,7 @@ export function FileExplorerView({
                   </div>
                   <div className="text-[11px] text-slate-400 truncate mt-0.5">
                     {file.relativePath} · {file.category}
+                    {file.matchReason ? ` · ${file.matchReason}` : ''}
                   </div>
                 </button>
               ))}
@@ -431,9 +446,19 @@ export function FileExplorerView({
               <span className="truncate">{selectedPreview ? selectedPreview.name : 'Document Preview'}</span>
             </span>
             {selectedPreview && (
-              <span className="text-[11px] font-mono-tabular text-slate-400 shrink-0">
-                {formatBytes(selectedPreview.sizeBytes)}
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleOpenInDefaultApp(selectedPreview.path)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] bg-slate-900 border border-slate-700 text-cyan-200 hover:border-cyan-400/50"
+                >
+                  <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                  <span>Open in App</span>
+                </button>
+                <span className="text-[11px] font-mono-tabular text-slate-400">
+                  {formatBytes(selectedPreview.sizeBytes)}
+                </span>
+              </div>
             )}
           </div>
 
@@ -538,7 +563,7 @@ export function BrowserIntelligenceView() {
           Browser & Grounded Web Intelligence
         </h2>
         <p className="text-sm text-slate-400">
-          Live Google Search grounding, technical documentation synthesis, and URL analysis with verified citations.
+          Direct free web search, Wikipedia/documentation synthesis, and public URL reading with verified citations.
         </p>
       </div>
 

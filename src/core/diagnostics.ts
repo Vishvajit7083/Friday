@@ -114,6 +114,9 @@ export function sanitizeMemoryPatch(input: unknown): Partial<MemoryItem> {
 }
 
 const VALID_MODELS = new Set<AssistantSettings['aiModel']>([
+  'local-auto',
+  'ollama',
+  'local-core',
   'gemini-4-hydrogen',
   'gemini-4-neon',
   'gemini-3.1-flash-lite',
@@ -143,6 +146,12 @@ export function sanitizeSettingsPatch(
   }
   if (typeof raw.aiModel === 'string' && VALID_MODELS.has(raw.aiModel as AssistantSettings['aiModel'])) {
     next.aiModel = raw.aiModel as AssistantSettings['aiModel'];
+  }
+  if (typeof raw.ollamaModel === 'string') {
+    const trimmed = raw.ollamaModel.trim();
+    if (trimmed === '' || /^[a-zA-Z0-9._:/-]{1,64}$/.test(trimmed)) {
+      next.ollamaModel = trimmed;
+    }
   }
   if (typeof raw.voiceName === 'string' && VALID_VOICES.has(raw.voiceName as AssistantSettings['voiceName'])) {
     next.voiceName = raw.voiceName as AssistantSettings['voiceName'];
