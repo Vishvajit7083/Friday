@@ -1,0 +1,474 @@
+{
+  "settings": {
+    "assistantName": "F.R.I.D.A.Y.",
+    "userName": "Vishvajit",
+    "wakeWord": "Hey Friday",
+    "aiModel": "gemini-4-hydrogen",
+    "voiceName": "Kore",
+    "voiceGender": "female",
+    "speakingSpeed": 0.95,
+    "language": "en-US",
+    "continuousListening": false,
+    "wakeWordEnabled": true,
+    "autoSpeakReplies": false,
+    "pushToTalkKey": "Space",
+    "reopenShortcut": "Ctrl+Space",
+    "startFullscreen": true,
+    "launchOnStartup": false,
+    "themeAccent": "cyan",
+    "animationQuality": "high",
+    "weatherLocation": "San Francisco, US",
+    "allowedFolders": [
+      "/app/applet"
+    ],
+    "pausedIndexing": false,
+    "screenCaptureConsent": false,
+    "wallpaper": {
+      "mode": "aurora-command",
+      "blurPx": 0,
+      "brightnessPercent": 95,
+      "opacityPercent": 90,
+      "performanceMode": false
+    },
+    "hologram": {
+      "mode": "orbital",
+      "projectionBeam": true,
+      "scanlineIntensity": 0.65,
+      "holoOpacity": 0.85,
+      "autoRotate": true
+    },
+    "enabledAgents": {
+      "core": true,
+      "voice": true,
+      "system": true,
+      "file": true,
+      "browser": true,
+      "application": true,
+      "vision": true,
+      "media": true,
+      "calendar": true,
+      "memory": true,
+      "automation": true
+    }
+  },
+  "calendar": [
+    {
+      "id": "evt-1",
+      "title": "F.R.I.D.A.Y. Architecture & Telemetry Review",
+      "date": "2026-11-21",
+      "time": "10:30",
+      "category": "meeting",
+      "completed": false,
+      "notes": "Inspect multi-agent execution graph and latency metrics.",
+      "createdAt": "2026-11-21T06:32:16.710Z"
+    },
+    {
+      "id": "evt-2",
+      "title": "Index Project Documents & Verify File Permissions",
+      "date": "2026-11-21",
+      "time": "14:00",
+      "category": "task",
+      "completed": false,
+      "notes": "Ensure only explicitly permitted directories are indexed.",
+      "createdAt": "2026-11-21T06:32:16.710Z"
+    },
+    {
+      "id": "evt-3",
+      "title": "Deep Focus: Edge AI & Embedded Prototype",
+      "date": "2026-11-22",
+      "time": "09:00",
+      "category": "focus",
+      "completed": false,
+      "notes": "Review Raspberry Pi hardware benchmarks.",
+      "createdAt": "2026-11-21T06:32:16.710Z"
+    }
+  ],
+  "memory": [
+    {
+      "id": "mem-1",
+      "category": "profile",
+      "key": "Preferred Assistant Persona",
+      "value": "Concise, proactive, technical clarity without unnecessary filler.",
+      "approved": true,
+      "updatedAt": "2026-11-21T06:32:16.710Z"
+    },
+    {
+      "id": "mem-2",
+      "category": "project",
+      "key": "Primary Engineering Workspace",
+      "value": "F.R.I.D.A.Y. Desktop AI Companion & Multi-Agent Command Center",
+      "approved": true,
+      "updatedAt": "2026-11-21T06:32:16.710Z"
+    },
+    {
+      "id": "mem-3",
+      "category": "workflow",
+      "key": "Privacy Guardrail",
+      "value": "Always confirm before deleting files, modifying schedules, or capturing screen.",
+      "approved": true,
+      "updatedAt": "2026-11-21T06:32:16.710Z"
+    }
+  ],
+  "chatHistory": [
+    {
+      "id": "msg-welcome",
+      "role": "assistant",
+      "content": "F.R.I.D.A.Y. Command Center initialized. All eleven specialist agents are standing by. Ask me to inspect system performance, search permitted files, research the web with citations, or manage your schedule.",
+      "timestamp": "2026-11-21T06:32:16.710Z",
+      "intent": "system_boot"
+    },
+    {
+      "id": "msg-1795252434576-u",
+      "role": "user",
+      "content": "delete temporary log",
+      "timestamp": "2026-11-21T09:13:54.575Z",
+      "intent": "sensitive_action"
+    },
+    {
+      "id": "msg-1795252434576-a",
+      "role": "assistant",
+      "content": "Action modifies or deletes files, sends external communication, or alters important schedule state. Review the requested operation below and confirm if you want me to proceed.",
+      "timestamp": "2026-11-21T09:13:54.576Z",
+      "intent": "sensitive_action",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Evaluate command intent & safety boundaries",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "automation",
+          "title": "Await explicit user confirmation",
+          "status": "requires_confirmation",
+          "detail": "delete temporary log"
+        }
+      ],
+      "pendingConfirmation": {
+        "actionId": "act-1795252434576",
+        "summary": "delete temporary log",
+        "actionType": "sensitive_action",
+        "payload": {
+          "command": "delete temporary log"
+        }
+      }
+    },
+    {
+      "id": "msg-1795252434858-a",
+      "role": "assistant",
+      "content": "Understood. I cancelled the pending operation and made no changes.",
+      "timestamp": "2026-11-21T09:13:54.858Z",
+      "intent": "sensitive_action"
+    },
+    {
+      "id": "msg-1795275584605-u",
+      "role": "user",
+      "content": "Check laptop performance",
+      "timestamp": "2026-11-21T15:39:44.605Z",
+      "intent": "system_telemetry"
+    },
+    {
+      "id": "msg-1795275590779-a",
+      "role": "assistant",
+      "content": "Telemetry received, Vishvajit. Here is the current performance analysis:\n\n*   **CPU Utilization:** 65% across 4 cores. This is moderately high for an idle state; I recommend checking for background processes consuming cycles.\n*   **Memory (RAM):** 1.2 GB used of 12 GB available (10%). Utilization is very healthy.\n*   **Storage:** 0.3 GB used of 188.4 GB. You have ample disk space.\n*   **Network:** No active traffic detected.\n\n**Technical Note:** As I am operating within a sandboxed Linux environment, I can provide system-level telemetry, but I cannot access hardware-specific thermal sensors or Windows-exclusive performance utilities (like Task Manager's deeper process trees) directly. \n\nWould you like me to run a diagnostic command to identify which specific processes are driving that 65% CPU usage?",
+      "timestamp": "2026-11-21T15:39:50.779Z",
+      "intent": "system_telemetry",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Classify hardware diagnostics request",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "system",
+          "title": "Query live CPU, memory, storage & network sensors",
+          "status": "completed"
+        }
+      ],
+      "sources": []
+    }
+  ],
+  "actionLogs": [
+    {
+      "id": "log-1795276879163-c6l5",
+      "timestamp": "2026-11-21T16:01:19.163Z",
+      "agent": "system",
+      "action": "Run Safe Diagnostics Suite",
+      "target": "6/9 Passed",
+      "status": "completed",
+      "detail": "1 warning, 2 unavailable"
+    },
+    {
+      "id": "log-1795276829080-1as9",
+      "timestamp": "2026-11-21T16:00:29.080Z",
+      "agent": "system",
+      "action": "Run Safe Diagnostics Suite",
+      "target": "6/9 Passed",
+      "status": "completed",
+      "detail": "1 warning, 2 unavailable"
+    },
+    {
+      "id": "log-1795276732897-eell",
+      "timestamp": "2026-11-21T15:58:52.897Z",
+      "agent": "system",
+      "action": "Run Safe Diagnostics Suite",
+      "target": "4/9 Passed",
+      "status": "failed",
+      "detail": "1 warning, 2 unavailable"
+    },
+    {
+      "id": "log-1795275590779-m9n1",
+      "timestamp": "2026-11-21T15:39:50.779Z",
+      "agent": "core",
+      "action": "Command (system_telemetry)",
+      "target": "Check laptop performance",
+      "status": "completed",
+      "detail": "Agents: core, system"
+    },
+    {
+      "id": "log-1795275585004-pl2y",
+      "timestamp": "2026-11-21T15:39:45.004Z",
+      "agent": "system",
+      "action": "Read Hardware Telemetry",
+      "target": "localhost",
+      "status": "completed",
+      "detail": "CPU 65% · RAM 10%"
+    },
+    {
+      "id": "log-1795275481734-g9gp",
+      "timestamp": "2026-11-21T15:38:01.734Z",
+      "agent": "application",
+      "action": "App Launch Requested",
+      "target": "File Explorer",
+      "status": "blocked",
+      "detail": "File Explorer (explorer) is not available in this host environment. On Windows desktop Electron builds, F.R.I.D.A.Y. launches it directly via Windows Shell."
+    },
+    {
+      "id": "log-1795275480049-7w26",
+      "timestamp": "2026-11-21T15:38:00.049Z",
+      "agent": "application",
+      "action": "App Launch Requested",
+      "target": "Notes & Scratchpad",
+      "status": "blocked",
+      "detail": "Notes & Scratchpad (notepad) is not available in this host environment. On Windows desktop Electron builds, F.R.I.D.A.Y. launches it directly via Windows Shell."
+    },
+    {
+      "id": "log-1795275479295-eqgl",
+      "timestamp": "2026-11-21T15:37:59.295Z",
+      "agent": "application",
+      "action": "App Launch Requested",
+      "target": "Media Player",
+      "status": "blocked",
+      "detail": "Media Player (spotify) is not available in this host environment. On Windows desktop Electron builds, F.R.I.D.A.Y. launches it directly via Windows Shell."
+    },
+    {
+      "id": "log-1795275478220-ftnj",
+      "timestamp": "2026-11-21T15:37:58.220Z",
+      "agent": "application",
+      "action": "App Launch Requested",
+      "target": "Media Player",
+      "status": "blocked",
+      "detail": "Media Player (spotify) is not available in this host environment. On Windows desktop Electron builds, F.R.I.D.A.Y. launches it directly via Windows Shell."
+    },
+    {
+      "id": "log-1795275476077-4268",
+      "timestamp": "2026-11-21T15:37:56.077Z",
+      "agent": "application",
+      "action": "App Launch Requested",
+      "target": "Android Studio",
+      "status": "blocked",
+      "detail": "Android Studio (studio64) is not available in this host environment. On Windows desktop Electron builds, F.R.I.D.A.Y. launches it directly via Windows Shell."
+    },
+    {
+      "id": "log-1795275475316-dv9o",
+      "timestamp": "2026-11-21T15:37:55.316Z",
+      "agent": "application",
+      "action": "App Launch Requested",
+      "target": "Android Studio",
+      "status": "blocked",
+      "detail": "Android Studio (studio64) is not available in this host environment. On Windows desktop Electron builds, F.R.I.D.A.Y. launches it directly via Windows Shell."
+    },
+    {
+      "id": "log-1795275369197-aa9r",
+      "timestamp": "2026-11-21T15:36:09.197Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "Say hello in 5 words",
+      "status": "completed",
+      "detail": "Agents: core, memory"
+    },
+    {
+      "id": "log-1795252434858-m9i6",
+      "timestamp": "2026-11-21T09:13:54.858Z",
+      "agent": "automation",
+      "action": "Action Cancelled by User",
+      "target": "delete temporary log",
+      "status": "blocked"
+    },
+    {
+      "id": "log-1795252434576-hmeu",
+      "timestamp": "2026-11-21T09:13:54.576Z",
+      "agent": "automation",
+      "action": "Confirmation Required",
+      "target": "delete temporary log",
+      "status": "pending_confirmation",
+      "detail": "Action modifies or deletes files, sends external communication, or alters important schedule state."
+    },
+    {
+      "id": "log-1795252427892-3oeh",
+      "timestamp": "2026-11-21T09:13:47.892Z",
+      "agent": "application",
+      "action": "App Launch Requested",
+      "target": "WhatsApp Desktop",
+      "status": "blocked",
+      "detail": "WhatsApp Desktop (whatsapp) is not available in this host environment. On Windows desktop Electron builds, F.R.I.D.A.Y. launches it directly via Windows Shell."
+    },
+    {
+      "id": "log-1",
+      "timestamp": "2026-11-21T06:32:16.710Z",
+      "agent": "core",
+      "action": "Initialize Multi-Agent Bus",
+      "target": "11 Specialist Agents",
+      "status": "completed",
+      "detail": "Command orchestrator ready"
+    },
+    {
+      "id": "log-2",
+      "timestamp": "2026-11-21T06:32:16.710Z",
+      "agent": "file",
+      "action": "Enforce Folder Sandbox",
+      "target": "applet",
+      "status": "completed",
+      "detail": "Least-privilege directory permissions verified"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "wf-morning-brief",
+      "name": "Morning Executive Briefing",
+      "description": "Checks live system health, today’s calendar schedule, and local weather forecast.",
+      "triggerPhrase": "Run morning briefing workflow",
+      "steps": [
+        {
+          "agent": "system",
+          "action": "Sample CPU, memory, storage & battery diagnostics"
+        },
+        {
+          "agent": "calendar",
+          "action": "Retrieve today’s meetings and priority tasks"
+        },
+        {
+          "agent": "core",
+          "action": "Synthesize concise spoken & visual daily summary"
+        }
+      ],
+      "enabled": true,
+      "runCount": 1,
+      "lastRunAt": "2026-11-21T06:32:16.710Z"
+    },
+    {
+      "id": "wf-workspace-audit",
+      "name": "Workspace File & Duplicate Audit",
+      "description": "Scans permitted folders for recent files and potential duplicates without modifying anything.",
+      "triggerPhrase": "Run workspace file audit",
+      "steps": [
+        {
+          "agent": "file",
+          "action": "Index permitted directory tree"
+        },
+        {
+          "agent": "file",
+          "action": "Identify duplicate candidates by name and size"
+        },
+        {
+          "agent": "core",
+          "action": "Report findings for user review"
+        }
+      ],
+      "enabled": true,
+      "runCount": 0
+    }
+  ],
+  "apps": [
+    {
+      "id": "app-vscode",
+      "name": "Visual Studio Code",
+      "category": "development",
+      "command": "code",
+      "installed": false,
+      "pinned": true,
+      "description": "Source code editor and workspace IDE"
+    },
+    {
+      "id": "app-chrome",
+      "name": "Google Chrome",
+      "category": "browser",
+      "command": "google-chrome",
+      "installed": false,
+      "pinned": true,
+      "description": "Web browser and developer inspector"
+    },
+    {
+      "id": "app-terminal",
+      "name": "Windows Terminal",
+      "category": "system",
+      "command": "wt",
+      "installed": false,
+      "pinned": true,
+      "description": "PowerShell, CMD, and WSL command shell"
+    },
+    {
+      "id": "app-explorer",
+      "name": "File Explorer",
+      "category": "system",
+      "command": "explorer",
+      "installed": false,
+      "pinned": true,
+      "description": "Local desktop file manager",
+      "lastUsed": "2026-11-21T15:38:01.734Z"
+    },
+    {
+      "id": "app-whatsapp",
+      "name": "WhatsApp Desktop",
+      "category": "communication",
+      "command": "whatsapp",
+      "installed": false,
+      "pinned": false,
+      "description": "Desktop messaging client",
+      "lastUsed": "2026-11-21T09:13:47.892Z"
+    },
+    {
+      "id": "app-android-studio",
+      "name": "Android Studio",
+      "category": "development",
+      "command": "studio64",
+      "installed": false,
+      "pinned": false,
+      "description": "Mobile SDK & emulator environment",
+      "lastUsed": "2026-11-21T15:37:56.077Z"
+    },
+    {
+      "id": "app-spotify",
+      "name": "Media Player",
+      "category": "media",
+      "command": "spotify",
+      "installed": false,
+      "pinned": false,
+      "description": "Audio playback & playlists",
+      "lastUsed": "2026-11-21T15:37:59.295Z"
+    },
+    {
+      "id": "app-notes",
+      "name": "Notes & Scratchpad",
+      "category": "productivity",
+      "command": "notepad",
+      "installed": false,
+      "pinned": false,
+      "description": "Quick plain-text note capture",
+      "lastUsed": "2026-11-21T15:38:00.049Z"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "name": "F.R.I.D.A.Y. Command Center",
+  "description": "Fully Responsive Intelligent Digital Assistant for You — Personal desktop AI command center with 3D neural core, voice interface, multi-agent orchestration, real-time telemetry, file intelligence, and browser research.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

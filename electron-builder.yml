@@ -1,0 +1,24 @@
+appId: com.friday.desktop.assistant
+productName: F.R.I.D.A.Y. Command Center
+directories:
+  output: release
+  buildResources: electron
+files:
+  - dist/**/*
+  - server.ts
+  - server/**/*
+  - electron/**/*
+  - package.json
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: FRIDAY-Setup-${version}.exe
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: F.R.I.D.A.Y.
