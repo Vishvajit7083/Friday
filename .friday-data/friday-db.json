@@ -1,7 +1,7 @@
 {
   "settings": {
     "assistantName": "F.R.I.D.A.Y.",
-    "userName": "Vishvajit",
+    "userName": "Siddesh",
     "wakeWord": "Hey Friday",
     "aiModel": "local-auto",
     "ollamaModel": "",
@@ -16,9 +16,9 @@
     "reopenShortcut": "Ctrl+Shift+Space",
     "startFullscreen": true,
     "launchOnStartup": false,
-    "themeAccent": "cyan",
+    "themeAccent": "violet",
     "animationQuality": "high",
-    "weatherLocation": "San Francisco, US",
+    "weatherLocation": "Kolhapur, MH",
     "allowedFolders": [
       "/app/applet"
     ],
@@ -32,7 +32,7 @@
       "performanceMode": false
     },
     "hologram": {
-      "mode": "orbital",
+      "mode": "telemetry-sphere",
       "projectionBeam": true,
       "scanlineIntensity": 0.65,
       "holoOpacity": 0.85,
@@ -172,7 +172,7 @@
     {
       "id": "msg-1795275590779-a",
       "role": "assistant",
-      "content": "Telemetry received, Vishvajit. Here is the current performance analysis:\n\n*   **CPU Utilization:** 65% across 4 cores. This is moderately high for an idle state; I recommend checking for background processes consuming cycles.\n*   **Memory (RAM):** 1.2 GB used of 12 GB available (10%). Utilization is very healthy.\n*   **Storage:** 0.3 GB used of 188.4 GB. You have ample disk space.\n*   **Network:** No active traffic detected.\n\n**Technical Note:** As I am operating within a sandboxed Linux environment, I can provide system-level telemetry, but I cannot access hardware-specific thermal sensors or Windows-exclusive performance utilities (like Task Manager's deeper process trees) directly. \n\nWould you like me to run a diagnostic command to identify which specific processes are driving that 65% CPU usage?",
+      "content": "Telemetry received, Siddesh. Here is the current performance analysis:\n\n*   **CPU Utilization:** 65% across 4 cores. This is moderately high for an idle state; I recommend checking for background processes consuming cycles.\n*   **Memory (RAM):** 1.2 GB used of 12 GB available (10%). Utilization is very healthy.\n*   **Storage:** 0.3 GB used of 188.4 GB. You have ample disk space.\n*   **Network:** No active traffic detected.\n\n**Technical Note:** As I am operating within a sandboxed Linux environment, I can provide system-level telemetry, but I cannot access hardware-specific thermal sensors or Windows-exclusive performance utilities (like Task Manager's deeper process trees) directly. \n\nWould you like me to run a diagnostic command to identify which specific processes are driving that 65% CPU usage?",
       "timestamp": "2026-11-21T15:39:50.779Z",
       "intent": "system_telemetry",
       "steps": [
@@ -201,7 +201,7 @@
     {
       "id": "msg-1795281387797-a",
       "role": "assistant",
-      "content": "Telemetry analysis complete, Vishvajit.\n\nSystem performance is currently nominal. CPU load is moderate at 54% across 4 cores, likely due to background processing. Memory usage is low at 10% (1.3/12 GB), and storage and network activity are effectively idle.\n\nEverything is running within normal parameters. Do you require a deeper diagnostic or specific process monitoring?",
+      "content": "Telemetry analysis complete, Siddesh.\n\nSystem performance is currently nominal. CPU load is moderate at 54% across 4 cores, likely due to background processing. Memory usage is low at 10% (1.3/12 GB), and storage and network activity are effectively idle.\n\nEverything is running within normal parameters. Do you require a deeper diagnostic or specific process monitoring?",
       "timestamp": "2026-11-21T17:16:27.797Z",
       "intent": "system_telemetry",
       "steps": [
@@ -345,7 +345,7 @@
     {
       "id": "msg-1795281845158-a",
       "role": "assistant",
-      "content": "Hello Vishvajit. F.R.I.D.A.Y. is online in fast local mode—ask me to open apps, find files, play music, check your system, or search the internet.",
+      "content": "Hello Siddesh. F.R.I.D.A.Y. is online in fast local mode—ask me to open apps, find files, play music, check your system, or search the internet.",
       "timestamp": "2026-11-21T17:24:05.158Z",
       "intent": "general_assistant",
       "steps": [
@@ -506,9 +506,438 @@
         "modelMs": 623,
         "totalMs": 624
       }
+    },
+    {
+      "id": "msg-1795285214939-u",
+      "role": "user",
+      "content": "What is 125 * 48?",
+      "timestamp": "2026-11-21T18:20:14.939Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795285214942-a",
+      "role": "assistant",
+      "content": "The result is 6000.",
+      "timestamp": "2026-11-21T18:20:14.942Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 5,
+        "toolMs": 1,
+        "firstTokenMs": 7,
+        "modelMs": 2,
+        "totalMs": 8
+      }
+    },
+    {
+      "id": "msg-1795285281283-u",
+      "role": "user",
+      "content": "What is 125 * 48?",
+      "timestamp": "2026-11-21T18:21:21.283Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795285281284-a",
+      "role": "assistant",
+      "content": "The result is 6000.",
+      "timestamp": "2026-11-21T18:21:21.284Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 4,
+        "toolMs": 0,
+        "firstTokenMs": 5,
+        "modelMs": 1,
+        "totalMs": 5
+      }
+    },
+    {
+      "id": "msg-1795285352100-u",
+      "role": "user",
+      "content": "What is 125 * 48?",
+      "timestamp": "2026-11-21T18:22:32.100Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795285352101-a",
+      "role": "assistant",
+      "content": "The result is 6000.",
+      "timestamp": "2026-11-21T18:22:32.101Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 1,
+        "toolMs": 0,
+        "firstTokenMs": 2,
+        "modelMs": 1,
+        "totalMs": 2
+      }
+    },
+    {
+      "id": "msg-1795285414527-u",
+      "role": "user",
+      "content": "What is 125 * 48?",
+      "timestamp": "2026-11-21T18:23:34.527Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795285414528-a",
+      "role": "assistant",
+      "content": "The result is 6000.",
+      "timestamp": "2026-11-21T18:23:34.528Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 1,
+        "toolMs": 0,
+        "firstTokenMs": 2,
+        "modelMs": 1,
+        "totalMs": 2
+      }
+    },
+    {
+      "id": "msg-1795286458117-u",
+      "role": "user",
+      "content": "What is 125 * 48?",
+      "timestamp": "2026-11-21T18:40:58.117Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795286458120-a",
+      "role": "assistant",
+      "content": "The result is 6000.",
+      "timestamp": "2026-11-21T18:40:58.120Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 6,
+        "toolMs": 0,
+        "firstTokenMs": 8,
+        "modelMs": 3,
+        "totalMs": 9
+      }
+    },
+    {
+      "id": "msg-1795286640699-u",
+      "role": "user",
+      "content": "What is 125 * 48?",
+      "timestamp": "2026-11-21T18:44:00.699Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795286640703-a",
+      "role": "assistant",
+      "content": "The result is 6000.",
+      "timestamp": "2026-11-21T18:44:00.703Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 6,
+        "toolMs": 1,
+        "firstTokenMs": 9,
+        "modelMs": 3,
+        "totalMs": 10
+      }
+    },
+    {
+      "id": "msg-1795325003728-u",
+      "role": "user",
+      "content": "What is 125 * 48?",
+      "timestamp": "2026-11-22T05:23:23.728Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795325003732-a",
+      "role": "assistant",
+      "content": "The result is 6000.",
+      "timestamp": "2026-11-22T05:23:23.732Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 8,
+        "toolMs": 0,
+        "firstTokenMs": 11,
+        "modelMs": 3,
+        "totalMs": 12
+      }
+    },
+    {
+      "id": "msg-1795325149066-u",
+      "role": "user",
+      "content": "What is 125 * 48?",
+      "timestamp": "2026-11-22T05:25:49.066Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795325149070-a",
+      "role": "assistant",
+      "content": "The result is 6000.",
+      "timestamp": "2026-11-22T05:25:49.070Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 6,
+        "toolMs": 0,
+        "firstTokenMs": 10,
+        "modelMs": 3,
+        "totalMs": 10
+      }
+    },
+    {
+      "id": "msg-1795325205285-u",
+      "role": "user",
+      "content": "What is 125 * 48?",
+      "timestamp": "2026-11-22T05:26:45.285Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795325205287-a",
+      "role": "assistant",
+      "content": "The result is 6000.",
+      "timestamp": "2026-11-22T05:26:45.287Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 4,
+        "toolMs": 0,
+        "firstTokenMs": 5,
+        "modelMs": 2,
+        "totalMs": 6
+      }
+    },
+    {
+      "id": "msg-1795325261456-u",
+      "role": "user",
+      "content": "What is 125 * 48?",
+      "timestamp": "2026-11-22T05:27:41.456Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795325261459-a",
+      "role": "assistant",
+      "content": "The result is 6000.",
+      "timestamp": "2026-11-22T05:27:41.459Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 1,
+        "toolMs": 0,
+        "firstTokenMs": 3,
+        "modelMs": 3,
+        "totalMs": 4
+      }
+    },
+    {
+      "id": "msg-1795325313745-u",
+      "role": "user",
+      "content": "What is 125 * 48?",
+      "timestamp": "2026-11-22T05:28:33.745Z",
+      "intent": "general_assistant"
+    },
+    {
+      "id": "msg-1795325313747-a",
+      "role": "assistant",
+      "content": "The result is 6000.",
+      "timestamp": "2026-11-22T05:28:33.747Z",
+      "intent": "general_assistant",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Synthesize local contextual response",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 0,
+        "toolMs": 0,
+        "firstTokenMs": 2,
+        "modelMs": 2,
+        "totalMs": 2
+      }
     }
   ],
   "actionLogs": [
+    {
+      "id": "log-1795325313747-aq1q",
+      "timestamp": "2026-11-22T05:28:33.747Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "What is 125 * 48?",
+      "status": "completed",
+      "detail": "Engine: local-core · 2ms"
+    },
+    {
+      "id": "log-1795325261459-7085",
+      "timestamp": "2026-11-22T05:27:41.459Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "What is 125 * 48?",
+      "status": "completed",
+      "detail": "Engine: local-core · 4ms"
+    },
+    {
+      "id": "log-1795325205287-4e5f",
+      "timestamp": "2026-11-22T05:26:45.287Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "What is 125 * 48?",
+      "status": "completed",
+      "detail": "Engine: local-core · 6ms"
+    },
+    {
+      "id": "log-1795325149070-52z3",
+      "timestamp": "2026-11-22T05:25:49.070Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "What is 125 * 48?",
+      "status": "completed",
+      "detail": "Engine: local-core · 10ms"
+    },
+    {
+      "id": "log-1795325003732-8tww",
+      "timestamp": "2026-11-22T05:23:23.732Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "What is 125 * 48?",
+      "status": "completed",
+      "detail": "Engine: local-core · 12ms"
+    },
+    {
+      "id": "log-1795286640703-pqp0",
+      "timestamp": "2026-11-21T18:44:00.703Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "What is 125 * 48?",
+      "status": "completed",
+      "detail": "Engine: local-core · 10ms"
+    },
+    {
+      "id": "log-1795286458120-2q7g",
+      "timestamp": "2026-11-21T18:40:58.120Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "What is 125 * 48?",
+      "status": "completed",
+      "detail": "Engine: local-core · 9ms"
+    },
+    {
+      "id": "log-1795285414528-qux0",
+      "timestamp": "2026-11-21T18:23:34.528Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "What is 125 * 48?",
+      "status": "completed",
+      "detail": "Engine: local-core · 2ms"
+    },
+    {
+      "id": "log-1795285352101-anl3",
+      "timestamp": "2026-11-21T18:22:32.101Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "What is 125 * 48?",
+      "status": "completed",
+      "detail": "Engine: local-core · 2ms"
+    },
+    {
+      "id": "log-1795285281284-ecm9",
+      "timestamp": "2026-11-21T18:21:21.285Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "What is 125 * 48?",
+      "status": "completed",
+      "detail": "Engine: local-core · 5ms"
+    },
+    {
+      "id": "log-1795285214942-y00m",
+      "timestamp": "2026-11-21T18:20:14.942Z",
+      "agent": "core",
+      "action": "Command (general_assistant)",
+      "target": "What is 125 * 48?",
+      "status": "completed",
+      "detail": "Engine: local-core · 8ms"
+    },
     {
       "id": "log-1795282549717-h1e0",
       "timestamp": "2026-11-21T17:35:49.717Z",

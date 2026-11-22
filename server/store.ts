@@ -33,7 +33,7 @@ function getTodayIsoDate(offsetDays = 0): string {
 const DEFAULT_DB: FridayDatabase = {
   settings: {
     assistantName: 'F.R.I.D.A.Y.',
-    userName: 'Vishvajit',
+    userName: 'Siddesh',
     wakeWord: 'Hey Friday',
     aiModel: 'local-auto',
     ollamaModel: '',
@@ -48,9 +48,9 @@ const DEFAULT_DB: FridayDatabase = {
     reopenShortcut: 'Ctrl+Shift+Space',
     startFullscreen: true,
     launchOnStartup: false,
-    themeAccent: 'cyan',
+    themeAccent: 'violet',
     animationQuality: 'high',
-    weatherLocation: 'San Francisco, US',
+    weatherLocation: 'Kolhapur, MH',
     allowedFolders: getDefaultPermittedFolders(),
     pausedIndexing: false,
     screenCaptureConsent: false,
@@ -303,6 +303,9 @@ export function loadDb(): FridayDatabase {
 
     if (!hasGemKey && mergedSettings.aiModel?.startsWith('gemini-')) {
       mergedSettings.aiModel = 'local-auto';
+    }
+    if (mergedSettings.userName === 'Vishvajit Pawar' || mergedSettings.userName === 'Vishvajit') {
+      mergedSettings.userName = 'Siddesh';
     }
     if (mergedSettings.reopenShortcut === 'Ctrl+Space') {
       mergedSettings.reopenShortcut = 'Ctrl+Shift+Space';

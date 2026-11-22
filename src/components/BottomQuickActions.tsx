@@ -1,10 +1,10 @@
 import {
-  Activity,
-  FilePlus,
   FileText,
-  FolderOpen,
+  Folder,
+  FolderInput,
+  FolderSearch,
   Globe,
-  Search,
+  Monitor,
   Zap,
 } from 'lucide-react';
 import type { NavSection } from '../core/types';
@@ -23,14 +23,14 @@ export function BottomQuickActions({
       id: 'open-app',
       title: 'Open App',
       subtitle: '(e.g. Open Chrome)',
-      icon: FolderOpen,
+      icon: FolderInput,
       onClick: () => onSelectSection('applications'),
     },
     {
       id: 'search-file',
       title: 'Search File',
       subtitle: '(e.g. Find my report)',
-      icon: Search,
+      icon: FolderSearch,
       onClick: () => onSelectSection('file-explorer'),
     },
     {
@@ -51,14 +51,14 @@ export function BottomQuickActions({
       id: 'create',
       title: 'Create',
       subtitle: '(Folder / File / Note)',
-      icon: FilePlus,
+      icon: Folder,
       onClick: () => onSelectSection('calendar'),
     },
     {
       id: 'system',
       title: 'System',
       subtitle: '(Performance / Clean)',
-      icon: Activity,
+      icon: Monitor,
       onClick: () => onRunQuickCommand('Check laptop performance'),
     },
   ];
@@ -66,15 +66,15 @@ export function BottomQuickActions({
   return (
     <footer
       aria-label="Quick Actions Bar"
-      className="relative z-20 shrink-0 px-3 sm:px-4 py-2 border-t border-cyan-500/20 bg-[#040a18]/88"
+      className="relative z-20 shrink-0 px-3 sm:px-4 pt-1 pb-2.5 bg-transparent"
     >
-      <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+      <div className="flex items-center gap-2.5 overflow-x-auto pb-0.5">
         <button
           type="button"
           onClick={() => onSelectSection('tasks-workflows')}
-          className="hud-panel-active px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs font-semibold text-cyan-100 whitespace-nowrap shrink-0 hover:brightness-110 transition-all"
+          className="hud-quick-card-active px-4 py-2.5 rounded-xl flex items-center gap-2.5 text-xs font-semibold text-white whitespace-nowrap shrink-0 hover:brightness-110 transition-all"
         >
-          <Zap className="w-4 h-4 text-cyan-300" aria-hidden="true" />
+          <Zap className="w-4 h-4 text-fuchsia-200 drop-shadow-[0_0_8px_rgba(232,121,249,0.95)]" aria-hidden="true" />
           <span>Quick Actions</span>
         </button>
 
@@ -85,12 +85,12 @@ export function BottomQuickActions({
               key={act.id}
               type="button"
               onClick={act.onClick}
-              className="flex-1 min-w-[148px] hud-panel px-3 py-1.5 rounded-xl flex items-center gap-2.5 text-left hover:border-cyan-400/60 hover:bg-cyan-500/10 transition-all shrink-0"
+              className="flex-1 min-w-[148px] hud-quick-card px-3.5 py-2 rounded-xl flex items-center gap-2.5 text-left hover:border-fuchsia-400/75 hover:bg-purple-950/55 transition-all shrink-0"
             >
-              <Icon className="w-4 h-4 text-cyan-300 shrink-0" aria-hidden="true" />
+              <Icon className="w-4 h-4 text-purple-200 shrink-0" aria-hidden="true" />
               <div className="min-w-0 leading-tight">
-                <div className="text-xs font-semibold text-slate-100 truncate">{act.title}</div>
-                <div className="text-[10px] text-slate-400 truncate">{act.subtitle}</div>
+                <div className="text-xs font-semibold text-white truncate">{act.title}</div>
+                <div className="text-[10px] text-purple-200/70 truncate">{act.subtitle}</div>
               </div>
             </button>
           );

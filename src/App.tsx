@@ -93,7 +93,7 @@ interface SpeechRecognitionInstance {
 
 const DEFAULT_SETTINGS: AssistantSettings = {
   assistantName: 'F.R.I.D.A.Y.',
-  userName: 'Vishvajit',
+  userName: 'Siddesh',
   wakeWord: 'Hey Friday',
   aiModel: 'local-auto',
   ollamaModel: '',
@@ -108,9 +108,9 @@ const DEFAULT_SETTINGS: AssistantSettings = {
   reopenShortcut: 'Ctrl+Shift+Space',
   startFullscreen: true,
   launchOnStartup: false,
-  themeAccent: 'cyan',
+  themeAccent: 'violet',
   animationQuality: 'high',
-  weatherLocation: 'San Francisco, US',
+  weatherLocation: 'Kolhapur, MH',
   allowedFolders: ['.'],
   pausedIndexing: false,
   screenCaptureConsent: false,
@@ -1129,7 +1129,7 @@ export default function App() {
   }
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden flex flex-col bg-[#040814] text-slate-100">
+    <div className="relative w-screen h-screen overflow-hidden flex flex-col bg-[#05020c] text-purple-50">
       <LiveWallpaper settings={settings.wallpaper} themeAccent={settings.themeAccent} />
 
       {/* Top HUD Command Header */}
@@ -1162,7 +1162,7 @@ export default function App() {
         {/* Mobile Navigation Drawer */}
         {mobileNavOpen && (
           <div className="fixed inset-0 z-40 md:hidden flex">
-            <div className="relative z-50 h-full bg-[#040814]/95">
+            <div className="relative z-50 h-full bg-[#06020e]/95">
               <LeftSidebar
                 activeSection={activeSection}
                 onSelectSection={(sec) => {
