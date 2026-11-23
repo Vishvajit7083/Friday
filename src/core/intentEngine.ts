@@ -1,12 +1,22 @@
 import type { AgentId, ExecutionStep } from './types';
 
+import { tryConvertUnits } from './unitConverter';
+import { tryTranslateCommand } from './translator';
+import { parseProductivityCommand } from './productivityTools';
+
 export type IntentCategory =
   | 'system_telemetry'
   | 'file_search'
   | 'web_search'
   | 'app_control'
+  | 'phone_control'
   | 'media_control'
   | 'calendar_schedule'
+  | 'note_todo'
+  | 'alarm_reminder'
+  | 'unit_convert'
+  | 'translate'
+  | 'read_aloud'
   | 'memory_manage'
   | 'vision_screen'
   | 'media_analyze'
@@ -25,13 +35,14 @@ export interface ParsedIntent {
 
 const SENSITIVE_PATTERNS = [
   /\b(delete|remove|erase|wipe|format|overwrite|destroy)\b/i,
-  /\b(send\s+(email|message|whatsapp)|purchase|buy|pay|transfer|install\s+software)\b/i,
+  /\b(send\s+(email|message|sms|whatsapp)|purchase|buy|pay|transfer|install\s+software)\b/i,
   /\b(cancel\s+(all|meeting|event)|shutdown|restart\s+pc)\b/i,
   /\b(close|kill|terminate)\s+[a-z0-9._-]+/i,
+  /\b(?:call|dial|phone)\s+[a-z0-9+._-]+/i,
 ];
 
 const SYSTEM_PATTERNS = [
-  /\b(cpu|ram|memory\s+usage|gpu|battery|network|disk|storage|performance|system\s+monitor|diagnostics|uptime|running\s+processes)\b/i,
+  /\b(cpu|ram|memory\s+usage|gpu|battery|network|disk|storage|performance|system\s+monitor|diagnostics|uptime|running\s+processes|device\s+info)\b/i,
 ];
 
 const MEDIA_CONTROL_PATTERNS = [
@@ -49,9 +60,17 @@ const FILE_PATTERNS = [
 ];
 
 const WEB_PATTERNS = [
-  /\b(search\s+google|google\s+search|search\s+online|search\s+the\s+(web|internet)|latest\s+news|latest\s+information|research|youtube|website|summarize\s+https?:)\b/i,
-  /\b(what\s+is\s+the\s+latest|who\s+won|news\s+about|best\s+.*projects)\b/i,
+  /\b(search\s+google|google\s+search|search\s+online|search\s+the\s+(web|internet)|latest\s+news|latest\s+information|research|website|summarize\s+https?:)\b/i,
+  /\b(search\s+youtube|find\s+on\s+youtube|what\s+is\s+the\s+latest|who\s+won|news\s+about|best\s+.*projects)\b/i,
   /https?:\/\/\S+/i,
+];
+
+const PHONE_CONTROL_PATTERNS = [
+  /\b(turn\s+(on|off)|enable|disable|toggle)\s+(the\s+)?(flashlight|torch)\b/i,
+  /\b(open|go\s+to|show)\s+(wi-?fi|wifi|bluetooth|display|brightness|sound|volume|app|application|notification|battery|android)\s*(settings?)?\b/i,
+  /\b(open|launch)\s+(camera|gallery|photos|contacts|dialer|phone|maps|youtube)\b/i,
+  /\b(navigate\s+to|directions\s+to|search\s+maps\s+for)\s+.+/i,
+  /\b(copy\s+to\s+clipboard|share\s+(this|text|note))\b/i,
 ];
 
 const APP_PATTERNS = [
@@ -97,19 +116,83 @@ export function analyzeUserCommand(command: string): ParsedIntent {
 
   if (isSensitive) {
     const isWindowClose = /\b(close|kill|terminate)\s+[a-z0-9._-]+/i.test(trimmed);
+    const isPhoneCall = /\b(?:call|dial|phone)\s+[a-z0-9+._-]+/i.test(trimmed);
     return {
       category: 'sensitive_action',
       agents: isWindowClose ? ['core', 'application', 'automation'] : ['core', 'automation'],
       requiresConfirmation: true,
       confirmationReason: isWindowClose
-        ? 'Closing a running Windows application can discard unsaved work and requires confirmation.'
-        : 'Action modifies or deletes files, sends external communication, or alters important schedule state.',
+        ? 'Closing a running application can discard unsaved work and requires confirmation.'
+        : isPhoneCall
+          ? 'Placing a phone call or opening a dial action requires explicit confirmation before launching the dialer.'
+          : 'Action modifies or deletes files, sends external communication, or alters important schedule state.',
       extractedTarget: trimmed,
       steps: [
         { id: 'step-1', agent: 'core', title: 'Evaluate command intent & safety boundaries', status: 'completed' },
         { id: 'step-2', agent: 'automation', title: 'Await explicit user confirmation', status: 'requires_confirmation', detail: trimmed },
       ],
     };
+  }
+
+  if (tryConvertUnits(trimmed) !== null) {
+    return {
+      category: 'unit_convert',
+      agents: ['core'],
+      requiresConfirmation: false,
+      extractedTarget: trimmed,
+      steps: [
+        { id: 'step-1', agent: 'core', title: 'Compute offline unit conversion', status: 'completed' },
+      ],
+    };
+  }
+
+  if (tryTranslateCommand(trimmed) !== null) {
+    return {
+      category: 'translate',
+      agents: ['core'],
+      requiresConfirmation: false,
+      extractedTarget: trimmed,
+      steps: [
+        { id: 'step-1', agent: 'core', title: 'Translate phrase (English / Hindi / Marathi)', status: 'completed' },
+      ],
+    };
+  }
+
+  const prodAction = parseProductivityCommand(trimmed);
+  if (prodAction) {
+    if (prodAction.kind === 'read_aloud') {
+      return {
+        category: 'read_aloud',
+        agents: ['core', 'voice'],
+        requiresConfirmation: false,
+        extractedTarget: prodAction.detail || trimmed,
+        steps: [
+          { id: 'step-1', agent: 'voice', title: 'Prepare natural voice playback', status: 'completed' },
+        ],
+      };
+    }
+    if (prodAction.kind === 'alarm_set' || prodAction.kind === 'reminder_add') {
+      return {
+        category: 'alarm_reminder',
+        agents: ['core', 'calendar'],
+        requiresConfirmation: false,
+        extractedTarget: trimmed,
+        steps: [
+          { id: 'step-1', agent: 'calendar', title: 'Create local reminder or device alarm', status: 'running' },
+        ],
+      };
+    }
+    if (prodAction.kind === 'note_add' || prodAction.kind === 'list_notes' || prodAction.kind === 'todo_add' || prodAction.kind === 'list_todos') {
+      return {
+        category: 'note_todo',
+        agents: ['core', 'memory'],
+        requiresConfirmation: false,
+        extractedTarget: trimmed,
+        steps: [
+          { id: 'step-1', agent: 'memory', title: 'Update local Notes & To-Do workspace', status: 'running' },
+        ],
+      };
+    }
   }
 
   if (WORKFLOW_PATTERNS.some((rx) => rx.test(trimmed))) {
@@ -173,6 +256,19 @@ export function analyzeUserCommand(command: string): ParsedIntent {
       steps: [
         { id: 'step-1', agent: 'core', title: 'Classify hardware diagnostics request', status: 'completed' },
         { id: 'step-2', agent: 'system', title: 'Query live CPU, memory, storage & network sensors', status: 'running' },
+      ],
+    };
+  }
+
+  if (PHONE_CONTROL_PATTERNS.some((rx) => rx.test(trimmed))) {
+    return {
+      category: 'phone_control',
+      agents: ['core', 'application', 'system'],
+      requiresConfirmation: false,
+      extractedTarget: trimmed,
+      steps: [
+        { id: 'step-1', agent: 'core', title: 'Parse Android/device system control intent', status: 'completed' },
+        { id: 'step-2', agent: 'application', title: 'Dispatch device bridge or app action', status: 'running' },
       ],
     };
   }
@@ -311,7 +407,14 @@ export function tryEvaluateSafeMath(rawCommand: string): string | null {
   const cleaned = rawCommand
     .trim()
     .toLowerCase()
-    .replace(/^(what is|calculate|compute|evaluate|solve|find)\s+/i, '')
+    .replace(/^(?:hey\s+friday[,\s]+|friday[,\s]+)?(?:what is|calculate|compute|evaluate|solve|find)\s+/i, '')
+    .replace(/\bmultiplied\s+by\b/g, '*')
+    .replace(/\btimes\b/g, '*')
+    .replace(/\bdivided\s+by\b/g, '/')
+    .replace(/\bover\b/g, '/')
+    .replace(/\bplus\b/g, '+')
+    .replace(/\bminus\b/g, '-')
+    .replace(/\bmodulo\b/g, '%')
     .replace(/[?=\s]+$/g, '')
     .trim();
 

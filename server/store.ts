@@ -40,6 +40,7 @@ const DEFAULT_DB: FridayDatabase = {
     voiceName: 'Kore',
     voiceGender: 'female',
     speakingSpeed: 1.0,
+    speakingPitch: 1.0,
     language: 'en-US',
     continuousListening: false,
     wakeWordEnabled: true,

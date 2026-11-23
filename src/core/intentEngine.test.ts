@@ -132,6 +132,7 @@ test('sanitizes local-first AI model settings and rejects unsafe ollamaModel cha
     voiceName: 'Kore',
     voiceGender: 'female',
     speakingSpeed: 1,
+    speakingPitch: 1,
     language: 'en-US',
     continuousListening: false,
     wakeWordEnabled: true,

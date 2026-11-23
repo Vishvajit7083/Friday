@@ -341,7 +341,22 @@ export function VoiceAssistantView({
           </label>
 
           <label className="block space-y-1.5 text-xs">
-            <span className="text-slate-300 font-medium">Recognition Language</span>
+            <span className="text-slate-300 font-medium">
+              Speaking Pitch ({(settings.speakingPitch ?? 1.0).toFixed(2)}x)
+            </span>
+            <input
+              type="range"
+              min="0.6"
+              max="1.5"
+              step="0.05"
+              value={settings.speakingPitch ?? 1.0}
+              onChange={(e) => onUpdateSettings({ speakingPitch: Number(e.target.value) })}
+              className="w-full accent-cyan-400"
+            />
+          </label>
+
+          <label className="block space-y-1.5 text-xs md:col-span-2">
+            <span className="text-slate-300 font-medium">Recognition & Voice Language</span>
             <select
               value={settings.language}
               onChange={(e) => onUpdateSettings({ language: e.target.value })}
@@ -350,6 +365,8 @@ export function VoiceAssistantView({
               <option value="en-US">English (US)</option>
               <option value="en-GB">English (UK)</option>
               <option value="en-IN">English (India)</option>
+              <option value="hi-IN">Hindi (हिन्दी · India)</option>
+              <option value="mr-IN">Marathi (मराठी · India)</option>
               <option value="es-ES">Spanish</option>
               <option value="fr-FR">French</option>
               <option value="de-DE">German</option>
@@ -401,7 +418,7 @@ export function VoiceAssistantView({
       <div className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3">
         <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
           <Volume2 className="w-4 h-4 text-cyan-400" aria-hidden="true" />
-          <span>Local Windows / Neural Text-to-Speech Test</span>
+          <span>Local Device / Neural Text-to-Speech Test</span>
         </h3>
         <div className="flex flex-col sm:flex-row gap-2">
           <input
@@ -450,10 +467,16 @@ export function ApplicationsView({
         fetch('/api/system/processes'),
         fetch('/api/apps/windows'),
       ]);
-      const procData = await procRes.json();
-      const winData = await winRes.json();
-      setProcesses(procData.processes ?? []);
-      setWindowsList(winData.windows ?? []);
+      if (procRes.ok) {
+        const procData = await procRes.json();
+        setProcesses(procData.processes ?? []);
+      }
+      if (winRes.ok) {
+        const winData = await winRes.json();
+        setWindowsList(winData.windows ?? []);
+      }
+    } catch {
+      // Offline / Android local runtime has no localhost Express process daemon
     } finally {
       setLoadingProc(false);
     }

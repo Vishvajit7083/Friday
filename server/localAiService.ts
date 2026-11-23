@@ -11,6 +11,9 @@ import type { WebPageExtract, WebSearchResultItem } from './internetResearchServ
 import { buildExtractiveSummary } from './internetResearchService.ts';
 import { formatBytes } from '../src/core/fileIndex.ts';
 import { tryEvaluateSafeMath } from '../src/core/intentEngine.ts';
+import { tryConvertUnits } from '../src/core/unitConverter.ts';
+import { tryTranslateCommand } from '../src/core/translator.ts';
+import { parseProductivityCommand, summarizeTextExtractive } from '../src/core/productivityTools.ts';
 
 export interface OllamaStatus {
   available: boolean;
@@ -439,6 +442,24 @@ export function buildLocalDeterministicReply(params: {
   if (params.weather) {
     const w = params.weather;
     return `Live weather in ${w.location}: ${w.temperature}°C (${w.condition}), feels like ${w.feelsLike}°C, humidity ${w.humidity}%, wind ${w.windSpeedKmh} km/h.`;
+  }
+
+  const unitResult = tryConvertUnits(params.userCommand);
+  if (unitResult) {
+    return unitResult.explanation;
+  }
+
+  const translateResult = tryTranslateCommand(params.userCommand);
+  if (translateResult) {
+    return translateResult.explanation;
+  }
+
+  const prod = parseProductivityCommand(params.userCommand);
+  if (prod?.kind === 'summarize' && prod.detail) {
+    return `Summary:\n${summarizeTextExtractive(prod.detail, 3)}`;
+  }
+  if (prod?.kind === 'read_aloud' && prod.detail) {
+    return prod.detail;
   }
 
   const mathAnswer = tryEvaluateSafeMath(params.userCommand);

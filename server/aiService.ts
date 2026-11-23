@@ -10,6 +10,9 @@ import type {
 } from '../src/core/types.ts';
 import { analyzeUserCommand, isKnowledgeQuestion, tryEvaluateSafeMath } from '../src/core/intentEngine.ts';
 import { searchIndexedFiles, formatBytes } from '../src/core/fileIndex.ts';
+import { tryConvertUnits } from '../src/core/unitConverter.ts';
+import { tryTranslateCommand } from '../src/core/translator.ts';
+import { parseProductivityCommand } from '../src/core/productivityTools.ts';
 import { appendActionLog, loadDb, saveDb } from './store.ts';
 import { getSystemTelemetry, handleAppOrWindowCommand } from './systemService.ts';
 import { getWeatherForLocation } from './weatherService.ts';
@@ -645,6 +648,37 @@ export async function streamAssistantCommand(
     }
   }
 
+  const prodCmd = parseProductivityCommand(userCommand);
+  if (prodCmd) {
+    if (prodCmd.kind === 'reminder_add' || prodCmd.kind === 'alarm_set') {
+      const date = prodCmd.date || new Date().toISOString().slice(0, 10);
+      const time = prodCmd.time || '09:00';
+      db.calendar.unshift({
+        id: `evt-${Date.now()}`,
+        title: prodCmd.title,
+        date,
+        time,
+        category: 'reminder',
+        completed: false,
+        createdAt: new Date().toISOString(),
+      });
+      memorySaved = `${prodCmd.title} (${date} at ${time})`;
+      contextParts.push(`REMINDER SCHEDULED: ${memorySaved}`);
+    } else if (prodCmd.kind === 'note_add' || prodCmd.kind === 'todo_add') {
+      const val = prodCmd.detail || prodCmd.title;
+      db.memory.unshift({
+        id: `mem-${Date.now()}`,
+        category: 'preference',
+        key: prodCmd.kind === 'note_add' ? 'Note' : 'To-Do Task',
+        value: val,
+        approved: true,
+        updatedAt: new Date().toISOString(),
+      });
+      memorySaved = val;
+      contextParts.push(`SAVED ITEM: ${val}`);
+    }
+  }
+
   const toolMs = Date.now() - tToolStart;
 
   // Stage 3: Local-First Response Generation + Token Streaming
@@ -656,7 +690,12 @@ export async function streamAssistantCommand(
   const isInstantDeterministicAction =
     parsed.category === 'media_control' ||
     parsed.category === 'app_control' ||
+    parsed.category === 'unit_convert' ||
+    parsed.category === 'translate' ||
+    parsed.category === 'read_aloud' ||
     Boolean(memorySaved) ||
+    tryConvertUnits(userCommand) !== null ||
+    tryTranslateCommand(userCommand) !== null ||
     tryEvaluateSafeMath(userCommand) !== null;
 
   const memorySummary = db.memory

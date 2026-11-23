@@ -257,6 +257,33 @@ export type AIModelPreference =
   | 'gemini-4-neon'
   | 'gemini-3.1-flash-lite';
 
+export interface NoteItem {
+  id: string;
+  title: string;
+  content: string;
+  pinned?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TodoItem {
+  id: string;
+  title: string;
+  completed: boolean;
+  priority: 'low' | 'normal' | 'high';
+  dueDate?: string;
+  createdAt: string;
+}
+
+export interface ReminderItem {
+  id: string;
+  title: string;
+  triggerDate: string;
+  triggerTime: string;
+  completed: boolean;
+  createdAt: string;
+}
+
 export interface AssistantSettings {
   assistantName: string;
   userName: string;
@@ -266,6 +293,7 @@ export interface AssistantSettings {
   voiceName: 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
   voiceGender: 'female' | 'male';
   speakingSpeed: number;
+  speakingPitch: number;
   language: string;
   continuousListening: boolean;
   wakeWordEnabled: boolean;
@@ -283,6 +311,30 @@ export interface AssistantSettings {
   wallpaper: WallpaperSettings;
   hologram: HologramSettings;
   enabledAgents: Record<AgentId, boolean>;
+}
+
+export interface FridayAndroidBridge {
+  isAndroid?: () => boolean;
+  getDeviceTelemetry?: () => string;
+  speak?: (text: string, language: string, gender: string, rate: number, pitch: number) => boolean;
+  stopSpeaking?: () => boolean;
+  startListening?: (language: string, offlinePreferred: boolean) => boolean;
+  stopListening?: () => boolean;
+  openApp?: (appQuery: string) => string;
+  openSettings?: (settingKey: string) => string;
+  setFlashlight?: (enabled: boolean) => string;
+  setAlarm?: (hour: number, minute: number, label: string) => string;
+  prepareCallDialer?: (target: string, confirmed: boolean) => string;
+  openCamera?: () => string;
+  openGallery?: () => string;
+  openMapsSearch?: (query: string) => string;
+  mediaControl?: (action: string) => string;
+  copyToClipboard?: (text: string) => string;
+  shareText?: (text: string) => string;
+  saveMemoryRecord?: (kind: string, payloadJson: string) => boolean;
+  readMemoryRecords?: (kind: string) => string;
+  searchWebPublic?: (query: string) => string;
+  getNetworkOnline?: () => boolean;
 }
 
 export interface ApiConnectionStatus {

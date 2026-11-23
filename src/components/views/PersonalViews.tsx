@@ -24,15 +24,26 @@ import type {
   ChatMessage,
   HologramMode,
   MemoryItem,
+  NoteItem,
+  TodoItem,
 } from '../../core/types';
 
 export function CalendarView({
   events,
+  notes = [],
+  todos = [],
   onCreateEvent,
   onToggleEvent,
   onDeleteEvent,
+  onAddNote,
+  onDeleteNote,
+  onAddTodo,
+  onToggleTodo,
+  onDeleteTodo,
 }: {
   events: CalendarEvent[];
+  notes?: NoteItem[];
+  todos?: TodoItem[];
   onCreateEvent: (evt: {
     title: string;
     date: string;
@@ -41,6 +52,11 @@ export function CalendarView({
   }) => Promise<void>;
   onToggleEvent: (id: string) => void;
   onDeleteEvent: (id: string) => void;
+  onAddNote?: (note: { title: string; content: string }) => void;
+  onDeleteNote?: (id: string) => void;
+  onAddTodo?: (title: string) => void;
+  onToggleTodo?: (id: string) => void;
+  onDeleteTodo?: (id: string) => void;
 }) {
   const [title, setTitle] = useState('');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -48,6 +64,9 @@ export function CalendarView({
   const [category, setCategory] = useState<CalendarEvent['category']>('meeting');
   const [briefing, setBriefing] = useState<string | null>(null);
   const [loadingBriefing, setLoadingBriefing] = useState(false);
+  const [noteTitle, setNoteTitle] = useState('');
+  const [noteContent, setNoteContent] = useState('');
+  const [todoTitle, setTodoTitle] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,8 +82,16 @@ export function CalendarView({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate daily briefing');
       setBriefing(data.briefing);
-    } catch (err) {
-      setBriefing(`Briefing unavailable: ${(err as Error).message}`);
+    } catch {
+      const upcoming = events.filter((e) => !e.completed).slice(0, 5);
+      const openTodos = todos.filter((t) => !t.completed).slice(0, 5);
+      setBriefing(
+        `Offline Daily Briefing (${new Date().toLocaleDateString()}):\n` +
+          `• Pending Calendar Items: ${upcoming.length}\n` +
+          (upcoming.map((e) => `  - ${e.date} ${e.time}: ${e.title}`).join('\n') || '  - None') +
+          `\n• Open To-Do Tasks: ${openTodos.length}\n` +
+          (openTodos.map((t) => `  - ${t.title}`).join('\n') || '  - None')
+      );
     } finally {
       setLoadingBriefing(false);
     }
@@ -189,6 +216,159 @@ export function CalendarView({
           ))
         )}
       </div>
+
+      {/* Quick To-Do Checklist & Offline Notes */}
+      {(onAddTodo || onAddNote) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 pt-2">
+          {onAddTodo && (
+            <section className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-200">
+                To-Do Checklist ({todos.filter((t) => !t.completed).length} Open)
+              </h3>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!todoTitle.trim()) return;
+                  onAddTodo(todoTitle.trim());
+                  setTodoTitle('');
+                }}
+                className="flex gap-2"
+              >
+                <input
+                  type="text"
+                  value={todoTitle}
+                  onChange={(e) => setTodoTitle(e.target.value)}
+                  placeholder="Add To-Do task..."
+                  aria-label="New To-Do task"
+                  className="flex-1 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+                />
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                >
+                  <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Add Task</span>
+                </button>
+              </form>
+              <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                {todos.length === 0 ? (
+                  <p className="text-xs text-slate-400">No tasks in checklist.</p>
+                ) : (
+                  todos.map((todo) => (
+                    <div
+                      key={todo.id}
+                      className="px-3 py-2 rounded-lg bg-slate-900/75 border border-slate-800 flex items-center justify-between gap-2"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onToggleTodo?.(todo.id)}
+                        className="flex items-center gap-2 text-left min-w-0 flex-1"
+                      >
+                        {todo.completed ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        ) : (
+                          <Circle className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                        )}
+                        <span
+                          className={`text-xs truncate ${
+                            todo.completed ? 'line-through text-slate-500' : 'text-slate-100'
+                          }`}
+                        >
+                          {todo.title}
+                        </span>
+                      </button>
+                      {onDeleteTodo && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteTodo(todo.id)}
+                          aria-label={`Delete task "${todo.title}"`}
+                          className="p-1 text-slate-400 hover:text-rose-300"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          )}
+
+          {onAddNote && (
+            <section className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-200">
+                Quick Notes ({notes.length})
+              </h3>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!noteContent.trim() && !noteTitle.trim()) return;
+                  onAddNote({
+                    title: noteTitle.trim() || noteContent.trim().slice(0, 40),
+                    content: noteContent.trim() || noteTitle.trim(),
+                  });
+                  setNoteTitle('');
+                  setNoteContent('');
+                }}
+                className="space-y-2"
+              >
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={noteTitle}
+                    onChange={(e) => setNoteTitle(e.target.value)}
+                    placeholder="Note title..."
+                    aria-label="New note title"
+                    className="flex-1 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+                  />
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400 shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Save Note</span>
+                  </button>
+                </div>
+                <textarea
+                  value={noteContent}
+                  onChange={(e) => setNoteContent(e.target.value)}
+                  rows={2}
+                  placeholder="Write note details..."
+                  aria-label="New note content"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+                />
+              </form>
+              <div className="space-y-2 max-h-56 overflow-y-auto">
+                {notes.length === 0 ? (
+                  <p className="text-xs text-slate-400">No notes saved yet.</p>
+                ) : (
+                  notes.map((n) => (
+                    <div
+                      key={n.id}
+                      className="p-2.5 rounded-lg bg-slate-900/75 border border-slate-800 flex items-start justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-slate-100 truncate">{n.title}</div>
+                        <div className="text-[11px] text-slate-300 whitespace-pre-wrap">{n.content}</div>
+                      </div>
+                      {onDeleteNote && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteNote(n.id)}
+                          aria-label={`Delete note "${n.title}"`}
+                          className="p-1 text-slate-400 hover:text-rose-300 shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
     </div>
   );
 }

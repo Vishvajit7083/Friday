@@ -1,0 +1,103 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-display: 'Outfit', system-ui, -apple-system, sans-serif;
+    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-sans);
+    background-color: #040814;
+    color: #e2e8f0;
+  }
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono-tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-panel {
+  background: linear-gradient(180deg, rgba(8, 20, 44, 0.84) 0%, rgba(5, 13, 30, 0.9) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  box-shadow:
+    0 0 24px rgba(14, 165, 233, 0.08),
+    inset 0 1px 0 rgba(125, 211, 252, 0.14);
+}
+
+.hud-panel-active {
+  background: linear-gradient(180deg, rgba(12, 34, 68, 0.9) 0%, rgba(7, 20, 44, 0.94) 100%);
+  border: 1px solid rgba(34, 211, 238, 0.68);
+  box-shadow:
+    0 0 22px rgba(34, 211, 238, 0.24),
+    inset 0 0 14px rgba(34, 211, 238, 0.12);
+}
+
+.hud-input-pill {
+  background: linear-gradient(90deg, rgba(7, 17, 38, 0.92) 0%, rgba(10, 22, 48, 0.94) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.42);
+  box-shadow:
+    0 0 28px rgba(34, 211, 238, 0.15),
+    inset 0 1px 0 rgba(186, 230, 253, 0.16);
+}
+
+@keyframes hudPulseGlow {
+  0%, 100% {
+    opacity: 0.78;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+}
+
+.hud-pedestal-glow {
+  animation: hudPulseGlow 3.6s ease-in-out infinite;
+}
+
+/* Custom sleek dark scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.4);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.25);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 189, 248, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

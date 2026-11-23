@@ -2,6 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Maximize2 } from 'lucide-react';
 import { buildAgentList } from './core/agentRegistry';
 import { extractVoiceCommand, isInterruptionCommand } from './core/intentEngine';
+import {
+  executeClientConfirmAction,
+  executeClientOfflineCommand,
+  fetchOpenMeteoClientWeather,
+  isAndroidHost,
+  loadLocalClientState,
+  readDeviceTelemetryFallback,
+  saveLocalClientState,
+  type LocalClientState,
+} from './core/localClientEngine';
 import type {
   ActionLogEntry,
   AgentId,
@@ -11,10 +21,13 @@ import type {
   CalendarEvent,
   ChatMessage,
   DesktopAppItem,
+  FridayAndroidBridge,
   HologramSettings,
   MemoryItem,
   NavSection,
+  NoteItem,
   SystemTelemetry,
+  TodoItem,
   VoiceState,
   WeatherData,
 } from './core/types';
@@ -65,6 +78,13 @@ declare global {
       quitApp?: () => Promise<{ quitting: boolean }>;
       isDesktopShell: boolean;
     };
+    fridayAndroid?: FridayAndroidBridge;
+    __fridayAndroidEvents?: {
+      onInterimText?: (text: string) => void;
+      onRecognizedText?: (text: string) => void;
+      onListeningState?: (active: boolean, status?: string) => void;
+      onSpeechState?: (speaking: boolean) => void;
+    };
     SpeechRecognition?: new () => SpeechRecognitionInstance;
     webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
   }
@@ -100,6 +120,7 @@ const DEFAULT_SETTINGS: AssistantSettings = {
   voiceName: 'Kore',
   voiceGender: 'female',
   speakingSpeed: 1.0,
+  speakingPitch: 1.0,
   language: 'en-US',
   continuousListening: false,
   wakeWordEnabled: true,
@@ -150,10 +171,13 @@ export default function App() {
   const [settings, setSettings] = useState<AssistantSettings>(DEFAULT_SETTINGS);
   const [calendar, setCalendar] = useState<CalendarEvent[]>([]);
   const [memory, setMemory] = useState<MemoryItem[]>([]);
+  const [notes, setNotes] = useState<NoteItem[]>(() => loadLocalClientState(DEFAULT_SETTINGS).notes);
+  const [todos, setTodos] = useState<TodoItem[]>(() => loadLocalClientState(DEFAULT_SETTINGS).todos);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [actionLogs, setActionLogs] = useState<ActionLogEntry[]>([]);
   const [workflows, setWorkflows] = useState<AutomationWorkflow[]>([]);
   const [apps, setApps] = useState<DesktopAppItem[]>([]);
+  const backendAvailableRef = useRef<boolean>(true);
   const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
   const [weather, setWeather] = useState<WeatherData | null>(null);
@@ -189,11 +213,47 @@ export default function App() {
   const speechQueueRef = useRef<string[]>([]);
   const speechActiveRef = useRef<boolean>(false);
 
+  const snapshotLocalState = useCallback(
+    (overrides?: Partial<LocalClientState>): LocalClientState => {
+      const existing = loadLocalClientState(settings);
+      return {
+        ...existing,
+        settings,
+        calendar,
+        memory,
+        notes,
+        todos,
+        chatHistory: messages,
+        actionLogs,
+        workflows,
+        apps,
+        ...overrides,
+      };
+    },
+    [actionLogs, apps, calendar, memory, messages, notes, settings, todos, workflows]
+  );
+
   const checkApiConnection = useCallback(async (force = false) => {
     setApiStatus((prev) => ({ ...prev, checking: true }));
+    if (isAndroidHost()) {
+      backendAvailableRef.current = false;
+      setApiStatus({
+        connected: true,
+        checking: false,
+        provider: 'F.R.I.D.A.Y. Android Local Core',
+        model: 'offline-local-v2',
+        engine: 'local-core',
+        freeWebReady: typeof navigator !== 'undefined' ? navigator.onLine : true,
+        requiresPaidKey: false,
+        latencyMs: 1,
+      });
+      return;
+    }
     try {
       const res = await fetch(`/api/health/ai${force ? '?refresh=1' : ''}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      backendAvailableRef.current = true;
       setApiStatus({
         connected: Boolean(data.connected),
         checking: false,
@@ -205,30 +265,60 @@ export default function App() {
         latencyMs: data.latencyMs,
         error: data.error,
       });
-    } catch (err) {
-      setApiStatus((prev) => ({
-        ...prev,
-        connected: false,
+    } catch {
+      backendAvailableRef.current = false;
+      setApiStatus({
+        connected: true,
         checking: false,
-        error: (err as Error).message,
-      }));
+        provider: 'F.R.I.D.A.Y. Standalone Local Core',
+        model: 'offline-local-v2',
+        engine: 'local-core',
+        freeWebReady: typeof navigator !== 'undefined' ? navigator.onLine : false,
+        requiresPaidKey: false,
+        latencyMs: 1,
+      });
     }
   }, []);
 
   const refreshBootstrap = useCallback(async () => {
+    if (isAndroidHost()) {
+      backendAvailableRef.current = false;
+      const local = loadLocalClientState(DEFAULT_SETTINGS);
+      setSettings(local.settings);
+      setCalendar(local.calendar);
+      setMemory(local.memory);
+      setNotes(local.notes);
+      setTodos(local.todos);
+      setMessages(local.chatHistory);
+      setActionLogs(local.actionLogs);
+      setWorkflows(local.workflows);
+      setApps(local.apps);
+      return;
+    }
     try {
       const res = await fetch('/api/bootstrap');
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      if (data.settings) setSettings(data.settings);
+      backendAvailableRef.current = true;
+      if (data.settings) setSettings({ speakingPitch: 1.0, ...data.settings });
       if (data.calendar) setCalendar(data.calendar);
       if (data.memory) setMemory(data.memory);
       if (data.chatHistory) setMessages(data.chatHistory);
       if (data.actionLogs) setActionLogs(data.actionLogs);
       if (data.workflows) setWorkflows(data.workflows);
       if (data.apps) setApps(data.apps);
-    } catch (err) {
-      setErrorBanner(`Unable to load command center state: ${(err as Error).message}`);
+    } catch {
+      backendAvailableRef.current = false;
+      const local = loadLocalClientState(DEFAULT_SETTINGS);
+      setSettings(local.settings);
+      setCalendar(local.calendar);
+      setMemory(local.memory);
+      setNotes(local.notes);
+      setTodos(local.todos);
+      setMessages(local.chatHistory);
+      setActionLogs(local.actionLogs);
+      setWorkflows(local.workflows);
+      setApps(local.apps);
     }
   }, []);
 
@@ -237,45 +327,60 @@ export default function App() {
     checkApiConnection(false);
   }, [refreshBootstrap, checkApiConnection]);
 
-  // Real system telemetry polling
+  // Real system telemetry polling (falls back to native Android / Web Battery API when standalone)
   useEffect(() => {
     let mounted = true;
     const poll = async () => {
-      try {
-        const res = await fetch('/api/telemetry');
-        if (!res.ok) return;
-        const data = (await res.json()) as SystemTelemetry;
-        if (!mounted) return;
-        setTelemetry(data);
-        setCpuHistory((prev) => [...prev.slice(-23), data.cpuLoad]);
-      } catch {
-        // Ignore transient polling interruptions
+      if (backendAvailableRef.current && !isAndroidHost()) {
+        try {
+          const res = await fetch('/api/telemetry');
+          if (res.ok) {
+            const data = (await res.json()) as SystemTelemetry;
+            if (!mounted) return;
+            setTelemetry(data);
+            setCpuHistory((prev) => [...prev.slice(-23), data.cpuLoad]);
+            return;
+          }
+        } catch {
+          // Fall through to client telemetry fallback
+        }
       }
+      const fallbackTel = await readDeviceTelemetryFallback();
+      if (!mounted) return;
+      setTelemetry(fallbackTel);
+      setCpuHistory((prev) => [...prev.slice(-23), fallbackTel.cpuLoad]);
     };
     poll();
-    const timer = setInterval(poll, 2500);
+    const timer = setInterval(poll, 3000);
     return () => {
       mounted = false;
       clearInterval(timer);
     };
   }, []);
 
-  // Live weather polling
+  // Live weather polling (falls back to CORS-safe Open-Meteo when running offline/APK)
   useEffect(() => {
     let mounted = true;
     const loadWeather = async () => {
-      try {
-        setWeatherError(null);
-        const res = await fetch(`/api/weather?location=${encodeURIComponent(settings.weatherLocation)}`);
-        const data = await res.json();
-        if (!mounted) return;
-        if (!res.ok) {
-          setWeatherError(data.error || 'Weather unavailable');
-        } else {
-          setWeather(data);
+      setWeatherError(null);
+      if (backendAvailableRef.current && !isAndroidHost()) {
+        try {
+          const res = await fetch(`/api/weather?location=${encodeURIComponent(settings.weatherLocation)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (mounted) setWeather(data);
+            return;
+          }
+        } catch {
+          // Fall through to client Open-Meteo lookup
         }
-      } catch (err) {
-        if (mounted) setWeatherError((err as Error).message);
+      }
+      const directWeather = await fetchOpenMeteoClientWeather(settings.weatherLocation);
+      if (!mounted) return;
+      if (directWeather) {
+        setWeather(directWeather);
+      } else {
+        setWeatherError('Weather unavailable offline');
       }
     };
     loadWeather();
@@ -308,6 +413,7 @@ export default function App() {
   const stopSpeaking = useCallback(() => {
     speechQueueRef.current = [];
     speechActiveRef.current = false;
+    window.fridayAndroid?.stopSpeaking?.();
     if (audioElRef.current) {
       audioElRef.current.pause();
       audioElRef.current = null;
@@ -320,8 +426,43 @@ export default function App() {
     setVoiceState((curr) => (curr === 'speaking' ? 'standby' : curr));
   }, []);
 
+  const selectBestSpeechVoice = useCallback(
+    (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null => {
+      if (!voices.length) return null;
+      const targetLang = settings.language.toLowerCase();
+      const baseLang = targetLang.split('-')[0];
+      const preferFemale = settings.voiceGender !== 'male';
+      const femaleHints = ['zira', 'aria', 'jenny', 'samantha', 'victoria', 'karen', 'swara', 'lekha', 'heera', 'kalpana', 'female', 'woman'];
+      const maleHints = ['david', 'mark', 'guy', 'rishi', 'prabhat', 'daniel', 'george', 'male', 'man'];
+
+      let best: SpeechSynthesisVoice | null = null;
+      let bestScore = -1;
+      for (const v of voices) {
+        let score = 0;
+        const vLang = v.lang.toLowerCase();
+        const vName = v.name.toLowerCase();
+        if (vLang === targetLang) score += 50;
+        else if (vLang.startsWith(baseLang)) score += 30;
+        if (v.localService) score += 8;
+        if (vName.includes('natural') || vName.includes('neural') || vName.includes('online')) score += 10;
+        const isFemaleName = femaleHints.some((h) => vName.includes(h));
+        const isMaleName = maleHints.some((h) => vName.includes(h));
+        if (preferFemale && isFemaleName) score += 20;
+        if (!preferFemale && isMaleName) score += 20;
+        if (preferFemale && isMaleName) score -= 12;
+        if (!preferFemale && isFemaleName) score -= 12;
+        if (score > bestScore) {
+          bestScore = score;
+          best = v;
+        }
+      }
+      return best;
+    },
+    [settings.language, settings.voiceGender]
+  );
+
   const pumpLocalSpeechQueue = useCallback(() => {
-    if (!('speechSynthesis' in window) || speechActiveRef.current) return;
+    if (speechActiveRef.current) return;
     const nextSentence = speechQueueRef.current.shift();
     if (!nextSentence) {
       setIsSpeaking(false);
@@ -329,6 +470,23 @@ export default function App() {
       setVoiceState((curr) => (curr === 'speaking' ? 'standby' : curr));
       return;
     }
+
+    if (window.fridayAndroid?.speak) {
+      speechActiveRef.current = true;
+      setIsSpeaking(true);
+      setVoiceState('speaking');
+      setAudioLevel(0.6);
+      window.fridayAndroid.speak(
+        nextSentence,
+        settings.language,
+        settings.voiceGender,
+        settings.speakingSpeed,
+        settings.speakingPitch ?? 1.0
+      );
+      return;
+    }
+
+    if (!('speechSynthesis' in window)) return;
     speechActiveRef.current = true;
     setIsSpeaking(true);
     setVoiceState('speaking');
@@ -336,22 +494,29 @@ export default function App() {
 
     const utter = new SpeechSynthesisUtterance(nextSentence);
     utter.rate = settings.speakingSpeed;
+    utter.pitch = settings.speakingPitch ?? 1.0;
     utter.lang = settings.language;
+    const matchedVoice = selectBestSpeechVoice(window.speechSynthesis.getVoices());
+    if (matchedVoice) utter.voice = matchedVoice;
+
     utter.onend = () => {
       speechActiveRef.current = false;
-      pumpLocalSpeechQueue();
+      setTimeout(() => {
+        pumpLocalSpeechQueue();
+      }, 85);
     };
     utter.onerror = () => {
       speechActiveRef.current = false;
       pumpLocalSpeechQueue();
     };
     window.speechSynthesis.speak(utter);
-  }, [settings.language, settings.speakingSpeed]);
+  }, [selectBestSpeechVoice, settings.language, settings.speakingPitch, settings.speakingSpeed, settings.voiceGender]);
 
   const enqueueLocalSpeech = useCallback(
     (sentence: string) => {
       const clean = sentence.replace(/[*_`#]/g, '').trim();
-      if (!clean || !('speechSynthesis' in window)) return;
+      if (!clean) return;
+      if (!window.fridayAndroid?.speak && !('speechSynthesis' in window)) return;
       speechQueueRef.current.push(clean);
       pumpLocalSpeechQueue();
     },
@@ -364,7 +529,16 @@ export default function App() {
       const cleanText = text.replace(/[*_`#]/g, '').trim();
       if (!cleanText) return;
 
-      // Fast path: instant local Windows/Browser SpeechSynthesis unless Gemini TTS is active
+      if (window.fridayAndroid?.speak) {
+        const sentences = cleanText.match(/[^.!?\n]+[.!?\n]*/g) ?? [cleanText];
+        for (const s of sentences) {
+          if (s.trim()) speechQueueRef.current.push(s.trim());
+        }
+        pumpLocalSpeechQueue();
+        return;
+      }
+
+      // Fast path: instant local Device/Browser SpeechSynthesis unless Gemini TTS is active
       if (apiStatus.engine !== 'gemini' && 'speechSynthesis' in window) {
         const sentences = cleanText.match(/[^.!?\n]+[.!?\n]*/g) ?? [cleanText];
         for (const s of sentences) {
@@ -464,6 +638,45 @@ export default function App() {
       let speechBuffer = '';
       let streamedAnyText = false;
 
+      const runClientFallback = async (): Promise<boolean> => {
+        const result = await executeClientOfflineCommand(cleanCmd, snapshotLocalState());
+        setCalendar(result.nextState.calendar);
+        setMemory(result.nextState.memory);
+        setNotes(result.nextState.notes);
+        setTodos(result.nextState.todos);
+        setActionLogs(result.nextState.actionLogs);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === tempUserId
+              ? result.userMessage
+              : m.id === tempAssistantId
+                ? result.assistantMessage
+                : m
+          )
+        );
+        setActiveAgents(result.activeAgents);
+        if (result.speakText) {
+          speakText(result.speakText);
+        } else if (settings.autoSpeakReplies && result.assistantMessage.content) {
+          speakText(result.assistantMessage.content);
+        } else {
+          setVoiceState('completed');
+          setTimeout(() => {
+            setVoiceState((curr) => (curr === 'completed' ? 'standby' : curr));
+            setActiveAgents([]);
+          }, 1400);
+        }
+        return true;
+      };
+
+      if (isAndroidHost() || !backendAvailableRef.current) {
+        try {
+          return await runClientFallback();
+        } finally {
+          abortRef.current = null;
+        }
+      }
+
       try {
         const res = await fetch('/api/assistant/stream', {
           method: 'POST',
@@ -473,8 +686,8 @@ export default function App() {
         });
 
         if (!res.ok || !res.body) {
-          const errJson = await res.json().catch(() => ({}));
-          throw new Error(errJson.error || 'Command execution failed');
+          backendAvailableRef.current = false;
+          return await runClientFallback();
         }
 
         const reader = res.body.getReader();
@@ -545,7 +758,9 @@ export default function App() {
               );
               setActiveAgents(ev.activeAgents ?? ['core']);
 
-              if (settings.autoSpeakReplies) {
+              if (finalAssistant.intent === 'read_aloud' && finalAssistant.content) {
+                speakText(finalAssistant.content);
+              } else if (settings.autoSpeakReplies) {
                 if (speechBuffer.trim()) {
                   enqueueLocalSpeech(speechBuffer);
                   speechBuffer = '';
@@ -564,6 +779,8 @@ export default function App() {
               if (
                 finalAssistant.intent === 'memory_manage' ||
                 finalAssistant.intent === 'calendar_schedule' ||
+                finalAssistant.intent === 'alarm_reminder' ||
+                finalAssistant.intent === 'note_todo' ||
                 finalAssistant.intent === 'workflow_run'
               ) {
                 void refreshBootstrap();
@@ -579,20 +796,27 @@ export default function App() {
           setVoiceState('standby');
           return false;
         }
-        setMessages((prev) => prev.filter((m) => m.id !== tempAssistantId));
-        setVoiceState('error');
-        setErrorBanner((err as Error).message);
-        return false;
+        // Network disconnect fallback (works offline and inside Android APK)
+        backendAvailableRef.current = false;
+        return await runClientFallback();
       } finally {
         abortRef.current = null;
       }
     },
-    [enqueueLocalSpeech, refreshBootstrap, settings.autoSpeakReplies, speakText, stopSpeaking]
+    [enqueueLocalSpeech, refreshBootstrap, settings.autoSpeakReplies, snapshotLocalState, speakText, stopSpeaking]
   );
 
   const handleConfirmAction = useCallback(
     async (actionType: string, summary: string, approved: boolean) => {
       setVoiceState('executing');
+      if (isAndroidHost() || !backendAvailableRef.current) {
+        const res = executeClientConfirmAction(actionType, summary, approved, snapshotLocalState());
+        setCalendar(res.nextState.calendar);
+        setMessages(res.nextState.chatHistory);
+        setVoiceState('completed');
+        setTimeout(() => setVoiceState('standby'), 1500);
+        return;
+      }
       try {
         const res = await fetch('/api/assistant/confirm', {
           method: 'POST',
@@ -607,12 +831,15 @@ export default function App() {
         await refreshBootstrap();
         setVoiceState('completed');
         setTimeout(() => setVoiceState('standby'), 1500);
-      } catch (err) {
-        setVoiceState('error');
-        setErrorBanner((err as Error).message);
+      } catch {
+        const res = executeClientConfirmAction(actionType, summary, approved, snapshotLocalState());
+        setCalendar(res.nextState.calendar);
+        setMessages(res.nextState.chatHistory);
+        setVoiceState('completed');
+        setTimeout(() => setVoiceState('standby'), 1500);
       }
     },
-    [refreshBootstrap]
+    [refreshBootstrap, snapshotLocalState]
   );
 
   const stopMicCapture = useCallback(() => {
@@ -764,12 +991,21 @@ export default function App() {
     stopSpeaking();
     setErrorBanner(null);
 
+    if (window.fridayAndroid?.startListening) {
+      setIsListening(true);
+      setVoiceState('listening');
+      setAudioLevel(0.45);
+      setLiveTranscript(`Listening (${settings.language}) via Android Voice...`);
+      window.fridayAndroid.startListening(settings.language, true);
+      return;
+    }
+
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) {
       if (apiStatus.engine === 'gemini') {
         await toggleRecordAudio();
       } else {
-        setLiveTranscript('Browser SpeechRecognition is unavailable in this window — use Chrome/Edge/Electron or type your command below.');
+        setLiveTranscript('Voice recognition is ready on Android APK and Chrome/Edge; you can also type your command below.');
       }
       return;
     }
@@ -899,15 +1135,63 @@ export default function App() {
     setVoiceState('standby');
   }, [isRecordingAudio, stopMicCapture, stopSpeaking]);
 
+  // Register Android native voice & speech event hooks
+  useEffect(() => {
+    window.__fridayAndroidEvents = {
+      onInterimText: (text: string) => {
+        setAudioLevel(0.75);
+        setLiveTranscript(`Hearing: "${text}"`);
+        if (isInterruptionCommand(text)) {
+          abortRef.current?.abort();
+          stopSpeaking();
+        }
+      },
+      onRecognizedText: (text: string) => {
+        setIsListening(false);
+        setAudioLevel(0);
+        if (isInterruptionCommand(text)) {
+          abortRef.current?.abort();
+          stopSpeaking();
+          setLiveTranscript('Stopped speaking.');
+          return;
+        }
+        const parsedVoice = extractVoiceCommand(text, settings.wakeWord, false);
+        if (parsedVoice.matched && parsedVoice.command) {
+          setLiveTranscript(`Heard: "${parsedVoice.command}"`);
+          void handleSubmitCommand(parsedVoice.command);
+        }
+      },
+      onListeningState: (active: boolean, status?: string) => {
+        setIsListening(active);
+        setAudioLevel(active ? 0.55 : 0);
+        setVoiceState(active ? 'listening' : 'standby');
+        if (status) setLiveTranscript(status);
+      },
+      onSpeechState: (speaking: boolean) => {
+        speechActiveRef.current = speaking;
+        if (!speaking) {
+          setTimeout(() => pumpLocalSpeechQueue(), 85);
+        }
+      },
+    };
+    return () => {
+      delete window.__fridayAndroidEvents;
+    };
+  }, [handleSubmitCommand, pumpLocalSpeechQueue, settings.wakeWord, stopSpeaking]);
+
   const updateSettings = useCallback(
     async (patch: Partial<AssistantSettings>) => {
-      setSettings((prev) => ({
-        ...prev,
-        ...patch,
-        wallpaper: { ...prev.wallpaper, ...(patch.wallpaper || {}) },
-        hologram: { ...prev.hologram, ...(patch.hologram || {}) },
-        enabledAgents: { ...prev.enabledAgents, ...(patch.enabledAgents || {}) },
-      }));
+      let nextMerged: AssistantSettings | null = null;
+      setSettings((prev) => {
+        nextMerged = {
+          ...prev,
+          ...patch,
+          wallpaper: { ...prev.wallpaper, ...(patch.wallpaper || {}) },
+          hologram: { ...prev.hologram, ...(patch.hologram || {}) },
+          enabledAgents: { ...prev.enabledAgents, ...(patch.enabledAgents || {}) },
+        };
+        return nextMerged;
+      });
 
       if (patch.launchOnStartup !== undefined) {
         window.fridayDesktop?.setStartupLaunch?.(patch.launchOnStartup).catch(() => {});
@@ -919,20 +1203,30 @@ export default function App() {
         window.fridayDesktop?.updateReopenShortcut?.(patch.reopenShortcut).catch(() => {});
       }
 
-      const res = await fetch('/api/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        setSettings(updated);
-        if (patch.aiModel !== undefined || patch.ollamaModel !== undefined) {
-          void checkApiConnection(true);
+      if (nextMerged) {
+        saveLocalClientState(snapshotLocalState({ settings: nextMerged }));
+      }
+
+      if (isAndroidHost() || !backendAvailableRef.current) return;
+
+      try {
+        const res = await fetch('/api/settings', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          setSettings({ speakingPitch: 1.0, ...updated });
+          if (patch.aiModel !== undefined || patch.ollamaModel !== undefined) {
+            void checkApiConnection(true);
+          }
         }
+      } catch {
+        // Local persistence already updated above
       }
     },
-    [checkApiConnection]
+    [checkApiConnection, snapshotLocalState]
   );
 
   const handleUpdateHologram = useCallback(
@@ -960,97 +1254,260 @@ export default function App() {
     [settings.enabledAgents, updateSettings]
   );
 
-  const handleToggleEvent = useCallback(async (id: string) => {
-    const target = calendar.find((e) => e.id === id);
-    if (!target) return;
-    const next = !target.completed;
-    setCalendar((prev) => prev.map((e) => (e.id === id ? { ...e, completed: next } : e)));
-    await fetch(`/api/calendar/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ completed: next }),
-    });
-  }, [calendar]);
+  const handleToggleEvent = useCallback(
+    async (id: string) => {
+      const target = calendar.find((e) => e.id === id);
+      if (!target) return;
+      const next = !target.completed;
+      const nextCal = calendar.map((e) => (e.id === id ? { ...e, completed: next } : e));
+      setCalendar(nextCal);
+      saveLocalClientState(snapshotLocalState({ calendar: nextCal }));
+      if (backendAvailableRef.current && !isAndroidHost()) {
+        await fetch(`/api/calendar/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ completed: next }),
+        }).catch(() => {});
+      }
+    },
+    [calendar, snapshotLocalState]
+  );
 
   const handleCreateEvent = useCallback(
     async (evt: { title: string; date: string; time: string; category: CalendarEvent['category'] }) => {
-      const res = await fetch('/api/calendar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(evt),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        setCalendar((prev) => [created, ...prev]);
+      if (backendAvailableRef.current && !isAndroidHost()) {
+        try {
+          const res = await fetch('/api/calendar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(evt),
+          });
+          if (res.ok) {
+            const created = await res.json();
+            setCalendar((prev) => [created, ...prev]);
+            refreshBootstrap();
+            return;
+          }
+        } catch {
+          // Fall through to local persistence
+        }
+      }
+      const created: CalendarEvent = {
+        id: `evt-${Date.now()}`,
+        ...evt,
+        completed: false,
+        createdAt: new Date().toISOString(),
+      };
+      const nextCal = [created, ...calendar];
+      setCalendar(nextCal);
+      saveLocalClientState(snapshotLocalState({ calendar: nextCal }));
+    },
+    [calendar, refreshBootstrap, snapshotLocalState]
+  );
+
+  const handleDeleteEvent = useCallback(
+    async (id: string) => {
+      const nextCal = calendar.filter((e) => e.id !== id);
+      setCalendar(nextCal);
+      saveLocalClientState(snapshotLocalState({ calendar: nextCal }));
+      if (backendAvailableRef.current && !isAndroidHost()) {
+        await fetch(`/api/calendar/${id}`, { method: 'DELETE' }).catch(() => {});
         refreshBootstrap();
       }
     },
-    [refreshBootstrap]
+    [calendar, refreshBootstrap, snapshotLocalState]
   );
 
-  const handleDeleteEvent = useCallback(async (id: string) => {
-    setCalendar((prev) => prev.filter((e) => e.id !== id));
-    await fetch(`/api/calendar/${id}`, { method: 'DELETE' });
-    refreshBootstrap();
-  }, [refreshBootstrap]);
+  const handleAddNote = useCallback(
+    (note: { title: string; content: string }) => {
+      const nowIso = new Date().toISOString();
+      const created: NoteItem = {
+        id: `note-${Date.now()}`,
+        title: note.title,
+        content: note.content,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      const nextNotes = [created, ...notes];
+      setNotes(nextNotes);
+      saveLocalClientState(snapshotLocalState({ notes: nextNotes }));
+    },
+    [notes, snapshotLocalState]
+  );
+
+  const handleDeleteNote = useCallback(
+    (id: string) => {
+      const nextNotes = notes.filter((n) => n.id !== id);
+      setNotes(nextNotes);
+      saveLocalClientState(snapshotLocalState({ notes: nextNotes }));
+    },
+    [notes, snapshotLocalState]
+  );
+
+  const handleAddTodo = useCallback(
+    (title: string) => {
+      const created: TodoItem = {
+        id: `todo-${Date.now()}`,
+        title,
+        completed: false,
+        priority: 'normal',
+        createdAt: new Date().toISOString(),
+      };
+      const nextTodos = [created, ...todos];
+      setTodos(nextTodos);
+      saveLocalClientState(snapshotLocalState({ todos: nextTodos }));
+    },
+    [snapshotLocalState, todos]
+  );
+
+  const handleToggleTodo = useCallback(
+    (id: string) => {
+      const nextTodos = todos.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t));
+      setTodos(nextTodos);
+      saveLocalClientState(snapshotLocalState({ todos: nextTodos }));
+    },
+    [snapshotLocalState, todos]
+  );
+
+  const handleDeleteTodo = useCallback(
+    (id: string) => {
+      const nextTodos = todos.filter((t) => t.id !== id);
+      setTodos(nextTodos);
+      saveLocalClientState(snapshotLocalState({ todos: nextTodos }));
+    },
+    [snapshotLocalState, todos]
+  );
 
   const handleAddMemory = useCallback(
     async (item: { category: MemoryItem['category']; key: string; value: string }) => {
-      const res = await fetch('/api/memory', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(item),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        setMemory((prev) => [created, ...prev]);
-        refreshBootstrap();
+      if (backendAvailableRef.current && !isAndroidHost()) {
+        try {
+          const res = await fetch('/api/memory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item),
+          });
+          if (res.ok) {
+            const created = await res.json();
+            setMemory((prev) => [created, ...prev]);
+            refreshBootstrap();
+            return;
+          }
+        } catch {
+          // Fallback
+        }
       }
+      const created: MemoryItem = {
+        id: `mem-${Date.now()}`,
+        ...item,
+        approved: true,
+        updatedAt: new Date().toISOString(),
+      };
+      const nextMem = [created, ...memory];
+      setMemory(nextMem);
+      saveLocalClientState(snapshotLocalState({ memory: nextMem }));
     },
-    [refreshBootstrap]
+    [memory, refreshBootstrap, snapshotLocalState]
   );
 
   const handleEditMemory = useCallback(
     async (id: string, patch: { category: MemoryItem['category']; key: string; value: string }) => {
-      const res = await fetch(`/api/memory/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        setMemory((prev) => prev.map((m) => (m.id === id ? updated : m)));
+      if (backendAvailableRef.current && !isAndroidHost()) {
+        try {
+          const res = await fetch(`/api/memory/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          });
+          if (res.ok) {
+            const updated = await res.json();
+            setMemory((prev) => prev.map((m) => (m.id === id ? updated : m)));
+            refreshBootstrap();
+            return;
+          }
+        } catch {
+          // Fallback
+        }
+      }
+      const nextMem = memory.map((m) =>
+        m.id === id ? { ...m, ...patch, updatedAt: new Date().toISOString() } : m
+      );
+      setMemory(nextMem);
+      saveLocalClientState(snapshotLocalState({ memory: nextMem }));
+    },
+    [memory, refreshBootstrap, snapshotLocalState]
+  );
+
+  const handleDeleteMemory = useCallback(
+    async (id: string) => {
+      const nextMem = memory.filter((m) => m.id !== id);
+      setMemory(nextMem);
+      saveLocalClientState(snapshotLocalState({ memory: nextMem }));
+      if (backendAvailableRef.current && !isAndroidHost()) {
+        await fetch(`/api/memory/${id}`, { method: 'DELETE' }).catch(() => {});
         refreshBootstrap();
+      }
+    },
+    [memory, refreshBootstrap, snapshotLocalState]
+  );
+
+  const handleLaunchApp = useCallback(
+    async (app: DesktopAppItem) => {
+      if (window.fridayAndroid?.openApp) {
+        const msg = window.fridayAndroid.openApp(app.command || app.name);
+        setLaunchNotice(msg);
+        return;
+      }
+      if (!backendAvailableRef.current) {
+        setLaunchNotice(`Prepared launch action for ${app.name} (install Android APK for direct launch).`);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/apps/${app.id}/launch`, { method: 'POST' });
+        const data = await res.json();
+        setLaunchNotice(data.message || `Triggered ${app.name}`);
+        refreshBootstrap();
+      } catch {
+        setLaunchNotice(`Launch queued for ${app.name}`);
       }
     },
     [refreshBootstrap]
   );
 
-  const handleDeleteMemory = useCallback(async (id: string) => {
-    setMemory((prev) => prev.filter((m) => m.id !== id));
-    await fetch(`/api/memory/${id}`, { method: 'DELETE' });
-    refreshBootstrap();
-  }, [refreshBootstrap]);
-
-  const handleLaunchApp = useCallback(async (app: DesktopAppItem) => {
-    const res = await fetch(`/api/apps/${app.id}/launch`, { method: 'POST' });
-    const data = await res.json();
-    setLaunchNotice(data.message || `Triggered ${app.name}`);
-    refreshBootstrap();
-  }, [refreshBootstrap]);
-
-  const handleTogglePinApp = useCallback(async (id: string) => {
-    const res = await fetch(`/api/apps/${id}/pin`, { method: 'POST' });
-    if (res.ok) {
-      const updated = await res.json();
-      setApps((prev) => prev.map((a) => (a.id === id ? updated : a)));
-    }
-  }, []);
+  const handleTogglePinApp = useCallback(
+    async (id: string) => {
+      if (backendAvailableRef.current && !isAndroidHost()) {
+        try {
+          const res = await fetch(`/api/apps/${id}/pin`, { method: 'POST' });
+          if (res.ok) {
+            const updated = await res.json();
+            setApps((prev) => prev.map((a) => (a.id === id ? updated : a)));
+            return;
+          }
+        } catch {
+          // Fallback
+        }
+      }
+      const nextApps = apps.map((a) => (a.id === id ? { ...a, pinned: !a.pinned } : a));
+      setApps(nextApps);
+      saveLocalClientState(snapshotLocalState({ apps: nextApps }));
+    },
+    [apps, snapshotLocalState]
+  );
 
   const handleRunWorkflow = useCallback(
     async (id: string) => {
       setRunningWorkflowId(id);
       setVoiceState('executing');
+      if (isAndroidHost() || !backendAvailableRef.current) {
+        const wf = workflows.find((w) => w.id === id);
+        if (wf) {
+          await handleSubmitCommand(wf.triggerPhrase);
+        }
+        setRunningWorkflowId(null);
+        setActiveSection('command-center');
+        return;
+      }
       try {
         const res = await fetch(`/api/workflows/${id}/run`, { method: 'POST' });
         const data = await res.json();
@@ -1066,28 +1523,48 @@ export default function App() {
         setRunningWorkflowId(null);
       }
     },
-    [refreshBootstrap]
+    [handleSubmitCommand, refreshBootstrap, workflows]
   );
 
   const handleCreateWorkflow = useCallback(
     async (payload: { name: string; description: string; triggerPhrase: string }) => {
-      const res = await fetch('/api/workflows', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        setWorkflows((prev) => [created, ...prev]);
+      if (backendAvailableRef.current && !isAndroidHost()) {
+        try {
+          const res = await fetch('/api/workflows', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (res.ok) {
+            const created = await res.json();
+            setWorkflows((prev) => [created, ...prev]);
+            return;
+          }
+        } catch {
+          // Fallback
+        }
       }
+      const created: AutomationWorkflow = {
+        id: `wf-${Date.now()}`,
+        ...payload,
+        steps: [{ agent: 'core', action: payload.triggerPhrase }],
+        enabled: true,
+        runCount: 0,
+      };
+      const nextWf = [created, ...workflows];
+      setWorkflows(nextWf);
+      saveLocalClientState(snapshotLocalState({ workflows: nextWf }));
     },
-    []
+    [snapshotLocalState, workflows]
   );
 
   const handleClearHistory = useCallback(async () => {
-    await fetch('/api/chat', { method: 'DELETE' });
     setMessages([]);
-  }, []);
+    saveLocalClientState(snapshotLocalState({ chatHistory: [] }));
+    if (backendAvailableRef.current && !isAndroidHost()) {
+      await fetch('/api/chat', { method: 'DELETE' }).catch(() => {});
+    }
+  }, [snapshotLocalState]);
 
   const agentList = useMemo(
     () => buildAgentList(settings.enabledAgents, activeAgents),
@@ -1317,9 +1794,16 @@ export default function App() {
           {activeSection === 'calendar' && (
             <CalendarView
               events={calendar}
+              notes={notes}
+              todos={todos}
               onCreateEvent={handleCreateEvent}
               onToggleEvent={handleToggleEvent}
               onDeleteEvent={handleDeleteEvent}
+              onAddNote={handleAddNote}
+              onDeleteNote={handleDeleteNote}
+              onAddTodo={handleAddTodo}
+              onToggleTodo={handleToggleTodo}
+              onDeleteTodo={handleDeleteTodo}
             />
           )}
 

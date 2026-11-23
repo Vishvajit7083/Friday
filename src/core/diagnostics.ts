@@ -162,6 +162,9 @@ export function sanitizeSettingsPatch(
   if (typeof raw.speakingSpeed === 'number' && Number.isFinite(raw.speakingSpeed)) {
     next.speakingSpeed = Math.min(1.6, Math.max(0.65, raw.speakingSpeed));
   }
+  if (typeof raw.speakingPitch === 'number' && Number.isFinite(raw.speakingPitch)) {
+    next.speakingPitch = Math.min(1.5, Math.max(0.6, raw.speakingPitch));
+  }
   if (typeof raw.language === 'string' && /^[a-z]{2}(-[A-Z]{2})?$/.test(raw.language)) {
     next.language = raw.language;
   }
