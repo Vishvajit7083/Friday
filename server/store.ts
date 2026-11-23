@@ -21,7 +21,9 @@ export interface FridayDatabase {
   apps: DesktopAppItem[];
 }
 
-const DATA_DIR = path.resolve(process.cwd(), '.friday-data');
+const DATA_DIR = process.env.FRIDAY_DATA_DIR
+  ? path.resolve(process.env.FRIDAY_DATA_DIR)
+  : path.resolve(process.cwd(), '.friday-data');
 const DB_PATH = path.join(DATA_DIR, 'friday-db.json');
 
 function getTodayIsoDate(offsetDays = 0): string {

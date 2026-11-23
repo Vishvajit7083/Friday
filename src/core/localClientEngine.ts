@@ -409,7 +409,7 @@ async function fetchPublicWikipediaKnowledge(
   return null;
 }
 
-function unwrapAndroidBridgeReply(raw: string | undefined, fallback: string): string {
+export function unwrapAndroidBridgeReply(raw: string | undefined, fallback: string): string {
   if (!raw || !raw.trim()) return fallback;
   const trimmed = raw.trim();
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
@@ -537,11 +537,15 @@ function handleAndroidPhoneControl(
     }
   }
 
-  // Direct App Launch (YouTube, Chrome, Contacts, Dialer, etc.)
+  // Direct App Launch (YouTube, Chrome, Instagram, Contacts, Dialer, etc.)
   const appMatch = command.match(/(?:open|launch|start)\s+([a-zA-Z0-9 ._-]+)/i);
   if (appMatch) {
-    const appTarget = appMatch[1].trim();
-    if (bridge?.openApp) {
+    const appTarget = appMatch[1]
+      .trim()
+      .replace(/^(?:the|my)\s+/i, '')
+      .replace(/\s+(?:app|application)$/i, '')
+      .trim();
+    if (bridge?.openApp && appTarget) {
       return {
         handled: true,
         reply: unwrapAndroidBridgeReply(bridge.openApp(appTarget), `Opened ${appTarget}.`),

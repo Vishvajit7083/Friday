@@ -73,12 +73,20 @@ class DeviceControlModule(private val context: Context) {
         return when {
             q.contains("youtube") -> launchPackageOrUri("com.google.android.youtube", "https://www.youtube.com", "YouTube")
             q.contains("chrome") || q.contains("browser") -> launchPackageOrUri("com.android.chrome", "https://www.google.com", "Google Chrome")
+            q.contains("instagram") || q.contains("insta") -> launchPackageOrUri("com.instagram.android", "https://www.instagram.com", "Instagram")
+            q.contains("whatsapp") -> launchPackageOrUri("com.whatsapp", "https://web.whatsapp.com", "WhatsApp")
+            q.contains("telegram") -> launchPackageOrUri("org.telegram.messenger", "https://web.telegram.org", "Telegram")
+            q.contains("spotify") -> launchPackageOrUri("com.spotify.music", "https://open.spotify.com", "Spotify")
+            q.contains("notion") -> launchPackageOrUri("notion.id", "https://www.notion.so", "Notion")
+            q.contains("github") -> launchPackageOrUri("com.github.android", "https://github.com", "GitHub")
+            q.contains("gmail") -> launchPackageOrUri("com.google.android.gm", "https://mail.google.com", "Gmail")
+            q.contains("facebook") -> launchPackageOrUri("com.facebook.katana", "https://www.facebook.com", "Facebook")
+            q.contains("snapchat") -> launchPackageOrUri("com.snapchat.android", "https://www.snapchat.com", "Snapchat")
             q.contains("camera") -> openCamera()
             q.contains("gallery") || q.contains("photo") -> openGallery()
             q.contains("maps") -> openMapsSearch("")
             q.contains("contact") -> launchIntent(Intent(Intent.ACTION_VIEW, ContactsContract.Contacts.CONTENT_URI), "Contacts")
             q.contains("dialer") || q.contains("phone") -> launchIntent(Intent(Intent.ACTION_DIAL), "Phone Dialer")
-            q.contains("whatsapp") -> launchPackageOrUri("com.whatsapp", "https://web.whatsapp.com", "WhatsApp")
             else -> findAndLaunchInstalledApp(q)
         }
     }
@@ -89,6 +97,7 @@ class DeviceControlModule(private val context: Context) {
             addCategory(Intent.CATEGORY_LAUNCHER)
         }
         val apps = pm.queryIntentActivities(mainIntent, 0)
+        // Pass 1: exact or substring match
         for (info in apps) {
             val label = info.loadLabel(pm).toString()
             if (label.lowercase(Locale.ROOT).contains(query) ||
@@ -102,7 +111,49 @@ class DeviceControlModule(private val context: Context) {
                 }
             }
         }
+        // Pass 2: typo-tolerant fuzzy match for app names >= 5 characters (e.g. "insragram" -> "Instagram")
+        if (query.length >= 5) {
+            var bestMatchPkg: String? = null
+            var bestMatchLabel: String? = null
+            var bestDist = 3
+            for (info in apps) {
+                val label = info.loadLabel(pm).toString()
+                val tokens = label.lowercase(Locale.ROOT).split(Regex("\\s+")) + label.lowercase(Locale.ROOT)
+                for (tok in tokens) {
+                    if (tok.length < 4) continue
+                    val dist = levenshteinDistance(query, tok)
+                    if (dist < bestDist) {
+                        bestDist = dist
+                        bestMatchPkg = info.activityInfo.packageName
+                        bestMatchLabel = label
+                    }
+                }
+            }
+            if (bestMatchPkg != null && bestMatchLabel != null) {
+                val launch = pm.getLaunchIntentForPackage(bestMatchPkg)
+                if (launch != null) {
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(launch)
+                    return "Opened $bestMatchLabel."
+                }
+            }
+        }
         return "Could not find an installed Android app matching \"$query\"."
+    }
+
+    private fun levenshteinDistance(a: String, b: String): Int {
+        val dp = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            var prev = i - 1
+            dp[0] = i
+            for (j in 1..b.length) {
+                val temp = dp[j]
+                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                dp[j] = minOf(dp[j] + 1, dp[j - 1] + 1, prev + cost)
+                prev = temp
+            }
+        }
+        return dp[b.length]
     }
 
     private fun launchPackageOrUri(pkg: String, fallbackUrl: String, label: String): String {

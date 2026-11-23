@@ -68,7 +68,7 @@ const WEB_PATTERNS = [
 const PHONE_CONTROL_PATTERNS = [
   /\b(turn\s+(on|off)|enable|disable|toggle)\s+(the\s+)?(flashlight|torch)\b/i,
   /\b(open|go\s+to|show)\s+(wi-?fi|wifi|bluetooth|display|brightness|sound|volume|app|application|notification|battery|android)\s*(settings?)?\b/i,
-  /\b(open|launch)\s+(camera|gallery|photos|contacts|dialer|phone|maps|youtube)\b/i,
+  /\b(open|launch)\s+(camera|gallery|photos|contacts|dialer|phone|maps|youtube|instagram|insta|whatsapp|telegram|spotify|notion|github|gmail|facebook|snapchat)\b/i,
   /\b(navigate\s+to|directions\s+to|search\s+maps\s+for)\s+.+/i,
   /\b(copy\s+to\s+clipboard|share\s+(this|text|note))\b/i,
 ];
@@ -337,6 +337,24 @@ export function analyzeUserCommand(command: string): ParsedIntent {
       steps: [
         { id: 'step-1', agent: 'core', title: 'Identify personal context update', status: 'completed' },
         { id: 'step-2', agent: 'memory', title: 'Read or persist user-approved memory', status: 'running' },
+      ],
+    };
+  }
+
+  if (
+    /^(?:hey[,\s]+friday[,\s]+|friday[,\s]+)?(?:open|launch|start)\s+(?:the\s+|my\s+)?[a-z][a-z0-9._-]{1,30}(?:\s+[a-z0-9._-]{1,20}){0,2}$/i.test(
+      trimmed
+    ) &&
+    !/\.(?:pdf|docx?|xlsx?|pptx?|txt|csv|png|jpe?g|webp|zip|mp[34]|mkv)$/i.test(trimmed)
+  ) {
+    return {
+      category: 'app_control',
+      agents: ['core', 'application'],
+      requiresConfirmation: false,
+      extractedTarget: trimmed,
+      steps: [
+        { id: 'step-1', agent: 'core', title: 'Identify target application', status: 'completed' },
+        { id: 'step-2', agent: 'application', title: 'Resolve app package or fuzzy match & launch', status: 'running' },
       ],
     };
   }

@@ -10,6 +10,7 @@ import {
   loadLocalClientState,
   readDeviceTelemetryFallback,
   saveLocalClientState,
+  unwrapAndroidBridgeReply,
   type LocalClientState,
 } from './core/localClientEngine';
 import type {
@@ -1454,7 +1455,10 @@ export default function App() {
   const handleLaunchApp = useCallback(
     async (app: DesktopAppItem) => {
       if (window.fridayAndroid?.openApp) {
-        const msg = window.fridayAndroid.openApp(app.command || app.name);
+        const msg = unwrapAndroidBridgeReply(
+          window.fridayAndroid.openApp(app.command || app.name),
+          `Opened ${app.name}.`
+        );
         setLaunchNotice(msg);
         return;
       }

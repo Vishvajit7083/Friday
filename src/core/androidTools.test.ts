@@ -186,6 +186,12 @@ test('unwraps JSON payloads from Android JavascriptInterface bridge into readabl
 
     const dial = executeClientConfirmAction('sensitive_action', 'call mom', true, yt.nextState);
     assert.equal(dial.confirmationMessage.content, 'Dialer prepared for mom');
+
+    const insta = await executeClientOfflineCommand('open instagram', yt.nextState);
+    assert.equal(insta.assistantMessage.content, 'Opened Android app: instagram');
+
+    const instaTypo = await executeClientOfflineCommand('open insragram', insta.nextState);
+    assert.equal(instaTypo.assistantMessage.content, 'Opened Android app: insragram');
   } finally {
     if (prevWindow === undefined) {
       delete g.window;
@@ -193,5 +199,12 @@ test('unwraps JSON payloads from Android JavascriptInterface bridge into readabl
       g.window = prevWindow;
     }
   }
+});
+
+test('routes exact and misspelled Android app launch commands without breaking file search', () => {
+  assert.equal(analyzeUserCommand('open instagram').category, 'phone_control');
+  assert.equal(analyzeUserCommand('open insragram').category, 'app_control');
+  assert.equal(analyzeUserCommand('open the insragram app').category, 'app_control');
+  assert.equal(analyzeUserCommand('open resume.pdf').category, 'file_search');
 });
 

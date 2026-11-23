@@ -3,7 +3,7 @@
 // ESC hide-to-desktop without terminating background services, and global reopen shortcut.
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { spawn, type ChildProcess } from 'child_process';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -53,12 +53,35 @@ async function probeServerHealth(baseUrl: string): Promise<boolean> {
   }
 }
 
-async function ensureLocalServerRunning(baseUrl: string): Promise<ChildProcess | null> {
+async function ensureLocalServerRunning(baseUrl: string, userDataDir?: string): Promise<ChildProcess | null> {
   if (await probeServerHealth(baseUrl)) return null;
 
   const rootDir = path.resolve(currentDir, '../..');
-  const distServer = path.join(rootDir, 'dist', 'index.html');
+  const distDir = path.join(rootDir, 'dist');
+  const distServer = path.join(distDir, 'index.html');
   const isProdBundle = fs.existsSync(distServer);
+  const bundledServer = path.join(rootDir, 'dist-electron', 'server.mjs');
+
+  if (isProdBundle && fs.existsSync(bundledServer)) {
+    process.env.NODE_ENV = 'production';
+    process.env.FRIDAY_DIST_DIR = distDir;
+    if (userDataDir) {
+      process.env.FRIDAY_DATA_DIR = path.join(userDataDir, 'friday-data');
+    }
+    try {
+      await import(pathToFileURL(bundledServer).href);
+      for (let i = 0; i < 24; i += 1) {
+        if (await probeServerHealth(baseUrl)) {
+          return null;
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    } catch (err) {
+      console.error('Failed to start bundled server:', err);
+    }
+    return null;
+  }
+
   const tsxBin =
     process.platform === 'win32'
       ? path.join(rootDir, 'node_modules', '.bin', 'tsx.cmd')
@@ -72,6 +95,8 @@ async function ensureLocalServerRunning(baseUrl: string): Promise<ChildProcess |
     env: {
       ...process.env,
       NODE_ENV: isProdBundle ? 'production' : process.env.NODE_ENV || 'development',
+      FRIDAY_DIST_DIR: distDir,
+      ...(userDataDir ? { FRIDAY_DATA_DIR: path.join(userDataDir, 'friday-data') } : {}),
     },
     stdio: 'ignore',
     shell: false,
@@ -236,7 +261,7 @@ export async function bootstrapElectronShell() {
   });
 
   app.whenReady().then(async () => {
-    embeddedServerProcess = await ensureLocalServerRunning(config.serverUrl);
+    embeddedServerProcess = await ensureLocalServerRunning(config.serverUrl, app.getPath('userData'));
 
     const allowedPermissions = new Set(['media', 'audioCapture', 'display-capture', 'fullscreen']);
     session.defaultSession.setPermissionRequestHandler(
