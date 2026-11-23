@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist dist-electron server.js",
     "lint": "tsc --noEmit",
-    "electron:compile": "tsc -p tsconfig.electron.json && esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist-electron/server.mjs",
+    "electron:compile": "tsc -p tsconfig.electron.json && esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/electron/preload.cjs && esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist-electron/server.mjs",
     "electron:build:win": "npm run build && npm run electron:compile && electron-builder --win",
     "android:sync": "node scripts/sync-android-assets.mjs"
   },

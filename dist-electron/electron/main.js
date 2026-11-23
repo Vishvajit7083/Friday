@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { spawn } from 'child_process';
+import { getWindowsSpeechCapabilities, launchWindowsAppVerified, openWindowsFolder, openWindowsWebsite, recognizeWindowsSpeechFromWav, speakWindowsSapiTts, stopWindowsSapiTts, } from './windowsAutomation.js';
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 export function getElectronConfig() {
     return {
@@ -94,7 +95,7 @@ async function ensureLocalServerRunning(baseUrl, userDataDir) {
 }
 export async function bootstrapElectronShell() {
     const electron = await import(__rewriteRelativeImportExtension('electron'));
-    const { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, Menu, Tray, nativeImage, session, shell, } = electron;
+    const { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, Menu, Tray, nativeImage, session, shell, systemPreferences, } = electron;
     const gotLock = app.requestSingleInstanceLock();
     if (!gotLock) {
         app.quit();
@@ -177,6 +178,9 @@ export async function bootstrapElectronShell() {
         };
     }
     function createWindow() {
+        const cjsPreload = path.join(currentDir, 'preload.cjs');
+        const esmPreload = path.join(currentDir, 'preload.js');
+        const preloadPath = fs.existsSync(cjsPreload) ? cjsPreload : esmPreload;
         mainWindow = new BrowserWindow({
             width: 1440,
             height: 900,
@@ -187,7 +191,7 @@ export async function bootstrapElectronShell() {
             fullscreen: config.fullscreen,
             backgroundColor: '#050811',
             webPreferences: {
-                preload: path.join(currentDir, 'preload.js'),
+                preload: preloadPath,
                 contextIsolation: true,
                 nodeIntegration: false,
                 sandbox: true,
@@ -224,7 +228,16 @@ export async function bootstrapElectronShell() {
     });
     app.whenReady().then(async () => {
         embeddedServerProcess = await ensureLocalServerRunning(config.serverUrl, app.getPath('userData'));
-        const allowedPermissions = new Set(['media', 'audioCapture', 'display-capture', 'fullscreen']);
+        const allowedPermissions = new Set([
+            'media',
+            'audioCapture',
+            'microphone',
+            'display-capture',
+            'fullscreen',
+        ]);
+        session.defaultSession.setPermissionCheckHandler?.((_webContents, permission, requestingOrigin) => {
+            return isTrustedAppUrl(requestingOrigin) && allowedPermissions.has(permission);
+        });
         session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
             const originOk = isTrustedAppUrl(webContents.getURL());
             callback(originOk && allowedPermissions.has(permission));
@@ -317,10 +330,76 @@ export async function bootstrapElectronShell() {
         ipcMain.handle('friday:get-window-state', () => getDesktopState());
         ipcMain.handle('friday:quit-app', () => {
             isQuitting = true;
+            void stopWindowsSapiTts();
             embeddedServerProcess?.kill();
             mainWindow?.destroy();
             app.quit();
             return { quitting: true };
+        });
+        ipcMain.handle('friday:voice-capabilities', async () => {
+            return getWindowsSpeechCapabilities();
+        });
+        ipcMain.handle('friday:request-mic-permission', async () => {
+            if (process.platform === 'darwin' && typeof systemPreferences?.askForMediaAccess === 'function') {
+                const granted = await systemPreferences.askForMediaAccess('microphone');
+                return {
+                    granted: Boolean(granted),
+                    status: granted ? 'granted' : 'denied',
+                    detail: granted ? 'macOS microphone permission granted.' : 'macOS microphone permission denied.',
+                };
+            }
+            const caps = await getWindowsSpeechCapabilities();
+            const denied = caps.micAccessStatus === 'denied' || caps.micAccessStatus === 'desktop-apps-denied';
+            return {
+                granted: !denied,
+                status: caps.micAccessStatus,
+                detail: denied
+                    ? 'Windows Microphone Privacy is blocking desktop apps. Enable Settings -> Privacy & security -> Microphone -> "Let desktop apps access your microphone".'
+                    : 'Microphone access permitted by host configuration.',
+            };
+        });
+        ipcMain.handle('friday:recognize-speech-wav', async (_evt, payload) => {
+            if (!payload?.wavBase64) {
+                return {
+                    ok: false,
+                    text: '',
+                    engine: 'windows-system-speech',
+                    errorCode: 'INVALID_AUDIO',
+                    error: 'No audio payload received.',
+                };
+            }
+            return recognizeWindowsSpeechFromWav(payload.wavBase64, payload.language || 'en-US');
+        });
+        ipcMain.handle('friday:speak-windows-tts', async (_evt, payload) => {
+            if (!payload?.text?.trim())
+                return { ok: false, detail: 'Empty speech text.' };
+            return speakWindowsSapiTts({
+                text: payload.text,
+                language: payload.language,
+                gender: payload.gender,
+                rate: payload.rate,
+            });
+        });
+        ipcMain.handle('friday:stop-windows-tts', async () => {
+            return stopWindowsSapiTts();
+        });
+        ipcMain.handle('friday:launch-app', async (_evt, target) => {
+            return launchWindowsAppVerified(String(target || ''));
+        });
+        ipcMain.handle('friday:open-website', async (_evt, urlOrAlias) => {
+            return openWindowsWebsite(String(urlOrAlias || ''));
+        });
+        ipcMain.handle('friday:open-folder', async (_evt, folderNameOrPath) => {
+            return openWindowsFolder(String(folderNameOrPath || ''));
+        });
+        ipcMain.handle('friday:windows-diagnostics', async () => {
+            const voiceCaps = await getWindowsSpeechCapabilities();
+            return {
+                platform: process.platform,
+                arch: process.arch,
+                desktopState: getDesktopState(),
+                voiceCapabilities: voiceCaps,
+            };
         });
     });
     app.on('will-quit', () => {

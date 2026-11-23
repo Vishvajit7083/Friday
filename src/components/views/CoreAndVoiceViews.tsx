@@ -236,21 +236,143 @@ export function VoiceAssistantView({
   voiceState,
   audioLevel,
   isListening,
+  audioInputDevices = [],
+  liveTranscript,
   onToggleListening,
   onUpdateSettings,
   onTestSpeech,
+  onRefreshAudioDevices,
 }: {
   settings: AssistantSettings;
   voiceState: VoiceState;
   audioLevel: number;
   isListening: boolean;
+  audioInputDevices?: Array<{ deviceId: string; label: string }>;
+  liveTranscript?: string | null;
   onToggleListening: () => void;
   onUpdateSettings: (patch: Partial<AssistantSettings>) => void;
   onTestSpeech: (phrase: string) => void;
+  onRefreshAudioDevices?: () => Promise<void>;
 }) {
   const [testPhrase, setTestPhrase] = useState(
     'All systems nominal. F.R.I.D.A.Y. holographic core and neural voice pipeline active.'
   );
+  const [voiceDiagRunning, setVoiceDiagRunning] = useState(false);
+  const [voiceDiagResults, setVoiceDiagResults] = useState<
+    Array<{ id: string; label: string; status: 'pass' | 'warning' | 'fail'; detail: string }>
+  >([]);
+
+  const runVoiceDiagnostics = async () => {
+    setVoiceDiagRunning(true);
+    const items: Array<{ id: string; label: string; status: 'pass' | 'warning' | 'fail'; detail: string }> = [];
+
+    try {
+      const desktop = (window as Window & {
+        fridayDesktop?: {
+          isDesktopShell?: boolean;
+          requestMicPermission?: () => Promise<{ granted: boolean; status: string; detail: string }>;
+          getVoiceCapabilities?: () => Promise<{
+            platform: string;
+            offlineSttReady: boolean;
+            recognizers: string[];
+            ttsVoices: string[];
+            micAccessStatus: string;
+          }>;
+        };
+      }).fridayDesktop;
+
+      items.push({
+        id: 'ipc',
+        label: 'Electron Desktop Preload Bridge',
+        status: desktop?.isDesktopShell ? 'pass' : 'warning',
+        detail: desktop?.isDesktopShell
+          ? 'Active (window.fridayDesktop contextBridge loaded)'
+          : 'Web browser mode (run Windows Electron app for native desktop IPC)',
+      });
+
+      const hasGetUserMedia = Boolean(navigator.mediaDevices?.getUserMedia);
+      items.push({
+        id: 'media-api',
+        label: 'Microphone Audio Capture API',
+        status: hasGetUserMedia ? 'pass' : 'fail',
+        detail: hasGetUserMedia
+          ? `${audioInputDevices.length} audio input device(s) enumerated`
+          : 'navigator.mediaDevices.getUserMedia is unavailable in this window context',
+      });
+
+      if (desktop?.requestMicPermission) {
+        const micPerm = await desktop.requestMicPermission();
+        items.push({
+          id: 'mic-perm',
+          label: 'Windows Microphone Privacy Permission',
+          status: micPerm.granted ? 'pass' : 'fail',
+          detail: micPerm.detail,
+        });
+      }
+
+      if (onRefreshAudioDevices) {
+        await onRefreshAudioDevices();
+      }
+
+      const voiceRes = await fetch('/api/diagnostics/voice').catch(() => null);
+      const voiceCaps = voiceRes?.ok ? await voiceRes.json() : null;
+      const speechRecSupported =
+        typeof window !== 'undefined' &&
+        Boolean(
+          (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown })
+            .SpeechRecognition ||
+            (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown })
+              .webkitSpeechRecognition
+        );
+
+      const sttDetail = voiceCaps?.offlineSttReady
+        ? `Windows System.Speech ready (${(voiceCaps.recognizers || []).join(', ')})`
+        : voiceCaps?.geminiSpeechAvailable
+          ? 'Gemini cloud speech transcription active'
+          : speechRecSupported
+            ? 'Browser Web SpeechRecognition available (requires Chrome/Edge online service)'
+            : 'No offline Windows speech pack or Gemini key detected yet';
+
+      items.push({
+        id: 'stt',
+        label: 'Speech Recognition (STT) Engine',
+        status: voiceCaps?.offlineSttReady || voiceCaps?.geminiSpeechAvailable || speechRecSupported ? 'pass' : 'warning',
+        detail: sttDetail,
+      });
+
+      const browserVoices =
+        typeof window !== 'undefined' && 'speechSynthesis' in window
+          ? window.speechSynthesis.getVoices().length
+          : 0;
+      const sapiVoices = Array.isArray(voiceCaps?.ttsVoices) ? voiceCaps.ttsVoices.length : 0;
+
+      items.push({
+        id: 'tts',
+        label: 'Text-to-Speech (TTS) Output Voices',
+        status: browserVoices > 0 || sapiVoices > 0 ? 'pass' : 'warning',
+        detail: `Browser voices: ${browserVoices} · Windows SAPI voices: ${sapiVoices}`,
+      });
+
+      const aiRes = await fetch('/api/health/ai').catch(() => null);
+      const aiHealth = aiRes?.ok ? await aiRes.json() : null;
+      items.push({
+        id: 'ai',
+        label: 'AI Response Pipeline',
+        status: aiHealth?.connected ? 'pass' : 'warning',
+        detail: aiHealth ? `${aiHealth.provider} (${aiHealth.model})` : 'Standalone local client fallback',
+      });
+    } catch (err) {
+      items.push({
+        id: 'diag-err',
+        label: 'Diagnostic Runner',
+        status: 'fail',
+        detail: (err as Error).message,
+      });
+    } finally {
+      setVoiceDiagResults(items);
+      setVoiceDiagRunning(false);
+    }
+  };
 
   const bars = Array.from({ length: 24 }, (_, idx) => {
     const wave = Math.abs(Math.sin(idx * 0.45 + (isListening ? audioLevel * 12 : 1)));
@@ -268,6 +390,7 @@ export function VoiceAssistantView({
             <h2 className="font-display text-xl font-semibold text-slate-100">Voice Assistant Studio</h2>
             <p className="text-sm text-slate-400 mt-0.5">
               State: {VOICE_STATE_META[voiceState].label} · Wake Word: &ldquo;{settings.wakeWord}&rdquo;
+              {liveTranscript ? ` · ${liveTranscript}` : ''}
             </p>
           </div>
           <button
@@ -280,7 +403,7 @@ export function VoiceAssistantView({
             }`}
           >
             {isListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-            <span>{isListening ? 'Listening Active (Click to Stop)' : 'Start Microphone Capture'}</span>
+            <span>{isListening ? 'Listening Active (Click to Send/Stop)' : 'Start Microphone Capture'}</span>
           </button>
         </div>
 
@@ -322,6 +445,33 @@ export function VoiceAssistantView({
               <option value="Puck">Puck (Neutral · Crisp Energetic)</option>
               <option value="Charon">Charon (Male · Deep Composed)</option>
               <option value="Fenrir">Fenrir (Male · Direct Executive)</option>
+            </select>
+          </label>
+
+          <label className="block space-y-1.5 text-xs md:col-span-2">
+            <span className="text-slate-300 font-medium flex items-center justify-between gap-2">
+              <span>Microphone Input Device</span>
+              {onRefreshAudioDevices && (
+                <button
+                  type="button"
+                  onClick={() => void onRefreshAudioDevices()}
+                  className="text-[11px] text-cyan-300 hover:text-cyan-200 underline"
+                >
+                  Refresh Microphones
+                </button>
+              )}
+            </span>
+            <select
+              value={settings.audioInputDeviceId || ''}
+              onChange={(e) => onUpdateSettings({ audioInputDeviceId: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
+            >
+              <option value="">System Default Microphone</option>
+              {audioInputDevices.map((dev, idx) => (
+                <option key={dev.deviceId || `mic-${idx}`} value={dev.deviceId}>
+                  {dev.label || `Microphone Input ${idx + 1}`}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -410,7 +560,7 @@ export function VoiceAssistantView({
                 : 'bg-slate-900 border-slate-700 text-slate-400'
             }`}
           >
-            <span>Auto-Speak Replies: {settings.autoSpeakReplies ? 'On' : 'Manual'}</span>
+            <span>Auto-Speak Typed Replies: {settings.autoSpeakReplies ? 'On' : 'Manual'}</span>
           </button>
         </div>
       </div>
@@ -436,6 +586,46 @@ export function VoiceAssistantView({
             Synthesize & Speak
           </button>
         </div>
+      </div>
+
+      <div className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-slate-200">Voice & Desktop Pipeline Diagnostics</h3>
+          <button
+            type="button"
+            disabled={voiceDiagRunning}
+            onClick={() => void runVoiceDiagnostics()}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 border border-cyan-500/35 text-cyan-200 hover:bg-cyan-500/15 disabled:opacity-50"
+          >
+            {voiceDiagRunning ? 'Checking...' : 'Run Voice Diagnostics'}
+          </button>
+        </div>
+        {voiceDiagResults.length > 0 && (
+          <div className="space-y-2">
+            {voiceDiagResults.map((item) => (
+              <div
+                key={item.id}
+                className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center justify-between gap-3 text-xs"
+              >
+                <div className="min-w-0">
+                  <div className="font-medium text-slate-100">{item.label}</div>
+                  <div className="text-slate-400 truncate">{item.detail}</div>
+                </div>
+                <span
+                  className={`px-2 py-0.5 rounded text-[11px] font-semibold uppercase shrink-0 ${
+                    item.status === 'pass'
+                      ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                      : item.status === 'warning'
+                        ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                        : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                  }`}
+                >
+                  {item.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

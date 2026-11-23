@@ -6,8 +6,12 @@ import {
   closeWindowsWindow,
   discoverWindowsStartApps,
   focusWindowsWindow,
+  isWindowsAppAvailable,
   launchWindowsTarget,
   listActiveWindows,
+  normalizeSafeWebsiteUrl,
+  openWindowsFolder,
+  openWindowsWebsite,
   setWindowsWindowState,
 } from '../electron/windowsAutomation.ts';
 import type { DesktopAppItem, RunningWindowInfo, SystemTelemetry } from '../src/core/types.ts';
@@ -98,10 +102,12 @@ export async function getSystemTelemetry(): Promise<SystemTelemetry> {
 }
 
 export async function checkCommandAvailable(command: string): Promise<boolean> {
+  if (process.platform === 'win32') {
+    return isWindowsAppAvailable(command);
+  }
   if (!/^[a-zA-Z0-9._-]+$/.test(command)) return false;
   try {
-    const checker = process.platform === 'win32' ? 'where' : 'which';
-    await execFileAsync(checker, [command], { timeout: 1500 });
+    await execFileAsync('which', [command], { timeout: 1500 });
     return true;
   } catch {
     return false;
@@ -161,27 +167,33 @@ export async function detectInstalledApps(apps: DesktopAppItem[], force = false)
   return enriched;
 }
 
-const SEMANTIC_APP_ALIASES: Array<{ rx: RegExp; lookup: string; winCommands: string[] }> = [
-  { rx: /\b(coding|ide|vs\s*code|vscode|visual\s+studio\s+code)\b/i, lookup: 'code', winCommands: ['code', 'Code'] },
-  { rx: /\b(chrome|google\s+chrome|browser)\b/i, lookup: 'chrome', winCommands: ['chrome', 'msedge'] },
-  { rx: /\b(edge|microsoft\s+edge)\b/i, lookup: 'msedge', winCommands: ['msedge'] },
-  { rx: /\b(spotify|music\s+player)\b/i, lookup: 'spotify', winCommands: ['spotify'] },
-  { rx: /\b(whatsapp|messaging)\b/i, lookup: 'whatsapp', winCommands: ['whatsapp'] },
-  { rx: /\b(terminal|powershell|cmd|shell)\b/i, lookup: 'wt', winCommands: ['wt', 'powershell', 'cmd'] },
-  { rx: /\b(explorer|files|file\s+explorer)\b/i, lookup: 'explorer', winCommands: ['explorer'] },
-  { rx: /\b(notepad|notes)\b/i, lookup: 'notepad', winCommands: ['notepad'] },
-  { rx: /\b(calculator|calc)\b/i, lookup: 'calc', winCommands: ['calc'] },
-  { rx: /\b(vlc)\b/i, lookup: 'vlc', winCommands: ['vlc'] },
+const SEMANTIC_APP_ALIASES: Array<{ rx: RegExp; lookup: string; label: string }> = [
+  { rx: /\b(coding|ide|vs\s*code|vscode|visual\s+studio\s+code)\b/i, lookup: 'code', label: 'Visual Studio Code' },
+  { rx: /\b(google\s+chrome|google-chrome|chrome|browser)\b/i, lookup: 'chrome', label: 'Google Chrome' },
+  { rx: /\b(microsoft\s+edge|msedge|edge)\b/i, lookup: 'edge', label: 'Microsoft Edge' },
+  { rx: /\b(android\s+studio|studio64)\b/i, lookup: 'studio64', label: 'Android Studio' },
+  { rx: /\b(spotify|music\s+player)\b/i, lookup: 'spotify', label: 'Spotify' },
+  { rx: /\b(whatsapp|messaging)\b/i, lookup: 'whatsapp', label: 'WhatsApp Desktop' },
+  { rx: /\b(telegram)\b/i, lookup: 'telegram', label: 'Telegram Desktop' },
+  { rx: /\b(command\s+prompt|cmd)\b/i, lookup: 'cmd', label: 'Command Prompt' },
+  { rx: /\b(powershell|pwsh)\b/i, lookup: 'powershell', label: 'Windows PowerShell' },
+  { rx: /\b(windows\s+terminal|terminal|wt)\b/i, lookup: 'wt', label: 'Windows Terminal' },
+  { rx: /\b(file\s+explorer|explorer|files)\b/i, lookup: 'explorer', label: 'File Explorer' },
+  { rx: /\b(notepad|notes)\b/i, lookup: 'notepad', label: 'Notepad' },
+  { rx: /\b(calculator|calc)\b/i, lookup: 'calculator', label: 'Calculator' },
+  { rx: /\b(windows\s+settings|wi-?fi\s+settings|bluetooth\s+settings|display\s+settings|sound\s+settings|microphone\s+settings|settings)\b/i, lookup: 'settings', label: 'Windows Settings' },
+  { rx: /\b(task\s+manager|taskmgr)\b/i, lookup: 'taskmgr', label: 'Task Manager' },
+  { rx: /\b(paint|mspaint)\b/i, lookup: 'paint', label: 'Paint' },
+  { rx: /\b(vlc)\b/i, lookup: 'vlc', label: 'VLC Media Player' },
 ];
 
 export async function launchApplication(app: DesktopAppItem): Promise<{ launched: boolean; message: string }> {
   if (process.platform === 'win32') {
-    const winTarget = app.command === 'google-chrome' ? 'chrome' : app.command;
-    const available = winTarget.includes('!') || (await checkCommandAvailable(winTarget));
-    const result = await launchWindowsTarget(available ? winTarget : app.name);
+    const winTarget = app.command === 'google-chrome' ? 'chrome' : app.command || app.name;
+    const result = await launchWindowsTarget(winTarget);
     return {
       launched: result.launched,
-      message: result.launched ? `Launched ${app.name} on Windows desktop.` : result.detail,
+      message: result.detail,
     };
   }
 
@@ -216,14 +228,16 @@ export async function launchApplication(app: DesktopAppItem): Promise<{ launched
 
 export async function handleAppOrWindowCommand(
   userCommand: string,
-  apps: DesktopAppItem[]
+  apps: DesktopAppItem[],
+  allowedFolders: string[] = []
 ): Promise<{
   handled: boolean;
   message: string;
   windows?: RunningWindowInfo[];
   launchedApp?: DesktopAppItem;
 }> {
-  const lower = userCommand.toLowerCase();
+  const trimmed = userCommand.trim();
+  const lower = trimmed.toLowerCase();
 
   if (/\b(running|active\s+windows|applications\s+currently\s+running)\b/i.test(lower)) {
     const windows = await listActiveWindows();
@@ -242,6 +256,50 @@ export async function handleAppOrWindowCommand(
     };
   }
 
+  // Handle explicit folder open requests (e.g. "open downloads folder", "open desktop")
+  if (
+    /\b(open|launch|show)\b/i.test(lower) &&
+    (/\b(downloads?|desktop|documents?|pictures?|videos?|music)\s*(folder|directory)?\b/i.test(lower) ||
+      /[a-zA-Z]:\\[^\n\r"'<>|]+/.test(trimmed)) &&
+    !/\b(file\s+explorer|explorer)\b/i.test(lower)
+  ) {
+    const folderRes = await openWindowsFolder(trimmed, allowedFolders);
+    return {
+      handled: true,
+      message: folderRes.message,
+    };
+  }
+
+  // Handle explicit Settings section requests on Windows (e.g. "open bluetooth settings", "open windows settings")
+  if (/\bsettings\b/i.test(lower)) {
+    const settingsRes = await launchWindowsTarget(trimmed);
+    return {
+      handled: true,
+      message: settingsRes.detail,
+    };
+  }
+
+  // Handle website open commands (e.g., "open youtube", "open github.com", "open https://google.com in chrome")
+  const explicitBrowser = /\bchrome\b/i.test(lower)
+    ? 'chrome'
+    : /\bedge\b/i.test(lower)
+      ? 'edge'
+      : undefined;
+
+  const websiteTarget = normalizeSafeWebsiteUrl(trimmed);
+  if (
+    websiteTarget &&
+    (/\b(youtube|google|github|gmail|notion|wikipedia)\b/i.test(lower) ||
+      /https?:\/\/|[a-z0-9-]+\.(?:com|org|net|io|dev|in|edu|gov|ai)/i.test(lower)) &&
+    !/\b(google\s+chrome)\b/i.test(lower)
+  ) {
+    const webRes = await openWindowsWebsite(trimmed, explicitBrowser);
+    return {
+      handled: true,
+      message: webRes.message,
+    };
+  }
+
   // Determine target alias or app match
   const alias = SEMANTIC_APP_ALIASES.find((a) => a.rx.test(lower));
   const matchedApp =
@@ -249,20 +307,24 @@ export async function handleAppOrWindowCommand(
     (alias
       ? apps.find(
           (a) =>
+            a.command.toLowerCase() === alias.lookup ||
             a.command.toLowerCase().includes(alias.lookup) ||
-            a.name.toLowerCase().includes(alias.lookup)
+            a.name.toLowerCase().includes(alias.label.toLowerCase())
         )
       : undefined);
 
-  const targetName = matchedApp?.command === 'google-chrome' ? 'chrome' : matchedApp?.command || alias?.lookup || '';
+  const targetName =
+    alias?.lookup ||
+    (matchedApp?.command === 'google-chrome' ? 'chrome' : matchedApp?.command) ||
+    '';
 
   if (/\b(minimize)\b/i.test(lower) && targetName) {
     const ok = await setWindowsWindowState(targetName, 'minimize');
     return {
       handled: true,
       message: ok
-        ? `Minimized ${matchedApp?.name || targetName}.`
-        : `Could not locate an active window for "${matchedApp?.name || targetName}" to minimize.`,
+        ? `Minimized ${matchedApp?.name || alias?.label || targetName}.`
+        : `Could not locate an active window for "${matchedApp?.name || alias?.label || targetName}" to minimize.`,
     };
   }
 
@@ -271,15 +333,32 @@ export async function handleAppOrWindowCommand(
     return {
       handled: true,
       message: ok
-        ? `Maximized ${matchedApp?.name || targetName}.`
-        : `Could not locate an active window for "${matchedApp?.name || targetName}" to maximize.`,
+        ? `Maximized ${matchedApp?.name || alias?.label || targetName}.`
+        : `Could not locate an active window for "${matchedApp?.name || alias?.label || targetName}" to maximize.`,
     };
   }
 
   if (/\b(switch\s+to|focus)\b/i.test(lower) && targetName) {
     const ok = await focusWindowsWindow(targetName);
     if (ok) {
-      return { handled: true, message: `Switched focus to ${matchedApp?.name || targetName}.` };
+      return { handled: true, message: `Switched focus to ${matchedApp?.name || alias?.label || targetName}.` };
+    }
+    const winLaunch = await launchWindowsTarget(targetName);
+    return {
+      handled: true,
+      launchedApp: matchedApp,
+      message: winLaunch.detail,
+    };
+  }
+
+  if (alias) {
+    if (process.platform === 'win32') {
+      const res = await launchWindowsTarget(alias.lookup);
+      return {
+        handled: true,
+        launchedApp: matchedApp,
+        message: res.detail,
+      };
     }
     if (matchedApp) {
       const launched = await launchApplication(matchedApp);
@@ -287,13 +366,29 @@ export async function handleAppOrWindowCommand(
     }
     return {
       handled: true,
-      message: `No running window matched "${targetName}".`,
+      message: `${alias.label} desktop launch requires a Windows 10/11 desktop session.`,
     };
   }
 
   if (matchedApp) {
     const launched = await launchApplication(matchedApp);
     return { handled: true, launchedApp: matchedApp, message: launched.message };
+  }
+
+  // Generic extracted app name (e.g., "open paint", "open obs", "open discord")
+  const genericExtract = trimmed.match(
+    /^(?:hey[,\s]+friday[,\s]+|friday[,\s]+)?(?:open|launch|start)\s+(?:the\s+|my\s+)?([a-z0-9._ -]{2,40})$/i
+  );
+  if (genericExtract?.[1]) {
+    const requestedName = genericExtract[1].trim();
+    if (process.platform === 'win32') {
+      const res = await launchWindowsTarget(requestedName);
+      return { handled: true, message: res.detail };
+    }
+    return {
+      handled: true,
+      message: `Application "${requestedName}" cannot be launched in this non-Windows server container. Run F.R.I.D.A.Y. on Windows Desktop to launch "${requestedName}".`,
+    };
   }
 
   // Try Start Apps discovery by name
@@ -303,16 +398,13 @@ export async function handleAppOrWindowCommand(
     const res = await launchWindowsTarget(startMatch.appId);
     return {
       handled: true,
-      message: res.launched ? `Launched ${startMatch.name}.` : res.detail,
+      message: res.detail,
     };
   }
 
   return {
     handled: true,
-    message: `Which application would you like to open or switch to? Installed/known targets include: ${apps
-      .slice(0, 8)
-      .map((a) => a.name)
-      .join(', ')}.`,
+    message: `Which application would you like to open or switch to? Supported targets include Google Chrome, Microsoft Edge, Notepad, Calculator, File Explorer, Command Prompt, PowerShell, Windows Settings, Task Manager, VS Code, or any installed Start Menu app.`,
   };
 }
 

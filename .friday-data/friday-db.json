@@ -8,7 +8,9 @@
     "voiceName": "Kore",
     "voiceGender": "female",
     "speakingSpeed": 0.95,
+    "speakingPitch": 1,
     "language": "en-US",
+    "audioInputDeviceId": "",
     "continuousListening": false,
     "wakeWordEnabled": true,
     "autoSpeakReplies": false,
@@ -836,9 +838,225 @@
         "modelMs": 2,
         "totalMs": 2
       }
+    },
+    {
+      "id": "msg-1795459039778-u",
+      "role": "user",
+      "content": "open Calculator",
+      "timestamp": "2026-11-23T18:37:19.778Z",
+      "intent": "app_control"
+    },
+    {
+      "id": "msg-1795459039839-a",
+      "role": "assistant",
+      "content": "Calculator (calc) is unavailable in this host environment. Run F.R.I.D.A.Y. in Windows Electron mode to launch local desktop applications.",
+      "timestamp": "2026-11-23T18:37:19.839Z",
+      "intent": "app_control",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Identify target desktop application, website, or window",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "application",
+          "title": "Resolve executable, URL, or active window & dispatch action",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 7,
+        "toolMs": 58,
+        "firstTokenMs": 67,
+        "modelMs": 2,
+        "totalMs": 68
+      }
+    },
+    {
+      "id": "msg-1795459043040-u",
+      "role": "user",
+      "content": "open Calculator",
+      "timestamp": "2026-11-23T18:37:23.040Z",
+      "intent": "app_control"
+    },
+    {
+      "id": "msg-1795459043060-a",
+      "role": "assistant",
+      "content": "Calculator (calc) is unavailable in this host environment. Run F.R.I.D.A.Y. in Windows Electron mode to launch local desktop applications.",
+      "timestamp": "2026-11-23T18:37:23.060Z",
+      "intent": "app_control",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Identify target desktop application, website, or window",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "application",
+          "title": "Resolve executable, URL, or active window & dispatch action",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 4,
+        "toolMs": 19,
+        "firstTokenMs": 24,
+        "modelMs": 0,
+        "totalMs": 24
+      }
+    },
+    {
+      "id": "msg-1795459184068-u",
+      "role": "user",
+      "content": "open Calculator",
+      "timestamp": "2026-11-23T18:39:44.068Z",
+      "intent": "app_control"
+    },
+    {
+      "id": "msg-1795459184141-a",
+      "role": "assistant",
+      "content": "Calculator (calc) is unavailable in this host environment. Run F.R.I.D.A.Y. in Windows Electron mode to launch local desktop applications.",
+      "timestamp": "2026-11-23T18:39:44.141Z",
+      "intent": "app_control",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Identify target desktop application, website, or window",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "application",
+          "title": "Resolve executable, URL, or active window & dispatch action",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 9,
+        "toolMs": 22,
+        "firstTokenMs": 31,
+        "modelMs": 51,
+        "totalMs": 82
+      }
+    },
+    {
+      "id": "msg-1795459246136-u",
+      "role": "user",
+      "content": "open Calculator",
+      "timestamp": "2026-11-23T18:40:46.136Z",
+      "intent": "app_control"
+    },
+    {
+      "id": "msg-1795459246167-a",
+      "role": "assistant",
+      "content": "Calculator (calc) is unavailable in this host environment. Run F.R.I.D.A.Y. in Windows Electron mode to launch local desktop applications.",
+      "timestamp": "2026-11-23T18:40:46.167Z",
+      "intent": "app_control",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Identify target desktop application, website, or window",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "application",
+          "title": "Resolve executable, URL, or active window & dispatch action",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 50,
+        "toolMs": 30,
+        "firstTokenMs": 80,
+        "modelMs": 1,
+        "totalMs": 81
+      }
     }
   ],
   "actionLogs": [
+    {
+      "id": "log-1795459246167-3608",
+      "timestamp": "2026-11-23T18:40:46.167Z",
+      "agent": "core",
+      "action": "Command (app_control)",
+      "target": "open Calculator",
+      "status": "completed",
+      "detail": "Engine: local-core · 81ms"
+    },
+    {
+      "id": "log-1795459246164-6nga",
+      "timestamp": "2026-11-23T18:40:46.164Z",
+      "agent": "application",
+      "action": "Application / Window Control",
+      "target": "Calculator",
+      "status": "completed",
+      "detail": "Calculator (calc) is unavailable in this host environment. Run F.R.I.D.A.Y. in Windows Electron mode to launch local desktop applications."
+    },
+    {
+      "id": "log-1795459184141-ecm2",
+      "timestamp": "2026-11-23T18:39:44.141Z",
+      "agent": "core",
+      "action": "Command (app_control)",
+      "target": "open Calculator",
+      "status": "completed",
+      "detail": "Engine: local-core · 82ms"
+    },
+    {
+      "id": "log-1795459184088-u8as",
+      "timestamp": "2026-11-23T18:39:44.089Z",
+      "agent": "application",
+      "action": "Application / Window Control",
+      "target": "Calculator",
+      "status": "completed",
+      "detail": "Calculator (calc) is unavailable in this host environment. Run F.R.I.D.A.Y. in Windows Electron mode to launch local desktop applications."
+    },
+    {
+      "id": "log-1795459043060-fjc0",
+      "timestamp": "2026-11-23T18:37:23.060Z",
+      "agent": "core",
+      "action": "Command (app_control)",
+      "target": "open Calculator",
+      "status": "completed",
+      "detail": "Engine: local-core · 24ms"
+    },
+    {
+      "id": "log-1795459043059-ovm8",
+      "timestamp": "2026-11-23T18:37:23.059Z",
+      "agent": "application",
+      "action": "Application / Window Control",
+      "target": "Calculator",
+      "status": "completed",
+      "detail": "Calculator (calc) is unavailable in this host environment. Run F.R.I.D.A.Y. in Windows Electron mode to launch local desktop applications."
+    },
+    {
+      "id": "log-1795459039839-dgrl",
+      "timestamp": "2026-11-23T18:37:19.839Z",
+      "agent": "core",
+      "action": "Command (app_control)",
+      "target": "open Calculator",
+      "status": "completed",
+      "detail": "Engine: local-core · 68ms"
+    },
+    {
+      "id": "log-1795459039836-o8bv",
+      "timestamp": "2026-11-23T18:37:19.836Z",
+      "agent": "application",
+      "action": "Application / Window Control",
+      "target": "Calculator",
+      "status": "completed",
+      "detail": "Calculator (calc) is unavailable in this host environment. Run F.R.I.D.A.Y. in Windows Electron mode to launch local desktop applications."
+    },
     {
       "id": "log-1795325313747-aq1q",
       "timestamp": "2026-11-22T05:28:33.747Z",
@@ -1394,6 +1612,61 @@
       "pinned": false,
       "description": "Quick plain-text note capture",
       "lastUsed": "2026-11-21T15:38:00.049Z"
+    },
+    {
+      "id": "app-edge",
+      "name": "Microsoft Edge",
+      "category": "browser",
+      "command": "msedge",
+      "installed": false,
+      "pinned": false,
+      "description": "Microsoft Edge web browser"
+    },
+    {
+      "id": "app-calculator",
+      "name": "Calculator",
+      "category": "productivity",
+      "command": "calc",
+      "installed": false,
+      "pinned": false,
+      "description": "Windows desktop calculator",
+      "lastUsed": "2026-11-23T18:40:46.163Z"
+    },
+    {
+      "id": "app-cmd",
+      "name": "Command Prompt",
+      "category": "system",
+      "command": "cmd",
+      "installed": false,
+      "pinned": false,
+      "description": "Windows Command Prompt shell"
+    },
+    {
+      "id": "app-powershell",
+      "name": "Windows PowerShell",
+      "category": "system",
+      "command": "powershell",
+      "installed": false,
+      "pinned": false,
+      "description": "Windows PowerShell automation shell"
+    },
+    {
+      "id": "app-settings",
+      "name": "Windows Settings",
+      "category": "system",
+      "command": "windows settings",
+      "installed": false,
+      "pinned": false,
+      "description": "Windows System Settings control panel"
+    },
+    {
+      "id": "app-taskmgr",
+      "name": "Task Manager",
+      "category": "system",
+      "command": "taskmgr",
+      "installed": false,
+      "pinned": false,
+      "description": "Windows process & performance manager"
     }
   ]
 }

@@ -5,6 +5,15 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { spawn, type ChildProcess } from 'child_process';
+import {
+  getWindowsSpeechCapabilities,
+  launchWindowsAppVerified,
+  openWindowsFolder,
+  openWindowsWebsite,
+  recognizeWindowsSpeechFromWav,
+  speakWindowsSapiTts,
+  stopWindowsSapiTts,
+} from './windowsAutomation.ts';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -124,6 +133,7 @@ export async function bootstrapElectronShell() {
     nativeImage,
     session,
     shell,
+    systemPreferences,
   } = electron;
 
   const gotLock = app.requestSingleInstanceLock();
@@ -208,6 +218,10 @@ export async function bootstrapElectronShell() {
   }
 
   function createWindow() {
+    const cjsPreload = path.join(currentDir, 'preload.cjs');
+    const esmPreload = path.join(currentDir, 'preload.js');
+    const preloadPath = fs.existsSync(cjsPreload) ? cjsPreload : esmPreload;
+
     mainWindow = new BrowserWindow({
       width: 1440,
       height: 900,
@@ -218,7 +232,7 @@ export async function bootstrapElectronShell() {
       fullscreen: config.fullscreen,
       backgroundColor: '#050811',
       webPreferences: {
-        preload: path.join(currentDir, 'preload.js'),
+        preload: preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -263,7 +277,18 @@ export async function bootstrapElectronShell() {
   app.whenReady().then(async () => {
     embeddedServerProcess = await ensureLocalServerRunning(config.serverUrl, app.getPath('userData'));
 
-    const allowedPermissions = new Set(['media', 'audioCapture', 'display-capture', 'fullscreen']);
+    const allowedPermissions = new Set([
+      'media',
+      'audioCapture',
+      'microphone',
+      'display-capture',
+      'fullscreen',
+    ]);
+    session.defaultSession.setPermissionCheckHandler?.(
+      (_webContents: unknown, permission: string, requestingOrigin: string) => {
+        return isTrustedAppUrl(requestingOrigin) && allowedPermissions.has(permission);
+      }
+    );
     session.defaultSession.setPermissionRequestHandler(
       (
         webContents: { getURL: () => string },
@@ -370,10 +395,93 @@ export async function bootstrapElectronShell() {
 
     ipcMain.handle('friday:quit-app', () => {
       isQuitting = true;
+      void stopWindowsSapiTts();
       embeddedServerProcess?.kill();
       mainWindow?.destroy();
       app.quit();
       return { quitting: true };
+    });
+
+    ipcMain.handle('friday:voice-capabilities', async () => {
+      return getWindowsSpeechCapabilities();
+    });
+
+    ipcMain.handle('friday:request-mic-permission', async () => {
+      if (process.platform === 'darwin' && typeof systemPreferences?.askForMediaAccess === 'function') {
+        const granted = await systemPreferences.askForMediaAccess('microphone');
+        return {
+          granted: Boolean(granted),
+          status: granted ? 'granted' : 'denied',
+          detail: granted ? 'macOS microphone permission granted.' : 'macOS microphone permission denied.',
+        };
+      }
+      const caps = await getWindowsSpeechCapabilities();
+      const denied = caps.micAccessStatus === 'denied' || caps.micAccessStatus === 'desktop-apps-denied';
+      return {
+        granted: !denied,
+        status: caps.micAccessStatus,
+        detail: denied
+          ? 'Windows Microphone Privacy is blocking desktop apps. Enable Settings -> Privacy & security -> Microphone -> "Let desktop apps access your microphone".'
+          : 'Microphone access permitted by host configuration.',
+      };
+    });
+
+    ipcMain.handle(
+      'friday:recognize-speech-wav',
+      async (_evt: unknown, payload: { wavBase64?: string; language?: string } | undefined) => {
+        if (!payload?.wavBase64) {
+          return {
+            ok: false,
+            text: '',
+            engine: 'windows-system-speech',
+            errorCode: 'INVALID_AUDIO',
+            error: 'No audio payload received.',
+          };
+        }
+        return recognizeWindowsSpeechFromWav(payload.wavBase64, payload.language || 'en-US');
+      }
+    );
+
+    ipcMain.handle(
+      'friday:speak-windows-tts',
+      async (
+        _evt: unknown,
+        payload: { text?: string; language?: string; gender?: string; rate?: number } | undefined
+      ) => {
+        if (!payload?.text?.trim()) return { ok: false, detail: 'Empty speech text.' };
+        return speakWindowsSapiTts({
+          text: payload.text,
+          language: payload.language,
+          gender: payload.gender,
+          rate: payload.rate,
+        });
+      }
+    );
+
+    ipcMain.handle('friday:stop-windows-tts', async () => {
+      return stopWindowsSapiTts();
+    });
+
+    ipcMain.handle('friday:launch-app', async (_evt: unknown, target: unknown) => {
+      return launchWindowsAppVerified(String(target || ''));
+    });
+
+    ipcMain.handle('friday:open-website', async (_evt: unknown, urlOrAlias: unknown) => {
+      return openWindowsWebsite(String(urlOrAlias || ''));
+    });
+
+    ipcMain.handle('friday:open-folder', async (_evt: unknown, folderNameOrPath: unknown) => {
+      return openWindowsFolder(String(folderNameOrPath || ''));
+    });
+
+    ipcMain.handle('friday:windows-diagnostics', async () => {
+      const voiceCaps = await getWindowsSpeechCapabilities();
+      return {
+        platform: process.platform,
+        arch: process.arch,
+        desktopState: getDesktopState(),
+        voiceCapabilities: voiceCaps,
+      };
     });
   });
 

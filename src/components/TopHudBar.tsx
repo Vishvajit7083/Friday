@@ -191,10 +191,10 @@ export function TopHudBar({
               title={isSpeaking ? 'Click to stop speaking' : `Auto-voice: ${autoSpeakReplies ? 'On' : 'Off'}`}
               className="text-purple-100 hover:text-fuchsia-300 transition-colors"
             >
-              {isSpeaking || !autoSpeakReplies ? (
+              {isSpeaking || autoSpeakReplies ? (
                 <Volume2 className="w-4 h-4" aria-hidden="true" />
               ) : (
-                <VolumeX className="w-4 h-4" aria-hidden="true" />
+                <VolumeX className="w-4 h-4 opacity-70" aria-hidden="true" />
               )}
             </button>
 

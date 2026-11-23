@@ -33,8 +33,11 @@ import {
 import {
   closeWindowsWindow,
   focusWindowsWindow,
+  getWindowsSpeechCapabilities,
   listActiveWindows,
   openLocalPathInDefaultApp,
+  openWindowsFolder,
+  openWindowsWebsite,
   sendWindowsMediaKey,
   setWindowsWindowState,
 } from './electron/windowsAutomation.ts';
@@ -592,11 +595,54 @@ async function startServer() {
 
   app.post('/api/voice/transcribe', async (req, res) => {
     try {
-      const { base64Data, mimeType } = req.body as { base64Data?: string; mimeType?: string };
+      const { base64Data, mimeType, language } = req.body as {
+        base64Data?: string;
+        mimeType?: string;
+        language?: string;
+      };
       if (!base64Data) {
         return res.status(400).json({ error: 'base64Data is required' });
       }
-      const result = await transcribeAudioBase64(base64Data, mimeType || 'audio/webm');
+      const result = await transcribeAudioBase64(
+        base64Data,
+        mimeType || 'audio/webm',
+        language || 'en-US'
+      );
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/diagnostics/voice', async (_req, res) => {
+    try {
+      const caps = await getWindowsSpeechCapabilities();
+      res.json({
+        ...caps,
+        geminiSpeechAvailable: hasValidGeminiKey(),
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/apps/open-folder', async (req, res) => {
+    try {
+      const { folder } = req.body as { folder?: string };
+      if (!folder) return res.status(400).json({ error: 'folder is required' });
+      const db = loadDb();
+      const result = await openWindowsFolder(folder, db.settings.allowedFolders);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/apps/open-website', async (req, res) => {
+    try {
+      const { url, browser } = req.body as { url?: string; browser?: 'chrome' | 'edge' };
+      if (!url) return res.status(400).json({ error: 'url is required' });
+      const result = await openWindowsWebsite(url, browser);
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });

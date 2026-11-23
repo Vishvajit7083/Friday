@@ -13,6 +13,13 @@ import {
   unwrapAndroidBridgeReply,
   type LocalClientState,
 } from './core/localClientEngine';
+import {
+  classifyMicrophoneError,
+  computeRmsLevel,
+  encodeMonoWav16kBase64,
+  mergeFloat32Chunks,
+  selectPreferredSpeechVoice,
+} from './core/voicePipeline';
 import type {
   ActionLogEntry,
   AgentId,
@@ -23,6 +30,7 @@ import type {
   ChatMessage,
   DesktopAppItem,
   FridayAndroidBridge,
+  FridayDesktopBridge,
   HologramSettings,
   MemoryItem,
   NavSection,
@@ -60,25 +68,7 @@ import {
 
 declare global {
   interface Window {
-    fridayDesktop?: {
-      hideToDesktop: () => Promise<{ hidden: boolean }>;
-      restoreWindow: () => Promise<{ visible: boolean }>;
-      minimizeWindow?: () => Promise<{ minimized: boolean }>;
-      toggleMaximize?: () => Promise<{ maximized: boolean }>;
-      setFullscreen?: (enabled: boolean) => Promise<unknown>;
-      setFloatingMode?: (enabled: boolean) => Promise<unknown>;
-      setStartupLaunch?: (enabled: boolean) => Promise<unknown>;
-      updateReopenShortcut?: (shortcut: string) => Promise<{ registered: boolean; shortcut: string }>;
-      getDesktopState?: () => Promise<{
-        fullscreen: boolean;
-        maximized: boolean;
-        floatingMode: boolean;
-        reopenShortcut: string;
-        openAtLogin: boolean;
-      }>;
-      quitApp?: () => Promise<{ quitting: boolean }>;
-      isDesktopShell: boolean;
-    };
+    fridayDesktop?: FridayDesktopBridge;
     fridayAndroid?: FridayAndroidBridge;
     __fridayAndroidEvents?: {
       onInterimText?: (text: string) => void;
@@ -123,6 +113,7 @@ const DEFAULT_SETTINGS: AssistantSettings = {
   speakingSpeed: 1.0,
   speakingPitch: 1.0,
   language: 'en-US',
+  audioInputDeviceId: '',
   continuousListening: false,
   wakeWordEnabled: true,
   autoSpeakReplies: false,
@@ -202,17 +193,64 @@ export default function App() {
   });
   const [hiddenToDesktop, setHiddenToDesktop] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [audioInputDevices, setAudioInputDevices] = useState<Array<{ deviceId: string; label: string }>>([]);
 
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const micProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const micGainRef = useRef<GainNode | null>(null);
   const micRafRef = useRef<number>(0);
+  const pcmChunksRef = useRef<Float32Array[]>([]);
+  const captureSampleRateRef = useRef<number>(16000);
+  const captureStartedAtRef = useRef<number>(0);
+  const lastVoiceAtRef = useRef<number>(0);
+  const speechDetectedRef = useRef<boolean>(false);
+  const captureModeRef = useRef<'speech' | 'manual'>('speech');
+  const captureTimeoutRef = useRef<number | null>(null);
+  const wavFinishingRef = useRef<boolean>(false);
   const speechQueueRef = useRef<string[]>([]);
   const speechActiveRef = useRef<boolean>(false);
+
+  const refreshAudioInputDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices
+        .filter((d) => d.kind === 'audioinput' && d.deviceId)
+        .map((d, index) => ({
+          deviceId: d.deviceId,
+          label: d.label || `Microphone ${index + 1}`,
+        }));
+      setAudioInputDevices(inputs);
+    } catch {
+      // Enumeration unavailable without device access
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAudioInputDevices();
+    const mediaDevices = navigator.mediaDevices;
+    const onDeviceChange = () => {
+      void refreshAudioInputDevices();
+    };
+    mediaDevices?.addEventListener?.('devicechange', onDeviceChange);
+
+    const synth = typeof window !== 'undefined' && 'speechSynthesis' in window ? window.speechSynthesis : null;
+    const onVoicesChanged = () => {
+      synth?.getVoices();
+    };
+    synth?.addEventListener?.('voiceschanged', onVoicesChanged);
+    synth?.getVoices();
+
+    return () => {
+      mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
+      synth?.removeEventListener?.('voiceschanged', onVoicesChanged);
+    };
+  }, [refreshAudioInputDevices]);
 
   const snapshotLocalState = useCallback(
     (overrides?: Partial<LocalClientState>): LocalClientState => {
@@ -415,6 +453,7 @@ export default function App() {
     speechQueueRef.current = [];
     speechActiveRef.current = false;
     window.fridayAndroid?.stopSpeaking?.();
+    window.fridayDesktop?.stopWindowsTts?.().catch(() => {});
     if (audioElRef.current) {
       audioElRef.current.pause();
       audioElRef.current = null;
@@ -428,37 +467,8 @@ export default function App() {
   }, []);
 
   const selectBestSpeechVoice = useCallback(
-    (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null => {
-      if (!voices.length) return null;
-      const targetLang = settings.language.toLowerCase();
-      const baseLang = targetLang.split('-')[0];
-      const preferFemale = settings.voiceGender !== 'male';
-      const femaleHints = ['zira', 'aria', 'jenny', 'samantha', 'victoria', 'karen', 'swara', 'lekha', 'heera', 'kalpana', 'female', 'woman'];
-      const maleHints = ['david', 'mark', 'guy', 'rishi', 'prabhat', 'daniel', 'george', 'male', 'man'];
-
-      let best: SpeechSynthesisVoice | null = null;
-      let bestScore = -1;
-      for (const v of voices) {
-        let score = 0;
-        const vLang = v.lang.toLowerCase();
-        const vName = v.name.toLowerCase();
-        if (vLang === targetLang) score += 50;
-        else if (vLang.startsWith(baseLang)) score += 30;
-        if (v.localService) score += 8;
-        if (vName.includes('natural') || vName.includes('neural') || vName.includes('online')) score += 10;
-        const isFemaleName = femaleHints.some((h) => vName.includes(h));
-        const isMaleName = maleHints.some((h) => vName.includes(h));
-        if (preferFemale && isFemaleName) score += 20;
-        if (!preferFemale && isMaleName) score += 20;
-        if (preferFemale && isMaleName) score -= 12;
-        if (!preferFemale && isFemaleName) score -= 12;
-        if (score > bestScore) {
-          bestScore = score;
-          best = v;
-        }
-      }
-      return best;
-    },
+    (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null =>
+      selectPreferredSpeechVoice(voices, settings.language, settings.voiceGender),
     [settings.language, settings.voiceGender]
   );
 
@@ -469,6 +479,7 @@ export default function App() {
       setIsSpeaking(false);
       setAudioLevel(0);
       setVoiceState((curr) => (curr === 'speaking' ? 'standby' : curr));
+      setLiveTranscript((curr) => (curr && curr.startsWith('Heard:') ? null : curr));
       return;
     }
 
@@ -487,7 +498,33 @@ export default function App() {
       return;
     }
 
-    if (!('speechSynthesis' in window)) return;
+    const voices = 'speechSynthesis' in window ? window.speechSynthesis.getVoices() : [];
+    const matchedVoice = selectBestSpeechVoice(voices);
+
+    if ((!('speechSynthesis' in window) || voices.length === 0) && window.fridayDesktop?.speakWindowsTts) {
+      speechActiveRef.current = true;
+      setIsSpeaking(true);
+      setVoiceState('speaking');
+      setAudioLevel(0.6);
+      window.fridayDesktop
+        .speakWindowsTts({
+          text: nextSentence,
+          language: settings.language,
+          gender: settings.voiceGender,
+          rate: settings.speakingSpeed,
+          pitch: settings.speakingPitch ?? 1.0,
+        })
+        .catch(() => {})
+        .finally(() => {
+          speechActiveRef.current = false;
+          setTimeout(() => {
+            pumpLocalSpeechQueue();
+          }, 60);
+        });
+      return;
+    }
+
+    if (typeof window.speechSynthesis === 'undefined') return;
     speechActiveRef.current = true;
     setIsSpeaking(true);
     setVoiceState('speaking');
@@ -497,7 +534,6 @@ export default function App() {
     utter.rate = settings.speakingSpeed;
     utter.pitch = settings.speakingPitch ?? 1.0;
     utter.lang = settings.language;
-    const matchedVoice = selectBestSpeechVoice(window.speechSynthesis.getVoices());
     if (matchedVoice) utter.voice = matchedVoice;
 
     utter.onend = () => {
@@ -508,6 +544,19 @@ export default function App() {
     };
     utter.onerror = () => {
       speechActiveRef.current = false;
+      if (window.fridayDesktop?.speakWindowsTts) {
+        window.fridayDesktop
+          .speakWindowsTts({
+            text: nextSentence,
+            language: settings.language,
+            gender: settings.voiceGender,
+            rate: settings.speakingSpeed,
+            pitch: settings.speakingPitch ?? 1.0,
+          })
+          .catch(() => {})
+          .finally(() => pumpLocalSpeechQueue());
+        return;
+      }
       pumpLocalSpeechQueue();
     };
     window.speechSynthesis.speak(utter);
@@ -517,7 +566,13 @@ export default function App() {
     (sentence: string) => {
       const clean = sentence.replace(/[*_`#]/g, '').trim();
       if (!clean) return;
-      if (!window.fridayAndroid?.speak && !('speechSynthesis' in window)) return;
+      if (
+        !window.fridayAndroid?.speak &&
+        typeof window.speechSynthesis === 'undefined' &&
+        !window.fridayDesktop?.speakWindowsTts
+      ) {
+        return;
+      }
       speechQueueRef.current.push(clean);
       pumpLocalSpeechQueue();
     },
@@ -539,8 +594,11 @@ export default function App() {
         return;
       }
 
-      // Fast path: instant local Device/Browser SpeechSynthesis unless Gemini TTS is active
-      if (apiStatus.engine !== 'gemini' && 'speechSynthesis' in window) {
+      // Fast path: instant local Device/Browser SpeechSynthesis or Windows SAPI unless Gemini TTS is active
+      if (
+        apiStatus.engine !== 'gemini' &&
+        (typeof window.speechSynthesis !== 'undefined' || Boolean(window.fridayDesktop?.speakWindowsTts))
+      ) {
         const sentences = cleanText.match(/[^.!?\n]+[.!?\n]*/g) ?? [cleanText];
         for (const s of sentences) {
           if (s.trim()) speechQueueRef.current.push(s.trim());
@@ -579,7 +637,7 @@ export default function App() {
         // Fallback below
       }
 
-      if ('speechSynthesis' in window) {
+      if (typeof window.speechSynthesis !== 'undefined' || window.fridayDesktop?.speakWindowsTts) {
         enqueueLocalSpeech(cleanText);
       } else {
         setIsSpeaking(false);
@@ -597,9 +655,10 @@ export default function App() {
   );
 
   const handleSubmitCommand = useCallback(
-    async (command: string): Promise<boolean> => {
+    async (command: string, options?: { fromVoice?: boolean }): Promise<boolean> => {
       const cleanCmd = command.trim();
       if (!cleanCmd) return false;
+      const shouldSpeakReply = Boolean(options?.fromVoice || settings.autoSpeakReplies);
 
       if (isInterruptionCommand(cleanCmd)) {
         abortRef.current?.abort();
@@ -613,6 +672,9 @@ export default function App() {
       abortRef.current?.abort();
       stopSpeaking();
       setErrorBanner(null);
+      if (!options?.fromVoice) {
+        setLiveTranscript(null);
+      }
       setVoiceState('processing');
       setActiveAgents(['core']);
 
@@ -658,7 +720,7 @@ export default function App() {
         setActiveAgents(result.activeAgents);
         if (result.speakText) {
           speakText(result.speakText);
-        } else if (settings.autoSpeakReplies && result.assistantMessage.content) {
+        } else if (shouldSpeakReply && result.assistantMessage.content) {
           speakText(result.assistantMessage.content);
         } else {
           setVoiceState('completed');
@@ -737,7 +799,7 @@ export default function App() {
                 )
               );
 
-              if (settings.autoSpeakReplies) {
+              if (shouldSpeakReply) {
                 speechBuffer += tok;
                 const match = speechBuffer.match(/^([\s\S]*?[.!?](?:\s+|$)|\S[\s\S]{18,}?\n)/);
                 if (match && match[1].trim().length >= 12) {
@@ -761,7 +823,7 @@ export default function App() {
 
               if (finalAssistant.intent === 'read_aloud' && finalAssistant.content) {
                 speakText(finalAssistant.content);
-              } else if (settings.autoSpeakReplies) {
+              } else if (shouldSpeakReply) {
                 if (speechBuffer.trim()) {
                   enqueueLocalSpeech(speechBuffer);
                   speechBuffer = '';
@@ -843,6 +905,38 @@ export default function App() {
     [refreshBootstrap, snapshotLocalState]
   );
 
+  const cleanupWavNodes = useCallback(() => {
+    if (captureTimeoutRef.current !== null) {
+      window.clearTimeout(captureTimeoutRef.current);
+      captureTimeoutRef.current = null;
+    }
+    cancelAnimationFrame(micRafRef.current);
+    try {
+      micProcessorRef.current?.disconnect();
+    } catch {
+      // Ignore disconnect errors
+    }
+    try {
+      micSourceRef.current?.disconnect();
+    } catch {
+      // Ignore disconnect errors
+    }
+    try {
+      micGainRef.current?.disconnect();
+    } catch {
+      // Ignore disconnect errors
+    }
+    micProcessorRef.current = null;
+    micSourceRef.current = null;
+    micGainRef.current = null;
+    micStreamRef.current?.getTracks().forEach((t) => t.stop());
+    micStreamRef.current = null;
+    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+      audioCtxRef.current.close().catch(() => {});
+    }
+    audioCtxRef.current = null;
+  }, []);
+
   const stopMicCapture = useCallback(() => {
     try {
       recognitionRef.current?.stop();
@@ -850,137 +944,279 @@ export default function App() {
       // Ignore already-stopped instance
     }
     recognitionRef.current = null;
-    cancelAnimationFrame(micRafRef.current);
-    micStreamRef.current?.getTracks().forEach((t) => t.stop());
-    micStreamRef.current = null;
-    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-      audioCtxRef.current.close().catch(() => {});
-    }
-    audioCtxRef.current = null;
+    cleanupWavNodes();
+    pcmChunksRef.current = [];
+    wavFinishingRef.current = false;
+    setIsRecordingAudio(false);
     setIsListening(false);
     setAudioLevel(0);
     setVoiceState((curr) => (curr === 'listening' ? 'standby' : curr));
-  }, []);
+  }, [cleanupWavNodes]);
 
-  const toggleRecordAudio = useCallback(async () => {
-    if (isRecordingAudio) {
-      mediaRecorderRef.current?.stop();
-      setIsRecordingAudio(false);
-      return;
-    }
+  useEffect(() => {
+    return () => {
+      stopMicCapture();
+      stopSpeaking();
+    };
+  }, [stopMicCapture, stopSpeaking]);
 
-    stopSpeaking();
-    stopMicCapture();
-    setErrorBanner(null);
+  const finishWavVoiceCapture = useCallback(async () => {
+    if (wavFinishingRef.current) return;
+    wavFinishingRef.current = true;
+    const chunks = pcmChunksRef.current.slice();
+    const sampleRate = captureSampleRateRef.current || 16000;
+    pcmChunksRef.current = [];
 
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      setErrorBanner('Microphone recording is unavailable or blocked in this browser window. Check site microphone permission or use text input.');
-      return;
-    }
+    cleanupWavNodes();
+    setIsRecordingAudio(false);
+    setIsListening(false);
+    setAudioLevel(0);
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const merged = mergeFloat32Chunks(chunks);
+      const minSamples = Math.floor(sampleRate * 0.25);
+      if (merged.length < minSamples) {
+        setLiveTranscript('No audio captured — speak clearly for 1–2 seconds and try again.');
+        setVoiceState('standby');
+        return;
+      }
+
+      const wavBase64 = encodeMonoWav16kBase64(merged, sampleRate);
+      if (!wavBase64) {
+        setLiveTranscript('Could not encode captured audio.');
+        setVoiceState('standby');
+        return;
+      }
+
+      setVoiceState('processing');
+      setLiveTranscript('Recognizing your voice...');
+
+      let recognizedText = '';
+      let sttErrorReason = '';
+
+      if (window.fridayDesktop?.recognizeSpeechWav) {
+        try {
+          const sttRes = await window.fridayDesktop.recognizeSpeechWav({
+            wavBase64,
+            language: settings.language,
+          });
+          if (sttRes.ok && sttRes.text.trim()) {
+            recognizedText = sttRes.text.trim();
+          } else if (sttRes.error) {
+            sttErrorReason = sttRes.error;
+          }
+        } catch (err) {
+          sttErrorReason = (err as Error).message;
+        }
+      }
+
+      if (!recognizedText && backendAvailableRef.current) {
+        try {
+          const res = await fetch('/api/voice/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              base64Data: wavBase64,
+              mimeType: 'audio/wav',
+              language: settings.language,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.error || 'Voice transcription failed');
+          }
+          if (data.text && String(data.text).trim()) {
+            recognizedText = String(data.text).trim();
+          } else if (data.reason && !sttErrorReason) {
+            sttErrorReason = String(data.reason);
+          }
+        } catch (err) {
+          if (!sttErrorReason) {
+            sttErrorReason = (err as Error).message;
+          }
+        }
+      }
+
+      if (recognizedText) {
+        if (isInterruptionCommand(recognizedText)) {
+          abortRef.current?.abort();
+          stopSpeaking();
+          setLiveTranscript('Stopped speaking.');
+          setVoiceState('standby');
+          return;
+        }
+        const parsedVoice = extractVoiceCommand(recognizedText, settings.wakeWord, false);
+        setLiveTranscript(`Heard: "${parsedVoice.command}"`);
+        await handleSubmitCommand(parsedVoice.command, { fromVoice: true });
+        return;
+      }
+
+      setLiveTranscript(
+        sttErrorReason ||
+          'No speech detected — verify Windows Microphone access & Windows Speech language pack, or type your command.'
+      );
+      setVoiceState('standby');
+    } catch (err) {
+      setVoiceState('error');
+      setLiveTranscript(null);
+      setErrorBanner((err as Error).message);
+    } finally {
+      wavFinishingRef.current = false;
+    }
+  }, [cleanupWavNodes, handleSubmitCommand, settings.language, settings.wakeWord, stopSpeaking]);
+
+  const startWavVoiceCapture = useCallback(
+    async (mode: 'speech' | 'manual') => {
+      stopSpeaking();
+      stopMicCapture();
+      setErrorBanner(null);
+
+      if (window.fridayDesktop?.requestMicPermission) {
+        try {
+          const perm = await window.fridayDesktop.requestMicPermission();
+          if (!perm.granted) {
+            setVoiceState('error');
+            setErrorBanner(perm.detail);
+            return;
+          }
+        } catch {
+          // Continue to browser getUserMedia check
+        }
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        const classified = classifyMicrophoneError(new Error('getUserMedia not supported'));
+        setVoiceState('error');
+        setErrorBanner(classified.message);
+        return;
+      }
+
+      const audioBaseConstraints: MediaTrackConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+
+      let stream: MediaStream;
+      try {
+        if (settings.audioInputDeviceId) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: { ...audioBaseConstraints, deviceId: { exact: settings.audioInputDeviceId } },
+            });
+          } catch {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: audioBaseConstraints });
+          }
+        } else {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: audioBaseConstraints });
+        }
+      } catch (err) {
+        const classified = classifyMicrophoneError(err);
+        setVoiceState('error');
+        setErrorBanner(classified.message);
+        setIsListening(false);
+        setIsRecordingAudio(false);
+        return;
+      }
+
       micStreamRef.current = stream;
+      void refreshAudioInputDevices();
 
       try {
         const audioCtx = new AudioContext();
         audioCtxRef.current = audioCtx;
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume().catch(() => {});
+        }
+        captureSampleRateRef.current = audioCtx.sampleRate || 16000;
         const source = audioCtx.createMediaStreamSource(stream);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 64;
-        source.connect(analyser);
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        const updateLevel = () => {
-          if (!micStreamRef.current) return;
-          analyser.getByteFrequencyData(dataArray);
-          const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-          setAudioLevel(Math.min(1, avg / 96));
-          micRafRef.current = requestAnimationFrame(updateLevel);
+        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+        const silentGain = audioCtx.createGain();
+        silentGain.gain.value = 0;
+
+        micSourceRef.current = source;
+        micProcessorRef.current = processor;
+        micGainRef.current = silentGain;
+
+        pcmChunksRef.current = [];
+        wavFinishingRef.current = false;
+        captureModeRef.current = mode;
+        captureStartedAtRef.current = Date.now();
+        lastVoiceAtRef.current = Date.now();
+        speechDetectedRef.current = false;
+
+        processor.onaudioprocess = (ev) => {
+          if (wavFinishingRef.current) return;
+          const input = ev.inputBuffer.getChannelData(0);
+          pcmChunksRef.current.push(new Float32Array(input));
+          const rms = computeRmsLevel(input);
+          const normalizedLevel = Math.min(1, rms * 8.5);
+          setAudioLevel(normalizedLevel);
+
+          if (mode === 'speech') {
+            const now = Date.now();
+            if (rms > 0.015) {
+              if (!speechDetectedRef.current) {
+                speechDetectedRef.current = true;
+                setLiveTranscript('Listening — speech detected...');
+              }
+              lastVoiceAtRef.current = now;
+            } else if (
+              speechDetectedRef.current &&
+              now - lastVoiceAtRef.current > 1350 &&
+              now - captureStartedAtRef.current > 750
+            ) {
+              void finishWavVoiceCapture();
+            }
+          }
         };
-        updateLevel();
-      } catch {
-        setAudioLevel(0.45);
+
+        source.connect(processor);
+        processor.connect(silentGain);
+        silentGain.connect(audioCtx.destination);
+
+        setIsListening(true);
+        setIsRecordingAudio(mode === 'manual');
+        setVoiceState('listening');
+        setLiveTranscript(
+          mode === 'manual'
+            ? 'Recording voice command — speak now, then click Mic to send.'
+            : `Listening (${settings.language}) — speak your command...`
+        );
+
+        const maxDurationMs = mode === 'manual' ? 20000 : 12000;
+        captureTimeoutRef.current = window.setTimeout(() => {
+          void finishWavVoiceCapture();
+        }, maxDurationMs);
+      } catch (err) {
+        cleanupWavNodes();
+        const classified = classifyMicrophoneError(err);
+        setVoiceState('error');
+        setErrorBanner(classified.message);
       }
+    },
+    [
+      cleanupWavNodes,
+      finishWavVoiceCapture,
+      refreshAudioInputDevices,
+      settings.audioInputDeviceId,
+      settings.language,
+      stopMicCapture,
+      stopSpeaking,
+    ]
+  );
 
-      const recorder = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-
-      recorder.ondataavailable = (ev) => {
-        if (ev.data.size > 0) audioChunksRef.current.push(ev.data);
-      };
-
-      recorder.onstop = async () => {
-        cancelAnimationFrame(micRafRef.current);
-        stream.getTracks().forEach((t) => t.stop());
-        micStreamRef.current = null;
-        if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-          audioCtxRef.current.close().catch(() => {});
-        }
-        audioCtxRef.current = null;
-        setAudioLevel(0);
-        setIsListening(false);
-
-        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        if (blob.size < 200) {
-          setLiveTranscript('No audio captured — hold or speak for 1-2 seconds before stopping.');
-          setVoiceState('standby');
-          return;
-        }
-        setVoiceState('processing');
-        setLiveTranscript('Transcribing your voice with Gemini...');
-        try {
-          const base64Data = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-          const res = await fetch('/api/voice/transcribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ base64Data, mimeType: blob.type || 'audio/webm' }),
-          });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || 'Voice transcription failed');
-          if (data.localFallback && !data.text) {
-            setLiveTranscript(
-              data.reason || 'Audio recording transcription requires Gemini key; use live Microphone speech recognition or text command.'
-            );
-            setVoiceState('standby');
-            return;
-          }
-          const rawText = String(data.text || '').trim();
-          if (rawText) {
-            const parsedVoice = extractVoiceCommand(rawText, settings.wakeWord, false);
-            setLiveTranscript(`Heard: "${parsedVoice.command}"`);
-            await handleSubmitCommand(parsedVoice.command);
-          } else {
-            setLiveTranscript('Could not detect speech — try speaking a little louder.');
-            setVoiceState('standby');
-          }
-        } catch (err) {
-          setVoiceState('error');
-          setLiveTranscript(null);
-          setErrorBanner((err as Error).message);
-        }
-      };
-
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-      setIsRecordingAudio(true);
-      setIsListening(true);
-      setVoiceState('listening');
-      setLiveTranscript('Recording voice memo — speak now, then click Mic to send.');
-    } catch (err) {
-      setErrorBanner(`Microphone permission denied or unavailable: ${(err as Error).message}`);
-      setIsRecordingAudio(false);
-      setIsListening(false);
+  const toggleRecordAudio = useCallback(async () => {
+    if (isRecordingAudio || micProcessorRef.current) {
+      await finishWavVoiceCapture();
+      return;
     }
-  }, [handleSubmitCommand, isRecordingAudio, settings.wakeWord, stopMicCapture, stopSpeaking]);
+    await startWavVoiceCapture('manual');
+  }, [finishWavVoiceCapture, isRecordingAudio, startWavVoiceCapture]);
 
   const toggleListening = useCallback(async () => {
-    if (isRecordingAudio) {
-      await toggleRecordAudio();
+    if (isRecordingAudio || micProcessorRef.current) {
+      await finishWavVoiceCapture();
       return;
     }
     if (isListening) {
@@ -1001,13 +1237,15 @@ export default function App() {
       return;
     }
 
+    // Electron desktop builds lack Chromium's private Google Speech key, so use reliable WAV + VAD capture
+    if (window.fridayDesktop?.isDesktopShell) {
+      await startWavVoiceCapture('speech');
+      return;
+    }
+
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) {
-      if (apiStatus.engine === 'gemini') {
-        await toggleRecordAudio();
-      } else {
-        setLiveTranscript('Voice recognition is ready on Android APK and Chrome/Edge; you can also type your command below.');
-      }
+      await startWavVoiceCapture('speech');
       return;
     }
 
@@ -1063,21 +1301,20 @@ export default function App() {
           if (!settings.continuousListening) {
             stopMicCapture();
           }
-          handleSubmitCommand(parsedVoice.command);
+          void handleSubmitCommand(parsedVoice.command, { fromVoice: true });
         }
       }
     };
 
     rec.onerror = (ev) => {
       if (
-        (ev.error === 'network' ||
-          ev.error === 'service-not-allowed' ||
-          ev.error === 'audio-capture' ||
-          ev.error === 'language-not-supported') &&
-        apiStatus.engine === 'gemini'
+        ev.error === 'network' ||
+        ev.error === 'service-not-allowed' ||
+        ev.error === 'audio-capture' ||
+        ev.error === 'language-not-supported'
       ) {
         stopMicCapture();
-        toggleRecordAudio();
+        void startWavVoiceCapture('speech');
         return;
       }
       if (ev.error === 'no-speech') {
@@ -1089,7 +1326,8 @@ export default function App() {
         stopMicCapture();
         return;
       }
-      setLiveTranscript(`Voice input status (${ev.error}). Ensure microphone permission is allowed or type your command.`);
+      const classified = classifyMicrophoneError(new Error(ev.error));
+      setErrorBanner(classified.message);
       stopMicCapture();
     };
 
@@ -1107,34 +1345,28 @@ export default function App() {
       rec.start();
     } catch {
       stopMicCapture();
-      if (apiStatus.engine === 'gemini') {
-        await toggleRecordAudio();
-      }
+      await startWavVoiceCapture('speech');
     }
   }, [
-    apiStatus.engine,
+    finishWavVoiceCapture,
     handleSubmitCommand,
     isListening,
     isRecordingAudio,
     settings.continuousListening,
     settings.language,
     settings.wakeWord,
+    startWavVoiceCapture,
     stopMicCapture,
     stopSpeaking,
-    toggleRecordAudio,
   ]);
 
   const handleStopExecution = useCallback(() => {
     abortRef.current?.abort();
-    if (isRecordingAudio) {
-      mediaRecorderRef.current?.stop();
-      setIsRecordingAudio(false);
-    }
     stopSpeaking();
     stopMicCapture();
     setActiveAgents([]);
     setVoiceState('standby');
-  }, [isRecordingAudio, stopMicCapture, stopSpeaking]);
+  }, [stopMicCapture, stopSpeaking]);
 
   // Register Android native voice & speech event hooks
   useEffect(() => {
@@ -1159,7 +1391,7 @@ export default function App() {
         const parsedVoice = extractVoiceCommand(text, settings.wakeWord, false);
         if (parsedVoice.matched && parsedVoice.command) {
           setLiveTranscript(`Heard: "${parsedVoice.command}"`);
-          void handleSubmitCommand(parsedVoice.command);
+          void handleSubmitCommand(parsedVoice.command, { fromVoice: true });
         }
       },
       onListeningState: (active: boolean, status?: string) => {
@@ -1463,16 +1695,40 @@ export default function App() {
         return;
       }
       if (!backendAvailableRef.current) {
-        setLaunchNotice(`Prepared launch action for ${app.name} (install Android APK for direct launch).`);
+        if (window.fridayDesktop?.launchApp) {
+          try {
+            const ipcRes = await window.fridayDesktop.launchApp(app.command || app.name);
+            setLaunchNotice(ipcRes.message);
+            return;
+          } catch (err) {
+            setLaunchNotice(`Failed to launch ${app.name}: ${(err as Error).message}`);
+            return;
+          }
+        }
+        setLaunchNotice(`Prepared launch action for ${app.name} (desktop shell or backend required to spawn process).`);
         return;
       }
       try {
         const res = await fetch(`/api/apps/${app.id}/launch`, { method: 'POST' });
         const data = await res.json();
+        if (!data.ok && window.fridayDesktop?.launchApp) {
+          const ipcRes = await window.fridayDesktop.launchApp(app.command || app.name);
+          setLaunchNotice(ipcRes.message);
+          return;
+        }
         setLaunchNotice(data.message || `Triggered ${app.name}`);
         refreshBootstrap();
       } catch {
-        setLaunchNotice(`Launch queued for ${app.name}`);
+        if (window.fridayDesktop?.launchApp) {
+          try {
+            const ipcRes = await window.fridayDesktop.launchApp(app.command || app.name);
+            setLaunchNotice(ipcRes.message);
+            return;
+          } catch {
+            // Fall through
+          }
+        }
+        setLaunchNotice(`Launch failed for ${app.name}`);
       }
     },
     [refreshBootstrap]
@@ -1757,9 +2013,12 @@ export default function App() {
               voiceState={voiceState}
               audioLevel={audioLevel}
               isListening={isListening}
+              audioInputDevices={audioInputDevices}
+              liveTranscript={liveTranscript}
               onToggleListening={toggleListening}
               onUpdateSettings={updateSettings}
               onTestSpeech={speakText}
+              onRefreshAudioDevices={refreshAudioInputDevices}
             />
           )}
 

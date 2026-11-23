@@ -168,6 +168,9 @@ export function sanitizeSettingsPatch(
   if (typeof raw.language === 'string' && /^[a-z]{2}(-[A-Z]{2})?$/.test(raw.language)) {
     next.language = raw.language;
   }
+  if (typeof raw.audioInputDeviceId === 'string') {
+    next.audioInputDeviceId = raw.audioInputDeviceId.trim().slice(0, 200);
+  }
   if (typeof raw.continuousListening === 'boolean') next.continuousListening = raw.continuousListening;
   if (typeof raw.wakeWordEnabled === 'boolean') next.wakeWordEnabled = raw.wakeWordEnabled;
   if (typeof raw.autoSpeakReplies === 'boolean') next.autoSpeakReplies = raw.autoSpeakReplies;

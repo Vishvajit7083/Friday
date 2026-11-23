@@ -15,6 +15,7 @@ import { tryTranslateCommand } from '../src/core/translator.ts';
 import { parseProductivityCommand } from '../src/core/productivityTools.ts';
 import { appendActionLog, loadDb, saveDb } from './store.ts';
 import { getSystemTelemetry, handleAppOrWindowCommand } from './systemService.ts';
+import { openWindowsFolder, recognizeWindowsSpeechFromWav } from '../electron/windowsAutomation.ts';
 import { getWeatherForLocation } from './weatherService.ts';
 import { getCachedFileIndex } from './fileService.ts';
 import { handleMediaVoiceCommand } from './mediaService.ts';
@@ -503,32 +504,52 @@ export async function streamAssistantCommand(
   }
 
   if (parsed.category === 'file_search' || parsed.category === 'media_analyze') {
-    const files = getCachedFileIndex(settings.allowedFolders, settings.pausedIndexing, 300);
-    matchedFiles = searchIndexedFiles(files, userCommand).slice(0, 8);
-    contextParts.push(
-      matchedFiles.length > 0
-        ? `PERMITTED FILE SEARCH MATCHES (${matchedFiles.length}):\n` +
-            matchedFiles
-              .map(
-                (m) =>
-                  `- ${m.name} (${m.category}, ${formatBytes(m.sizeBytes)}, modified ${m.modifiedAt}) at ${m.relativePath}${
-                    m.matchReason ? ` [${m.matchReason}]` : ''
-                  }${m.previewText ? ` | snippet: ${m.previewText.slice(0, 140).replace(/\s+/g, ' ')}` : ''}`
-              )
-              .join('\n')
-        : `PERMITTED FILE SEARCH: No matching files found across ${settings.allowedFolders.length} permitted folder(s). Total indexed files: ${files.length}.`
-    );
-    appendActionLog(db, {
-      agent: 'file',
-      action: 'Search Permitted Files',
-      target: userCommand.slice(0, 48),
-      status: 'completed',
-      detail: `${matchedFiles.length} matching file(s)`,
-    });
+    const wantsFolderOpen =
+      parsed.category === 'file_search' &&
+      /\b(open|launch|show)\b/i.test(userCommand) &&
+      (/\b(downloads?|desktop|documents?|pictures?|videos?|music)\s*(folder|directory)?\b/i.test(userCommand) ||
+        /[a-zA-Z]:\\[^\n\r"'<>|]+/.test(userCommand)) &&
+      !/\.(?:pdf|docx?|xlsx?|pptx?|txt|csv|png|jpe?g|webp|zip|mp[34]|mkv)$/i.test(userCommand);
+
+    if (wantsFolderOpen) {
+      const folderRes = await openWindowsFolder(userCommand, settings.allowedFolders);
+      appNotice = folderRes.message;
+      contextParts.push(`FOLDER OPEN RESULT: ${folderRes.message}`);
+      appendActionLog(db, {
+        agent: 'file',
+        action: 'Open Folder in Explorer',
+        target: folderRes.path || userCommand.slice(0, 48),
+        status: folderRes.opened ? 'completed' : 'blocked',
+        detail: folderRes.message,
+      });
+    } else {
+      const files = getCachedFileIndex(settings.allowedFolders, settings.pausedIndexing, 300);
+      matchedFiles = searchIndexedFiles(files, userCommand).slice(0, 8);
+      contextParts.push(
+        matchedFiles.length > 0
+          ? `PERMITTED FILE SEARCH MATCHES (${matchedFiles.length}):\n` +
+              matchedFiles
+                .map(
+                  (m) =>
+                    `- ${m.name} (${m.category}, ${formatBytes(m.sizeBytes)}, modified ${m.modifiedAt}) at ${m.relativePath}${
+                      m.matchReason ? ` [${m.matchReason}]` : ''
+                    }${m.previewText ? ` | snippet: ${m.previewText.slice(0, 140).replace(/\s+/g, ' ')}` : ''}`
+                )
+                .join('\n')
+          : `PERMITTED FILE SEARCH: No matching files found across ${settings.allowedFolders.length} permitted folder(s). Total indexed files: ${files.length}.`
+      );
+      appendActionLog(db, {
+        agent: 'file',
+        action: 'Search Permitted Files',
+        target: userCommand.slice(0, 48),
+        status: 'completed',
+        detail: `${matchedFiles.length} matching file(s)`,
+      });
+    }
   }
 
-  if (parsed.category === 'app_control') {
-    const appRes = await handleAppOrWindowCommand(userCommand, db.apps);
+  if (parsed.category === 'app_control' || parsed.category === 'phone_control') {
+    const appRes = await handleAppOrWindowCommand(userCommand, db.apps, settings.allowedFolders);
     appNotice = appRes.message;
     runningWindows = appRes.windows;
     if (appRes.launchedApp) {
@@ -690,9 +711,11 @@ export async function streamAssistantCommand(
   const isInstantDeterministicAction =
     parsed.category === 'media_control' ||
     parsed.category === 'app_control' ||
+    parsed.category === 'phone_control' ||
     parsed.category === 'unit_convert' ||
     parsed.category === 'translate' ||
     parsed.category === 'read_aloud' ||
+    Boolean(appNotice) ||
     Boolean(memorySaved) ||
     tryConvertUnits(userCommand) !== null ||
     tryTranslateCommand(userCommand) !== null ||
@@ -1313,17 +1336,44 @@ export async function synthesizeSpeechWav(
 
 export async function transcribeAudioBase64(
   base64Data: string,
-  mimeType: string
-): Promise<{ text: string; localFallback: boolean; reason?: string }> {
+  mimeType: string,
+  language = 'en-US'
+): Promise<{ text: string; localFallback: boolean; engine?: string; reason?: string }> {
+  const cleanMime = (mimeType || 'audio/webm').split(';')[0].trim() || 'audio/webm';
+
+  // On Windows hosts, try offline Windows System.Speech Recognition first for PCM WAV captures
+  if (process.platform === 'win32' && cleanMime.includes('wav')) {
+    const winStt = await recognizeWindowsSpeechFromWav(base64Data, language);
+    if (winStt.ok && winStt.text) {
+      return {
+        text: winStt.text,
+        localFallback: false,
+        engine: winStt.engine,
+      };
+    }
+    if (!hasValidGeminiKey()) {
+      return {
+        text: '',
+        localFallback: true,
+        engine: winStt.engine,
+        reason:
+          winStt.error ||
+          'Windows Speech Recognition could not detect clear speech or lacks the requested language pack.',
+      };
+    }
+  }
+
   if (!hasValidGeminiKey()) {
     return {
       text: '',
       localFallback: true,
-      reason: 'Use the primary Microphone button (Web Speech API) or text command bar in local mode without a paid cloud key.',
+      reason:
+        process.platform === 'win32'
+          ? 'Configure Windows Speech Recognition or GEMINI_API_KEY in .env for audio transcription.'
+          : 'Audio transcription without a browser Web Speech engine requires GEMINI_API_KEY in .env or Windows Desktop Speech Recognition.',
     };
   }
   const ai = getGeminiClient();
-  const cleanMime = (mimeType || 'audio/webm').split(';')[0].trim() || 'audio/webm';
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3.5-transcribe',

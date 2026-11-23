@@ -44,6 +44,7 @@ const DEFAULT_DB: FridayDatabase = {
     speakingSpeed: 1.0,
     speakingPitch: 1.0,
     language: 'en-US',
+    audioInputDeviceId: '',
     continuousListening: false,
     wakeWordEnabled: true,
     autoSpeakReplies: false,
@@ -275,6 +276,60 @@ const DEFAULT_DB: FridayDatabase = {
       pinned: false,
       description: 'Quick plain-text note capture',
     },
+    {
+      id: 'app-edge',
+      name: 'Microsoft Edge',
+      category: 'browser',
+      command: 'msedge',
+      installed: true,
+      pinned: false,
+      description: 'Microsoft Edge web browser',
+    },
+    {
+      id: 'app-calculator',
+      name: 'Calculator',
+      category: 'productivity',
+      command: 'calc',
+      installed: true,
+      pinned: false,
+      description: 'Windows desktop calculator',
+    },
+    {
+      id: 'app-cmd',
+      name: 'Command Prompt',
+      category: 'system',
+      command: 'cmd',
+      installed: true,
+      pinned: false,
+      description: 'Windows Command Prompt shell',
+    },
+    {
+      id: 'app-powershell',
+      name: 'Windows PowerShell',
+      category: 'system',
+      command: 'powershell',
+      installed: true,
+      pinned: false,
+      description: 'Windows PowerShell automation shell',
+    },
+    {
+      id: 'app-settings',
+      name: 'Windows Settings',
+      category: 'system',
+      command: 'windows settings',
+      installed: true,
+      pinned: false,
+      description: 'Windows System Settings control panel',
+    },
+    {
+      id: 'app-taskmgr',
+      name: 'Task Manager',
+      category: 'system',
+      command: 'taskmgr',
+      installed: true,
+      pinned: false,
+      description: 'Windows process & performance manager',
+    },
   ],
 };
 
@@ -323,6 +378,14 @@ export function loadDb(): FridayDatabase {
       mergedSettings.allowedFolders = getDefaultPermittedFolders();
     }
 
+    const parsedApps = Array.isArray(parsed.apps) ? parsed.apps : DEFAULT_DB.apps;
+    const mergedApps = [...parsedApps];
+    for (const defApp of DEFAULT_DB.apps) {
+      if (!mergedApps.some((a) => a.id === defApp.id)) {
+        mergedApps.push(defApp);
+      }
+    }
+
     return {
       settings: mergedSettings,
       calendar: Array.isArray(parsed.calendar) ? parsed.calendar : DEFAULT_DB.calendar,
@@ -330,7 +393,7 @@ export function loadDb(): FridayDatabase {
       chatHistory: Array.isArray(parsed.chatHistory) ? parsed.chatHistory : DEFAULT_DB.chatHistory,
       actionLogs: Array.isArray(parsed.actionLogs) ? parsed.actionLogs : DEFAULT_DB.actionLogs,
       workflows: Array.isArray(parsed.workflows) ? parsed.workflows : DEFAULT_DB.workflows,
-      apps: Array.isArray(parsed.apps) ? parsed.apps : DEFAULT_DB.apps,
+      apps: mergedApps,
     };
   } catch {
     return structuredClone(DEFAULT_DB);

@@ -19,7 +19,7 @@ import { searchFreeWeb } from './internetResearchService.ts';
 import { checkOllamaStatus } from './localAiService.ts';
 import { loadDb } from './store.ts';
 import { detectInstalledApps, getSystemTelemetry } from './systemService.ts';
-import { discoverWindowsStartApps } from '../electron/windowsAutomation.ts';
+import { discoverWindowsStartApps, getWindowsSpeechCapabilities } from '../electron/windowsAutomation.ts';
 
 export async function getWindowsCompatibilityAudit(): Promise<HardwareCompatibilityAudit> {
   const [osInfo, cpu, graphics, mem, fsSizes, diskLayout, netIfaces] = await Promise.all([
@@ -400,6 +400,35 @@ export async function runSafeDiagnosticsSuite(): Promise<DiagnosticsReportPayloa
           : 'Electron configuration incomplete',
         status: ok ? 'pass' : 'warning',
         recommendation: ok ? undefined : 'Ensure electron/main.ts and electron/preload.ts compile cleanly.',
+      };
+    }
+  );
+
+  await runCheck(
+    'voice-speech-bridge',
+    'Voice & Audio',
+    'Windows Native Speech Recognition & SAPI TTS Readiness',
+    'Inspect Windows System.Speech offline recognizers, SAPI voices, and mic privacy registry',
+    async () => {
+      const voiceCaps = await getWindowsSpeechCapabilities();
+      if (audit.isWindows) {
+        const denied =
+          voiceCaps.micAccessStatus === 'denied' || voiceCaps.micAccessStatus === 'desktop-apps-denied';
+        return {
+          actual: `Recognizers: [${voiceCaps.recognizers.join(', ') || 'None'}] · SAPI Voices: ${voiceCaps.ttsVoices.length} · Mic Privacy: ${voiceCaps.micAccessStatus}`,
+          status: !denied && (voiceCaps.offlineSttReady || voiceCaps.ttsVoices.length > 0) ? 'pass' : 'warning',
+          error: denied ? 'Windows Microphone Privacy denies desktop apps.' : undefined,
+          recommendation: denied
+            ? 'Enable Settings -> Privacy & security -> Microphone -> "Let desktop apps access your microphone".'
+            : voiceCaps.offlineSttReady
+              ? undefined
+              : 'Install a Windows Speech language pack or configure GEMINI_API_KEY in .env.',
+        };
+      }
+      return {
+        actual: `Linux container host — Windows System.Speech & SAPI TTS unavailable (${hasValidGeminiKey() ? 'Gemini cloud fallback ready' : 'Browser Web Speech / Gemini optional'})`,
+        status: 'unavailable',
+        recommendation: 'Run on Windows 10/11 desktop for native offline System.Speech recognition & SAPI TTS.',
       };
     }
   );

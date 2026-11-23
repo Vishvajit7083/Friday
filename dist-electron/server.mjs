@@ -1095,18 +1095,6 @@ function analyzeUserCommand(command) {
       ]
     };
   }
-  if (PHONE_CONTROL_PATTERNS.some((rx) => rx.test(trimmed))) {
-    return {
-      category: "phone_control",
-      agents: ["core", "application", "system"],
-      requiresConfirmation: false,
-      extractedTarget: trimmed,
-      steps: [
-        { id: "step-1", agent: "core", title: "Parse Android/device system control intent", status: "completed" },
-        { id: "step-2", agent: "application", title: "Dispatch device bridge or app action", status: "running" }
-      ]
-    };
-  }
   if (APP_PATTERNS.some((rx) => rx.test(trimmed))) {
     return {
       category: "app_control",
@@ -1114,8 +1102,20 @@ function analyzeUserCommand(command) {
       requiresConfirmation: false,
       extractedTarget: trimmed,
       steps: [
-        { id: "step-1", agent: "core", title: "Identify target desktop application or window", status: "completed" },
-        { id: "step-2", agent: "application", title: "Resolve executable or active window & dispatch action", status: "running" }
+        { id: "step-1", agent: "core", title: "Identify target desktop application, website, or window", status: "completed" },
+        { id: "step-2", agent: "application", title: "Resolve executable, URL, or active window & dispatch action", status: "running" }
+      ]
+    };
+  }
+  if (PHONE_CONTROL_PATTERNS.some((rx) => rx.test(trimmed))) {
+    return {
+      category: "phone_control",
+      agents: ["core", "application", "system"],
+      requiresConfirmation: false,
+      extractedTarget: trimmed,
+      steps: [
+        { id: "step-1", agent: "core", title: "Parse device/platform app or control intent", status: "completed" },
+        { id: "step-2", agent: "application", title: "Dispatch device bridge or desktop app/site action", status: "running" }
       ]
     };
   }
@@ -1324,7 +1324,9 @@ var init_intentEngine = __esm({
       /\b(copy\s+to\s+clipboard|share\s+(this|text|note))\b/i
     ];
     APP_PATTERNS = [
-      /\b(open|launch|start|switch\s+to|focus|minimize|maximize)\s+(google\s+chrome|chrome|edge|vs\s*code|vscode|visual\s+studio|whatsapp|android\s+studio|spotify|terminal|explorer|notepad|calculator|browser|music\s+player|vlc)\b/i,
+      /\b(open|launch|start|switch\s+to|focus|minimize|maximize)\s+(?:the\s+)?(google\s+chrome|chrome|microsoft\s+edge|edge|msedge|vs\s*code|vscode|visual\s+studio(?:\s+code)?|whatsapp|android\s+studio|spotify|windows\s+terminal|terminal|powershell|command\s+prompt|cmd|file\s+explorer|explorer|notepad|calculator|calc|windows\s+settings|task\s+manager|taskmgr|paint|mspaint|browser|music\s+player|vlc)\b/i,
+      /\b(open|launch|visit)\s+(?:website\s+)?(?:https?:\/\/\S+|[a-z0-9-]+\.(?:com|org|net|io|dev|in|edu|gov|ai)(?:\/\S*)?)\b/i,
+      /\b(open|launch|start)\s+(?:the\s+)?(?:google|wikipedia)\b/i,
       /\b(open\s+the\s+app(lication)?\s+i\s+use\s+for\s+(coding|browsing|music|notes|messaging|files))\b/i,
       /\b(show\s+me\s+(the\s+)?applications\s+currently\s+running|running\s+windows|installed\s+apps)\b/i
     ];
@@ -1965,8 +1967,8 @@ var init_localAiService = __esm({
 // server.ts
 import "dotenv/config";
 import express from "express";
-import fs4 from "fs";
-import path4 from "path";
+import fs5 from "fs";
+import path5 from "path";
 
 // server/store.ts
 import fs2 from "fs";
@@ -2132,6 +2134,7 @@ var DEFAULT_DB = {
     speakingSpeed: 1,
     speakingPitch: 1,
     language: "en-US",
+    audioInputDeviceId: "",
     continuousListening: false,
     wakeWordEnabled: true,
     autoSpeakReplies: false,
@@ -2361,6 +2364,60 @@ var DEFAULT_DB = {
       installed: true,
       pinned: false,
       description: "Quick plain-text note capture"
+    },
+    {
+      id: "app-edge",
+      name: "Microsoft Edge",
+      category: "browser",
+      command: "msedge",
+      installed: true,
+      pinned: false,
+      description: "Microsoft Edge web browser"
+    },
+    {
+      id: "app-calculator",
+      name: "Calculator",
+      category: "productivity",
+      command: "calc",
+      installed: true,
+      pinned: false,
+      description: "Windows desktop calculator"
+    },
+    {
+      id: "app-cmd",
+      name: "Command Prompt",
+      category: "system",
+      command: "cmd",
+      installed: true,
+      pinned: false,
+      description: "Windows Command Prompt shell"
+    },
+    {
+      id: "app-powershell",
+      name: "Windows PowerShell",
+      category: "system",
+      command: "powershell",
+      installed: true,
+      pinned: false,
+      description: "Windows PowerShell automation shell"
+    },
+    {
+      id: "app-settings",
+      name: "Windows Settings",
+      category: "system",
+      command: "windows settings",
+      installed: true,
+      pinned: false,
+      description: "Windows System Settings control panel"
+    },
+    {
+      id: "app-taskmgr",
+      name: "Task Manager",
+      category: "system",
+      command: "taskmgr",
+      installed: true,
+      pinned: false,
+      description: "Windows process & performance manager"
     }
   ]
 };
@@ -2400,6 +2457,13 @@ function loadDb() {
     if (!Array.isArray(mergedSettings.allowedFolders) || mergedSettings.allowedFolders.length === 0 || process.platform === "win32" && mergedSettings.allowedFolders.length === 1 && path2.resolve(mergedSettings.allowedFolders[0]) === path2.resolve(process.cwd())) {
       mergedSettings.allowedFolders = getDefaultPermittedFolders();
     }
+    const parsedApps = Array.isArray(parsed.apps) ? parsed.apps : DEFAULT_DB.apps;
+    const mergedApps = [...parsedApps];
+    for (const defApp of DEFAULT_DB.apps) {
+      if (!mergedApps.some((a) => a.id === defApp.id)) {
+        mergedApps.push(defApp);
+      }
+    }
     return {
       settings: mergedSettings,
       calendar: Array.isArray(parsed.calendar) ? parsed.calendar : DEFAULT_DB.calendar,
@@ -2407,7 +2471,7 @@ function loadDb() {
       chatHistory: Array.isArray(parsed.chatHistory) ? parsed.chatHistory : DEFAULT_DB.chatHistory,
       actionLogs: Array.isArray(parsed.actionLogs) ? parsed.actionLogs : DEFAULT_DB.actionLogs,
       workflows: Array.isArray(parsed.workflows) ? parsed.workflows : DEFAULT_DB.workflows,
-      apps: Array.isArray(parsed.apps) ? parsed.apps : DEFAULT_DB.apps
+      apps: mergedApps
     };
   } catch {
     return structuredClone(DEFAULT_DB);
@@ -2429,17 +2493,21 @@ function appendActionLog(db, entry) {
 }
 
 // server/systemService.ts
-import os2 from "os";
+import os3 from "os";
 import { execFile as execFile2, spawn as spawn2 } from "child_process";
 import { promisify as promisify2 } from "util";
 import si from "systeminformation";
 
 // electron/windowsAutomation.ts
+import crypto2 from "crypto";
+import fs3 from "fs";
+import os2 from "os";
+import path3 from "path";
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 var execFileAsync = promisify(execFile);
 var SAFE_PROCESS_NAME = /^[a-zA-Z0-9._ -]+$/;
-var SAFE_COMMAND_OR_APPID = /^[a-zA-Z0-9._:\\/\s-]+$/;
+var SAFE_COMMAND_OR_APPID = /^[a-zA-Z0-9._:\\/\s!()-]+$/;
 var MEDIA_VK_MAP = {
   play_pause: 179,
   // VK_MEDIA_PLAY_PAUSE
@@ -2454,12 +2522,315 @@ var MEDIA_VK_MAP = {
   mute: 173
   // VK_VOLUME_MUTE
 };
+function getEnvDirs() {
+  return {
+    programFiles: process.env.ProgramFiles || "C:\\Program Files",
+    programFilesX86: process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)",
+    localAppData: process.env.LocalAppData || path3.join(os2.homedir(), "AppData", "Local"),
+    appData: process.env.AppData || path3.join(os2.homedir(), "AppData", "Roaming"),
+    systemRoot: process.env.SystemRoot || "C:\\Windows"
+  };
+}
+var WINDOWS_APP_CATALOG = {
+  chrome: {
+    displayName: "Google Chrome",
+    exeNames: ["chrome.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path3.join(d.programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+        path3.join(d.programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+        path3.join(d.localAppData, "Google", "Chrome", "Application", "chrome.exe")
+      ];
+    },
+    appIdHints: ["google chrome", "chrome"]
+  },
+  edge: {
+    displayName: "Microsoft Edge",
+    exeNames: ["msedge.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path3.join(d.programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe"),
+        path3.join(d.programFiles, "Microsoft", "Edge", "Application", "msedge.exe")
+      ];
+    },
+    appIdHints: ["microsoft edge", "msedge"]
+  },
+  notepad: {
+    displayName: "Notepad",
+    exeNames: ["notepad.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path3.join(d.systemRoot, "System32", "notepad.exe"),
+        path3.join(d.systemRoot, "notepad.exe")
+      ];
+    },
+    appIdHints: ["notepad"]
+  },
+  calculator: {
+    displayName: "Calculator",
+    exeNames: ["calc.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [path3.join(d.systemRoot, "System32", "calc.exe")];
+    },
+    appIdHints: ["calculator"]
+  },
+  explorer: {
+    displayName: "File Explorer",
+    exeNames: ["explorer.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [path3.join(d.systemRoot, "explorer.exe")];
+    },
+    appIdHints: ["file explorer"]
+  },
+  cmd: {
+    displayName: "Command Prompt",
+    exeNames: ["cmd.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [path3.join(d.systemRoot, "System32", "cmd.exe")];
+    },
+    appIdHints: ["command prompt"]
+  },
+  powershell: {
+    displayName: "Windows PowerShell",
+    exeNames: ["pwsh.exe", "powershell.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path3.join(d.programFiles, "PowerShell", "7", "pwsh.exe"),
+        path3.join(d.systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+      ];
+    },
+    appIdHints: ["powershell"]
+  },
+  wt: {
+    displayName: "Windows Terminal",
+    exeNames: ["wt.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [path3.join(d.localAppData, "Microsoft", "WindowsApps", "wt.exe")];
+    },
+    appIdHints: ["terminal", "windows terminal"]
+  },
+  settings: {
+    displayName: "Windows Settings",
+    exeNames: [],
+    candidatePaths: () => [],
+    settingsUri: "ms-settings:",
+    appIdHints: ["settings"]
+  },
+  taskmgr: {
+    displayName: "Task Manager",
+    exeNames: ["taskmgr.exe", "Taskmgr.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [path3.join(d.systemRoot, "System32", "Taskmgr.exe")];
+    },
+    appIdHints: ["task manager"]
+  },
+  paint: {
+    displayName: "Paint",
+    exeNames: ["mspaint.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [path3.join(d.systemRoot, "System32", "mspaint.exe")];
+    },
+    appIdHints: ["paint"]
+  },
+  code: {
+    displayName: "Visual Studio Code",
+    exeNames: ["Code.exe", "code.cmd"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path3.join(d.localAppData, "Programs", "Microsoft VS Code", "Code.exe"),
+        path3.join(d.programFiles, "Microsoft VS Code", "Code.exe"),
+        path3.join(d.programFilesX86, "Microsoft VS Code", "Code.exe")
+      ];
+    },
+    appIdHints: ["visual studio code"]
+  },
+  studio64: {
+    displayName: "Android Studio",
+    exeNames: ["studio64.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path3.join(d.programFiles, "Android", "Android Studio", "bin", "studio64.exe"),
+        path3.join(d.localAppData, "Programs", "Android Studio", "bin", "studio64.exe")
+      ];
+    },
+    appIdHints: ["android studio"]
+  },
+  whatsapp: {
+    displayName: "WhatsApp Desktop",
+    exeNames: ["WhatsApp.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [path3.join(d.localAppData, "WhatsApp", "WhatsApp.exe")];
+    },
+    appIdHints: ["whatsapp"],
+    fallbackWebsite: "https://web.whatsapp.com"
+  },
+  telegram: {
+    displayName: "Telegram Desktop",
+    exeNames: ["Telegram.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [path3.join(d.appData, "Telegram Desktop", "Telegram.exe")];
+    },
+    appIdHints: ["telegram"],
+    fallbackWebsite: "https://web.telegram.org"
+  },
+  spotify: {
+    displayName: "Spotify",
+    exeNames: ["Spotify.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [path3.join(d.appData, "Spotify", "Spotify.exe")];
+    },
+    appIdHints: ["spotify"],
+    fallbackWebsite: "https://open.spotify.com"
+  },
+  vlc: {
+    displayName: "VLC Media Player",
+    exeNames: ["vlc.exe"],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path3.join(d.programFiles, "VideoLAN", "VLC", "vlc.exe"),
+        path3.join(d.programFilesX86, "VideoLAN", "VLC", "vlc.exe")
+      ];
+    },
+    appIdHints: ["vlc"]
+  }
+};
+var ALIAS_TO_CATALOG_KEY = [
+  { rx: /\b(google\s*chrome|google-chrome|chrome)\b/i, key: "chrome" },
+  { rx: /\b(microsoft\s*edge|msedge|edge)\b/i, key: "edge" },
+  { rx: /\b(vs\s*code|vscode|visual\s*studio\s*code|code)\b/i, key: "code" },
+  { rx: /\b(android\s*studio|studio64)\b/i, key: "studio64" },
+  { rx: /\b(file\s*explorer|explorer)\b/i, key: "explorer" },
+  { rx: /\b(command\s*prompt|cmd)\b/i, key: "cmd" },
+  { rx: /\b(powershell|pwsh)\b/i, key: "powershell" },
+  { rx: /\b(windows\s*terminal|wt|terminal)\b/i, key: "wt" },
+  { rx: /\b(windows\s*settings|settings)\b/i, key: "settings" },
+  { rx: /\b(task\s*manager|taskmgr)\b/i, key: "taskmgr" },
+  { rx: /\b(calculator|calc)\b/i, key: "calculator" },
+  { rx: /\b(notepad)\b/i, key: "notepad" },
+  { rx: /\b(paint|mspaint)\b/i, key: "paint" },
+  { rx: /\b(whatsapp)\b/i, key: "whatsapp" },
+  { rx: /\b(telegram)\b/i, key: "telegram" },
+  { rx: /\b(spotify)\b/i, key: "spotify" },
+  { rx: /\b(vlc)\b/i, key: "vlc" }
+];
+var WEBSITE_ALIASES = {
+  youtube: { label: "YouTube", url: "https://www.youtube.com" },
+  google: { label: "Google", url: "https://www.google.com" },
+  github: { label: "GitHub", url: "https://github.com" },
+  gmail: { label: "Gmail", url: "https://mail.google.com" },
+  notion: { label: "Notion", url: "https://www.notion.so" },
+  wikipedia: { label: "Wikipedia", url: "https://www.wikipedia.org" },
+  instagram: { label: "Instagram", url: "https://www.instagram.com" },
+  facebook: { label: "Facebook", url: "https://www.facebook.com" }
+};
+var SAFE_SETTINGS_URIS = {
+  wifi: "ms-settings:network-wifi",
+  "wi-fi": "ms-settings:network-wifi",
+  bluetooth: "ms-settings:bluetooth",
+  display: "ms-settings:display",
+  sound: "ms-settings:sound",
+  volume: "ms-settings:sound",
+  microphone: "ms-settings:privacy-microphone",
+  battery: "ms-settings:batterysaver",
+  notifications: "ms-settings:notifications",
+  apps: "ms-settings:appsfeatures",
+  windows: "ms-settings:",
+  settings: "ms-settings:"
+};
+function normalizeAppLookupKey(raw) {
+  const clean = raw.trim().toLowerCase();
+  const matched = ALIAS_TO_CATALOG_KEY.find((a) => a.rx.test(clean));
+  return matched ? matched.key : null;
+}
+async function whereExecutable(exeName) {
+  if (process.platform !== "win32" || !/^[a-zA-Z0-9._-]+$/.test(exeName)) return null;
+  try {
+    const { stdout } = await execFileAsync("where.exe", [exeName], { timeout: 1800 });
+    const first = stdout.split(/\r?\n/).map((l) => l.trim()).find((l) => l && fs3.existsSync(l));
+    return first || null;
+  } catch {
+    return null;
+  }
+}
+async function lookupWindowsAppPathsRegistry(exeName) {
+  if (process.platform !== "win32" || !/^[a-zA-Z0-9._-]+$/.test(exeName)) return null;
+  const script = `
+    $exe = '${exeName}';
+    $keys = @(
+      "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\$exe",
+      "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\$exe"
+    );
+    foreach ($k in $keys) {
+      if (Test-Path $k) {
+        $p = (Get-ItemProperty -Path $k -ErrorAction SilentlyContinue).'(default)';
+        if ($p) {
+          $p = $p.Trim('"');
+          if (Test-Path $p) { Write-Output $p; break }
+        }
+      }
+    }
+  `;
+  try {
+    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-Command", script], {
+      timeout: 2500
+    });
+    const found = stdout.trim().split(/\r?\n/)[0]?.trim();
+    return found && fs3.existsSync(found) ? found : null;
+  } catch {
+    return null;
+  }
+}
+function spawnVerifiedExecutable(executablePath, args) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (started, error) => {
+      if (settled) return;
+      settled = true;
+      resolve({ started, error });
+    };
+    try {
+      const child = spawn(executablePath, args, {
+        detached: true,
+        stdio: "ignore",
+        shell: false
+      });
+      child.once("error", (err) => {
+        finish(false, err.message);
+      });
+      child.once("exit", (code) => {
+        if (!settled && code !== null && code !== 0) {
+          finish(false, `Process exited immediately with code ${code}`);
+        }
+      });
+      child.unref();
+      setTimeout(() => finish(true), 220);
+    } catch (err) {
+      finish(false, err.message);
+    }
+  });
+}
 async function discoverWindowsStartApps() {
   if (process.platform !== "win32") return [];
   try {
     const { stdout } = await execFileAsync(
       "powershell.exe",
-      ["-NoProfile", "-Command", "Get-StartApps | Select-Object -First 80 Name, AppID | ConvertTo-Json"],
+      ["-NoProfile", "-Command", "Get-StartApps | Select-Object -First 120 Name, AppID | ConvertTo-Json"],
       { timeout: 6e3 }
     );
     const parsed = JSON.parse(stdout || "[]");
@@ -2468,6 +2839,185 @@ async function discoverWindowsStartApps() {
   } catch {
     return [];
   }
+}
+async function resolveWindowsExecutableForKey(catalogKey) {
+  const entry = WINDOWS_APP_CATALOG[catalogKey];
+  if (!entry) {
+    return { exePath: null, displayName: catalogKey };
+  }
+  if (entry.settingsUri) {
+    return { exePath: null, settingsUri: entry.settingsUri, displayName: entry.displayName };
+  }
+  for (const candidate of entry.candidatePaths()) {
+    if (fs3.existsSync(candidate)) {
+      return { exePath: candidate, displayName: entry.displayName };
+    }
+  }
+  for (const exeName of entry.exeNames) {
+    const foundWhere = await whereExecutable(exeName);
+    if (foundWhere) return { exePath: foundWhere, displayName: entry.displayName };
+  }
+  for (const exeName of entry.exeNames) {
+    const regPath = await lookupWindowsAppPathsRegistry(exeName);
+    if (regPath) return { exePath: regPath, displayName: entry.displayName };
+  }
+  if (entry.appIdHints && entry.appIdHints.length > 0) {
+    const startApps = await discoverWindowsStartApps();
+    const match = startApps.find(
+      (sa) => entry.appIdHints.some((h) => sa.name.toLowerCase().includes(h.toLowerCase()))
+    );
+    if (match) {
+      return { exePath: null, appId: match.appId, displayName: entry.displayName };
+    }
+  }
+  return { exePath: null, displayName: entry.displayName };
+}
+async function isWindowsAppAvailable(commandOrName) {
+  if (process.platform !== "win32") return false;
+  const catalogKey = normalizeAppLookupKey(commandOrName);
+  if (catalogKey) {
+    const resolved = await resolveWindowsExecutableForKey(catalogKey);
+    return Boolean(resolved.exePath || resolved.settingsUri || resolved.appId);
+  }
+  if (commandOrName.includes("!")) return true;
+  if (/^[a-zA-Z0-9._-]+$/.test(commandOrName)) {
+    return Boolean(await whereExecutable(commandOrName));
+  }
+  return false;
+}
+function normalizeSafeWebsiteUrl(rawInput) {
+  const clean = rawInput.trim();
+  if (!clean) return null;
+  const lower = clean.toLowerCase();
+  for (const [alias, meta] of Object.entries(WEBSITE_ALIASES)) {
+    if (lower === alias || lower.includes(alias)) {
+      return meta;
+    }
+  }
+  const urlMatch = clean.match(/(https?:\/\/[^\s"'<>]+|[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/[^\s"'<>]*)?)/i);
+  if (!urlMatch) return null;
+  let candidate = urlMatch[1];
+  if (!/^https?:\/\//i.test(candidate)) {
+    candidate = `https://${candidate}`;
+  }
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return null;
+    }
+    return { label: parsed.hostname, url: parsed.toString() };
+  } catch {
+    return null;
+  }
+}
+async function openWindowsWebsite(urlOrAlias, preferredBrowser) {
+  const resolved = normalizeSafeWebsiteUrl(urlOrAlias);
+  if (!resolved) {
+    return { opened: false, message: `Invalid or unsafe website address "${urlOrAlias}".` };
+  }
+  if (process.platform !== "win32") {
+    return {
+      opened: false,
+      url: resolved.url,
+      message: `Prepared URL ${resolved.url}. Native Windows browser launch requires a live Windows desktop session.`
+    };
+  }
+  if (preferredBrowser) {
+    const browserResolved = await resolveWindowsExecutableForKey(preferredBrowser);
+    if (browserResolved.exePath) {
+      const spawnRes2 = await spawnVerifiedExecutable(browserResolved.exePath, [resolved.url]);
+      if (spawnRes2.started) {
+        return {
+          opened: true,
+          url: resolved.url,
+          message: `Opened ${resolved.label} (${resolved.url}) in ${browserResolved.displayName}.`
+        };
+      }
+    }
+  }
+  const spawnRes = await spawnVerifiedExecutable("rundll32.exe", ["url.dll,FileProtocolHandler", resolved.url]);
+  if (spawnRes.started) {
+    return {
+      opened: true,
+      url: resolved.url,
+      message: `Opened ${resolved.label} (${resolved.url}) in your default Windows browser.`
+    };
+  }
+  return {
+    opened: false,
+    url: resolved.url,
+    message: `Failed to open ${resolved.url}: ${spawnRes.error || "Windows URL handler error"}.`
+  };
+}
+async function openWindowsFolder(folderQuery, allowedFolders = []) {
+  const lower = folderQuery.toLowerCase();
+  const home = os2.homedir();
+  const namedFolders = [
+    { rx: /\bdownloads?\b/i, dir: path3.join(home, "Downloads"), label: "Downloads" },
+    { rx: /\bdesktop\b/i, dir: path3.join(home, "Desktop"), label: "Desktop" },
+    { rx: /\bdocuments?\b/i, dir: path3.join(home, "Documents"), label: "Documents" },
+    { rx: /\bpictures?\b/i, dir: path3.join(home, "Pictures"), label: "Pictures" },
+    { rx: /\bvideos?\b/i, dir: path3.join(home, "Videos"), label: "Videos" },
+    { rx: /\bmusic\b/i, dir: path3.join(home, "Music"), label: "Music" },
+    { rx: /\b(home|user\s+folder)\b/i, dir: home, label: "Home" },
+    { rx: /\bworkspace\b/i, dir: process.cwd(), label: "Workspace" }
+  ];
+  let targetDir = null;
+  let targetLabel = folderQuery;
+  const named = namedFolders.find((n) => n.rx.test(lower));
+  if (named) {
+    targetDir = named.dir;
+    targetLabel = named.label;
+  } else {
+    const winPathMatch = folderQuery.match(/([a-zA-Z]:\\[^\n\r"'<>|]+)/);
+    if (winPathMatch) {
+      const candidate = path3.resolve(winPathMatch[1].trim());
+      const permitted = candidate === home || candidate.startsWith(home + path3.sep) || allowedFolders.some((f) => {
+        const r = path3.resolve(f);
+        return candidate === r || candidate.startsWith(r + path3.sep);
+      });
+      if (permitted) {
+        targetDir = candidate;
+        targetLabel = candidate;
+      } else {
+        return {
+          opened: false,
+          message: `Folder "${candidate}" is outside permitted user folders. Grant access in Settings -> File Permissions first.`
+        };
+      }
+    }
+  }
+  if (!targetDir) {
+    return { opened: false, message: `Could not identify target folder in "${folderQuery}".` };
+  }
+  if (!fs3.existsSync(targetDir) || !fs3.statSync(targetDir).isDirectory()) {
+    return {
+      opened: false,
+      path: targetDir,
+      message: `Folder "${targetDir}" does not exist on this system.`
+    };
+  }
+  if (process.platform !== "win32") {
+    return {
+      opened: false,
+      path: targetDir,
+      message: `Verified folder "${targetDir}". File Explorer GUI requires a Windows desktop session.`
+    };
+  }
+  const explorerPath = path3.join(getEnvDirs().systemRoot, "explorer.exe");
+  const spawnRes = await spawnVerifiedExecutable(explorerPath, [targetDir]);
+  if (spawnRes.started) {
+    return {
+      opened: true,
+      path: targetDir,
+      message: `Opened folder ${targetLabel} (${targetDir}) in File Explorer.`
+    };
+  }
+  return {
+    opened: false,
+    path: targetDir,
+    message: `Could not open File Explorer for "${targetDir}": ${spawnRes.error || "Launch failed"}.`
+  };
 }
 async function listActiveWindows() {
   if (process.platform !== "win32") return [];
@@ -2496,10 +3046,14 @@ async function focusWindowsWindow(processName) {
     $proc = Get-Process | Where-Object { $_.MainWindowTitle -ne "" -and ($_.ProcessName -like "*${safeName}*" -or $_.MainWindowTitle -like "*${safeName}*") } | Select-Object -First 1;
     if ($proc) { $wshell.AppActivate($proc.Id) } else { $false }
   `;
-  const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-Command", script], {
-    timeout: 4e3
-  });
-  return stdout.trim().toLowerCase() === "true";
+  try {
+    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-Command", script], {
+      timeout: 4e3
+    });
+    return stdout.trim().toLowerCase() === "true";
+  } catch {
+    return false;
+  }
 }
 async function setWindowsWindowState(processName, state) {
   if (process.platform !== "win32") return false;
@@ -2552,50 +3106,124 @@ async function closeWindowsWindow(processName) {
 }
 async function launchWindowsTarget(command) {
   if (process.platform !== "win32") {
-    return { launched: false, detail: "Not running on a Windows host." };
+    return {
+      launched: false,
+      detail: "Windows desktop automation requires a live Windows 10/11 host.",
+      errorCode: "NOT_WINDOWS"
+    };
   }
   const clean = command.trim();
-  if (!clean || !SAFE_COMMAND_OR_APPID.test(clean)) {
-    return { launched: false, detail: "Application identifier contains disallowed characters." };
+  if (!clean) {
+    return { launched: false, detail: "No application name specified.", errorCode: "INVALID_TARGET" };
   }
-  return new Promise((resolve) => {
-    try {
-      const isAppId = clean.includes("!");
-      const args = isAppId ? ["/c", "start", "", `shell:AppsFolder\\${clean}`] : ["/c", "start", "", clean];
-      const child = spawn("cmd.exe", args, {
-        detached: true,
-        stdio: "ignore",
-        shell: false
-      });
-      child.once("error", (err) => {
-        resolve({ launched: false, detail: err.message });
-      });
-      child.unref();
-      resolve({ launched: true, detail: `Dispatched Windows application launch for "${clean}".` });
-    } catch (err) {
-      resolve({ launched: false, detail: err.message });
+  const lower = clean.toLowerCase();
+  for (const [k, uri] of Object.entries(SAFE_SETTINGS_URIS)) {
+    if (lower.includes(`${k} settings`) || lower === `settings:${k}` || lower === k) {
+      if (lower.includes("settings") || lower.startsWith("settings:")) {
+        const explorerPath = path3.join(getEnvDirs().systemRoot, "explorer.exe");
+        const res = await spawnVerifiedExecutable(explorerPath, [uri]);
+        return res.started ? { launched: true, resolvedTarget: uri, detail: `Opened Windows Settings (${uri}).` } : { launched: false, errorCode: "LAUNCH_FAILED", detail: `Failed to open Windows Settings: ${res.error}` };
+      }
     }
-  });
+  }
+  if (WEBSITE_ALIASES[lower]) {
+    const webRes = await openWindowsWebsite(lower);
+    return {
+      launched: webRes.opened,
+      resolvedTarget: webRes.url,
+      detail: webRes.message,
+      errorCode: webRes.opened ? void 0 : "WEB_OPEN_FAILED"
+    };
+  }
+  const catalogKey = normalizeAppLookupKey(clean);
+  if (catalogKey) {
+    const resolved = await resolveWindowsExecutableForKey(catalogKey);
+    const catalogEntry = WINDOWS_APP_CATALOG[catalogKey];
+    if (resolved.settingsUri) {
+      const explorerPath = path3.join(getEnvDirs().systemRoot, "explorer.exe");
+      const res = await spawnVerifiedExecutable(explorerPath, [resolved.settingsUri]);
+      return res.started ? { launched: true, resolvedTarget: resolved.settingsUri, detail: `Opening ${resolved.displayName}.` } : { launched: false, errorCode: "LAUNCH_FAILED", detail: `Failed to open ${resolved.displayName}: ${res.error}` };
+    }
+    if (resolved.exePath) {
+      const res = await spawnVerifiedExecutable(resolved.exePath, []);
+      return res.started ? { launched: true, resolvedTarget: resolved.exePath, detail: `Opening ${resolved.displayName}.` } : { launched: false, errorCode: "LAUNCH_FAILED", detail: `Failed to launch ${resolved.displayName}: ${res.error}` };
+    }
+    if (resolved.appId) {
+      const explorerPath = path3.join(getEnvDirs().systemRoot, "explorer.exe");
+      const targetArg = `shell:AppsFolder\\${resolved.appId}`;
+      const res = await spawnVerifiedExecutable(explorerPath, [targetArg]);
+      return res.started ? { launched: true, resolvedTarget: targetArg, detail: `Opening ${resolved.displayName}.` } : { launched: false, errorCode: "LAUNCH_FAILED", detail: `Failed to launch ${resolved.displayName}: ${res.error}` };
+    }
+    if (catalogKey === "wt") {
+      const psResolved = await resolveWindowsExecutableForKey("powershell");
+      if (psResolved.exePath) {
+        const res = await spawnVerifiedExecutable(psResolved.exePath, []);
+        if (res.started) {
+          return {
+            launched: true,
+            resolvedTarget: psResolved.exePath,
+            detail: "Windows Terminal not found; opened Windows PowerShell."
+          };
+        }
+      }
+    }
+    if (catalogEntry?.fallbackWebsite) {
+      const webRes = await openWindowsWebsite(catalogEntry.fallbackWebsite);
+      return {
+        launched: webRes.opened,
+        resolvedTarget: webRes.url,
+        detail: `${resolved.displayName} desktop app not installed; ${webRes.message}`
+      };
+    }
+    return {
+      launched: false,
+      errorCode: "NOT_FOUND",
+      detail: `${resolved.displayName} is not installed or could not be located on this Windows PC.`
+    };
+  }
+  if (!SAFE_COMMAND_OR_APPID.test(clean)) {
+    return {
+      launched: false,
+      errorCode: "INVALID_TARGET",
+      detail: "Application identifier contains disallowed characters."
+    };
+  }
+  if (clean.includes("!")) {
+    const explorerPath = path3.join(getEnvDirs().systemRoot, "explorer.exe");
+    const targetArg = `shell:AppsFolder\\${clean}`;
+    const res = await spawnVerifiedExecutable(explorerPath, [targetArg]);
+    return res.started ? { launched: true, resolvedTarget: targetArg, detail: `Launched Windows application (${clean}).` } : { launched: false, errorCode: "LAUNCH_FAILED", detail: `Failed to launch "${clean}": ${res.error}` };
+  }
+  const foundExe = await whereExecutable(clean);
+  if (foundExe) {
+    const res = await spawnVerifiedExecutable(foundExe, []);
+    return res.started ? { launched: true, resolvedTarget: foundExe, detail: `Opening ${path3.basename(foundExe, ".exe")}.` } : { launched: false, errorCode: "LAUNCH_FAILED", detail: `Failed to launch "${clean}": ${res.error}` };
+  }
+  const startApps = await discoverWindowsStartApps();
+  const matchedStartApp = startApps.find((s) => s.name.toLowerCase().includes(lower));
+  if (matchedStartApp) {
+    const explorerPath = path3.join(getEnvDirs().systemRoot, "explorer.exe");
+    const targetArg = `shell:AppsFolder\\${matchedStartApp.appId}`;
+    const res = await spawnVerifiedExecutable(explorerPath, [targetArg]);
+    return res.started ? { launched: true, resolvedTarget: targetArg, detail: `Opening ${matchedStartApp.name}.` } : { launched: false, errorCode: "LAUNCH_FAILED", detail: `Failed to launch ${matchedStartApp.name}: ${res.error}` };
+  }
+  return {
+    launched: false,
+    errorCode: "NOT_FOUND",
+    detail: `Application "${clean}" was not found in Windows PATH, Program Files, or Start Menu.`
+  };
 }
 async function openLocalPathInDefaultApp(targetPath) {
   if (!targetPath || targetPath.includes("\0")) {
     return { opened: false, detail: "Invalid target path." };
   }
+  if (!fs3.existsSync(targetPath)) {
+    return { opened: false, detail: `Target path does not exist: "${targetPath}".` };
+  }
   if (process.platform === "win32") {
-    return new Promise((resolve) => {
-      try {
-        const child = spawn("cmd.exe", ["/c", "start", "", targetPath], {
-          detached: true,
-          stdio: "ignore",
-          shell: false
-        });
-        child.once("error", (err) => resolve({ opened: false, detail: err.message }));
-        child.unref();
-        resolve({ opened: true, detail: `Opened "${targetPath}" using default Windows handler.` });
-      } catch (err) {
-        resolve({ opened: false, detail: err.message });
-      }
-    });
+    const explorerPath = path3.join(getEnvDirs().systemRoot, "explorer.exe");
+    const res2 = await spawnVerifiedExecutable(explorerPath, [targetPath]);
+    return res2.started ? { opened: true, detail: `Opened "${targetPath}" using default Windows handler.` } : { opened: false, detail: `Failed to open "${targetPath}": ${res2.error}` };
   }
   if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
     return {
@@ -2603,12 +3231,8 @@ async function openLocalPathInDefaultApp(targetPath) {
       detail: "File verified in permitted storage; native OS viewer requires a desktop session (e.g. Windows)."
     };
   }
-  return new Promise((resolve) => {
-    const child = spawn("xdg-open", [targetPath], { detached: true, stdio: "ignore", shell: false });
-    child.once("error", (err) => resolve({ opened: false, detail: err.message }));
-    child.unref();
-    resolve({ opened: true, detail: `Opened "${targetPath}".` });
-  });
+  const res = await spawnVerifiedExecutable("xdg-open", [targetPath]);
+  return res.started ? { opened: true, detail: `Opened "${targetPath}".` } : { opened: false, detail: `Failed to open "${targetPath}": ${res.error}` };
 }
 async function sendWindowsMediaKey(action) {
   if (process.platform !== "win32") {
@@ -2636,6 +3260,153 @@ async function sendWindowsMediaKey(action) {
     return { executed: false, detail: err.message };
   }
 }
+async function getWindowsSpeechCapabilities() {
+  if (process.platform !== "win32") {
+    return {
+      platform: process.platform,
+      offlineSttReady: false,
+      recognizers: [],
+      ttsVoices: [],
+      micAccessStatus: "browser-managed"
+    };
+  }
+  const script = `
+    Add-Type -AssemblyName System.Speech -ErrorAction SilentlyContinue;
+    $recs = @();
+    try {
+      $recs = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers() | ForEach-Object { $_.Culture.Name }
+    } catch {}
+    $voices = @();
+    try {
+      $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer;
+      $voices = $synth.GetInstalledVoices() | Where-Object { $_.Enabled } | ForEach-Object { $_.VoiceInfo.Name + ' (' + $_.VoiceInfo.Culture.Name + ')' };
+      $synth.Dispose();
+    } catch {}
+    $micConsent = 'unknown';
+    try {
+      $u = (Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone' -ErrorAction SilentlyContinue).Value;
+      $nonPackaged = (Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged' -ErrorAction SilentlyContinue).Value;
+      if ($u -eq 'Deny') { $micConsent = 'denied' }
+      elseif ($nonPackaged -eq 'Deny') { $micConsent = 'desktop-apps-denied' }
+      elseif ($u -eq 'Allow') { $micConsent = 'granted' }
+    } catch {}
+    @{ recognizers = @($recs); voices = @($voices); mic = $micConsent } | ConvertTo-Json -Compress
+  `;
+  try {
+    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-Command", script], {
+      timeout: 5500
+    });
+    const parsed = JSON.parse(stdout.trim() || "{}");
+    const recognizers = Array.isArray(parsed.recognizers) ? parsed.recognizers : [];
+    const ttsVoices = Array.isArray(parsed.voices) ? parsed.voices : [];
+    return {
+      platform: "win32",
+      offlineSttReady: recognizers.length > 0,
+      recognizers,
+      ttsVoices,
+      micAccessStatus: parsed.mic || "unknown"
+    };
+  } catch {
+    return {
+      platform: "win32",
+      offlineSttReady: false,
+      recognizers: [],
+      ttsVoices: [],
+      micAccessStatus: "unknown"
+    };
+  }
+}
+async function recognizeWindowsSpeechFromWav(wavBase64, language = "en-US") {
+  if (process.platform !== "win32") {
+    return {
+      ok: false,
+      text: "",
+      engine: "windows-system-speech",
+      errorCode: "NOT_WINDOWS",
+      error: "Windows native System.Speech recognition is only available on Windows 10/11."
+    };
+  }
+  if (!wavBase64 || wavBase64.length > 12 * 1024 * 1024) {
+    return {
+      ok: false,
+      text: "",
+      engine: "windows-system-speech",
+      errorCode: "INVALID_AUDIO",
+      error: "Audio buffer is empty or exceeds the maximum 12MB speech payload."
+    };
+  }
+  const audioBuf = Buffer.from(wavBase64, "base64");
+  if (audioBuf.length < 44 || audioBuf.subarray(0, 4).toString("ascii") !== "RIFF") {
+    return {
+      ok: false,
+      text: "",
+      engine: "windows-system-speech",
+      errorCode: "INVALID_WAV",
+      error: "Invalid PCM WAV audio format for Windows Speech Recognition."
+    };
+  }
+  const cleanLang = /^[a-z]{2}(-[A-Z]{2})?$/.test(language) ? language : "en-US";
+  const tempWavPath = path3.join(os2.tmpdir(), `friday-stt-${crypto2.randomUUID()}.wav`);
+  fs3.writeFileSync(tempWavPath, audioBuf);
+  const escapedWav = tempWavPath.replace(/'/g, "''");
+  const script = `
+    Add-Type -AssemblyName System.Speech;
+    $installed = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers();
+    if (-not $installed -or $installed.Count -eq 0) {
+      @{ ok = $false; text = ''; errorCode = 'NO_RECOGNIZER'; error = 'No Windows Speech Recognition language pack is installed in Windows Settings -> Time & language -> Speech.' } | ConvertTo-Json -Compress;
+      exit 0
+    }
+    $targetLang = '${cleanLang}';
+    $baseLang = $targetLang.Split('-')[0];
+    $chosen = $installed | Where-Object { $_.Culture.Name -ieq $targetLang } | Select-Object -First 1;
+    if (-not $chosen) {
+      $chosen = $installed | Where-Object { $_.Culture.TwoLetterISOLanguageName -ieq $baseLang } | Select-Object -First 1;
+    }
+    if (-not $chosen) {
+      $chosen = $installed | Where-Object { $_.Culture.TwoLetterISOLanguageName -ieq 'en' } | Select-Object -First 1;
+    }
+    if (-not $chosen) { $chosen = $installed | Select-Object -First 1; }
+    try {
+      $engine = New-Object System.Speech.Recognition.SpeechRecognitionEngine($chosen);
+      $grammar = New-Object System.Speech.Recognition.DictationGrammar;
+      $engine.LoadGrammar($grammar);
+      $engine.SetInputToWaveFile('${escapedWav}');
+      $result = $engine.Recognize();
+      $engine.Dispose();
+      $txt = if ($result -and $result.Text) { $result.Text.Trim() } else { '' };
+      @{ ok = $true; text = $txt; recognizerCulture = $chosen.Culture.Name } | ConvertTo-Json -Compress;
+    } catch {
+      @{ ok = $false; text = ''; errorCode = 'RECOGNIZER_ERROR'; recognizerCulture = $chosen.Culture.Name; error = $_.Exception.Message } | ConvertTo-Json -Compress;
+    }
+  `;
+  try {
+    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-Command", script], {
+      timeout: 12e3
+    });
+    const parsed = JSON.parse(stdout.trim() || "{}");
+    return {
+      ok: Boolean(parsed.ok),
+      text: String(parsed.text || "").trim(),
+      engine: "windows-system-speech",
+      recognizerCulture: parsed.recognizerCulture,
+      errorCode: parsed.errorCode,
+      error: parsed.error
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      text: "",
+      engine: "windows-system-speech",
+      errorCode: "EXEC_FAILED",
+      error: `Windows Speech Recognition invocation failed: ${err.message}`
+    };
+  } finally {
+    try {
+      if (fs3.existsSync(tempWavPath)) fs3.unlinkSync(tempWavPath);
+    } catch {
+    }
+  }
+}
 
 // server/systemService.ts
 var execFileAsync2 = promisify2(execFile2);
@@ -2651,11 +3422,11 @@ async function getSystemTelemetry() {
     ]);
     const primaryGpu = graphics2?.controllers?.[0];
     cachedStaticInfo = {
-      cpuModel: cpu ? `${cpu.manufacturer} ${cpu.brand}`.trim() : os2.cpus()[0]?.model ?? "Unavailable",
-      cpuCores: cpu?.cores ?? os2.cpus().length,
+      cpuModel: cpu ? `${cpu.manufacturer} ${cpu.brand}`.trim() : os3.cpus()[0]?.model ?? "Unavailable",
+      cpuCores: cpu?.cores ?? os3.cpus().length,
       gpuName: primaryGpu?.model?.trim() || "Unavailable",
-      platform: osInfo ? `${osInfo.distro || osInfo.platform} (${os2.arch()})` : `${os2.platform()} (${os2.arch()})`,
-      hostname: osInfo?.hostname ?? os2.hostname()
+      platform: osInfo ? `${osInfo.distro || osInfo.platform} (${os3.arch()})` : `${os3.platform()} (${os3.arch()})`,
+      hostname: osInfo?.hostname ?? os3.hostname()
     };
   }
   const [load, mem, fsSizes, netStats, battery, temp, graphics] = await Promise.all([
@@ -2667,8 +3438,8 @@ async function getSystemTelemetry() {
     si.cpuTemperature().catch(() => null),
     si.graphics().catch(() => null)
   ]);
-  const ramTotalBytes = mem?.total ?? os2.totalmem();
-  const ramUsedBytes = mem?.active ?? ramTotalBytes - os2.freemem();
+  const ramTotalBytes = mem?.total ?? os3.totalmem();
+  const ramUsedBytes = mem?.active ?? ramTotalBytes - os3.freemem();
   const ramTotalGb = Number((ramTotalBytes / 1024 ** 3).toFixed(1));
   const ramUsedGb = Number((ramUsedBytes / 1024 ** 3).toFixed(1));
   const ramPercent = ramTotalBytes > 0 ? Math.round(ramUsedBytes / ramTotalBytes * 100) : 0;
@@ -2698,16 +3469,18 @@ async function getSystemTelemetry() {
     networkTxKbps: Number((totalTxSec / 1024).toFixed(1)),
     batteryPercent: battery?.hasBattery ? Math.round(battery.percent) : null,
     batteryCharging: battery?.hasBattery ? battery.isCharging : null,
-    uptimeSeconds: Math.round(os2.uptime()),
+    uptimeSeconds: Math.round(os3.uptime()),
     platform: cachedStaticInfo.platform,
     hostname: cachedStaticInfo.hostname
   };
 }
 async function checkCommandAvailable(command) {
+  if (process.platform === "win32") {
+    return isWindowsAppAvailable(command);
+  }
   if (!/^[a-zA-Z0-9._-]+$/.test(command)) return false;
   try {
-    const checker = process.platform === "win32" ? "where" : "which";
-    await execFileAsync2(checker, [command], { timeout: 1500 });
+    await execFileAsync2("which", [command], { timeout: 1500 });
     return true;
   } catch {
     return false;
@@ -2761,25 +3534,31 @@ async function detectInstalledApps(apps, force = false) {
   return enriched;
 }
 var SEMANTIC_APP_ALIASES = [
-  { rx: /\b(coding|ide|vs\s*code|vscode|visual\s+studio\s+code)\b/i, lookup: "code", winCommands: ["code", "Code"] },
-  { rx: /\b(chrome|google\s+chrome|browser)\b/i, lookup: "chrome", winCommands: ["chrome", "msedge"] },
-  { rx: /\b(edge|microsoft\s+edge)\b/i, lookup: "msedge", winCommands: ["msedge"] },
-  { rx: /\b(spotify|music\s+player)\b/i, lookup: "spotify", winCommands: ["spotify"] },
-  { rx: /\b(whatsapp|messaging)\b/i, lookup: "whatsapp", winCommands: ["whatsapp"] },
-  { rx: /\b(terminal|powershell|cmd|shell)\b/i, lookup: "wt", winCommands: ["wt", "powershell", "cmd"] },
-  { rx: /\b(explorer|files|file\s+explorer)\b/i, lookup: "explorer", winCommands: ["explorer"] },
-  { rx: /\b(notepad|notes)\b/i, lookup: "notepad", winCommands: ["notepad"] },
-  { rx: /\b(calculator|calc)\b/i, lookup: "calc", winCommands: ["calc"] },
-  { rx: /\b(vlc)\b/i, lookup: "vlc", winCommands: ["vlc"] }
+  { rx: /\b(coding|ide|vs\s*code|vscode|visual\s+studio\s+code)\b/i, lookup: "code", label: "Visual Studio Code" },
+  { rx: /\b(google\s+chrome|google-chrome|chrome|browser)\b/i, lookup: "chrome", label: "Google Chrome" },
+  { rx: /\b(microsoft\s+edge|msedge|edge)\b/i, lookup: "edge", label: "Microsoft Edge" },
+  { rx: /\b(android\s+studio|studio64)\b/i, lookup: "studio64", label: "Android Studio" },
+  { rx: /\b(spotify|music\s+player)\b/i, lookup: "spotify", label: "Spotify" },
+  { rx: /\b(whatsapp|messaging)\b/i, lookup: "whatsapp", label: "WhatsApp Desktop" },
+  { rx: /\b(telegram)\b/i, lookup: "telegram", label: "Telegram Desktop" },
+  { rx: /\b(command\s+prompt|cmd)\b/i, lookup: "cmd", label: "Command Prompt" },
+  { rx: /\b(powershell|pwsh)\b/i, lookup: "powershell", label: "Windows PowerShell" },
+  { rx: /\b(windows\s+terminal|terminal|wt)\b/i, lookup: "wt", label: "Windows Terminal" },
+  { rx: /\b(file\s+explorer|explorer|files)\b/i, lookup: "explorer", label: "File Explorer" },
+  { rx: /\b(notepad|notes)\b/i, lookup: "notepad", label: "Notepad" },
+  { rx: /\b(calculator|calc)\b/i, lookup: "calculator", label: "Calculator" },
+  { rx: /\b(windows\s+settings|wi-?fi\s+settings|bluetooth\s+settings|display\s+settings|sound\s+settings|microphone\s+settings|settings)\b/i, lookup: "settings", label: "Windows Settings" },
+  { rx: /\b(task\s+manager|taskmgr)\b/i, lookup: "taskmgr", label: "Task Manager" },
+  { rx: /\b(paint|mspaint)\b/i, lookup: "paint", label: "Paint" },
+  { rx: /\b(vlc)\b/i, lookup: "vlc", label: "VLC Media Player" }
 ];
 async function launchApplication(app) {
   if (process.platform === "win32") {
-    const winTarget = app.command === "google-chrome" ? "chrome" : app.command;
-    const available2 = winTarget.includes("!") || await checkCommandAvailable(winTarget);
-    const result = await launchWindowsTarget(available2 ? winTarget : app.name);
+    const winTarget = app.command === "google-chrome" ? "chrome" : app.command || app.name;
+    const result = await launchWindowsTarget(winTarget);
     return {
       launched: result.launched,
-      message: result.launched ? `Launched ${app.name} on Windows desktop.` : result.detail
+      message: result.detail
     };
   }
   const available = await checkCommandAvailable(app.command);
@@ -2808,8 +3587,9 @@ async function launchApplication(app) {
     }
   });
 }
-async function handleAppOrWindowCommand(userCommand, apps) {
-  const lower = userCommand.toLowerCase();
+async function handleAppOrWindowCommand(userCommand, apps, allowedFolders = []) {
+  const trimmed = userCommand.trim();
+  const lower = trimmed.toLowerCase();
   if (/\b(running|active\s+windows|applications\s+currently\s+running)\b/i.test(lower)) {
     const windows = await listActiveWindows();
     return {
@@ -2819,29 +3599,68 @@ async function handleAppOrWindowCommand(userCommand, apps) {
 ${windows.slice(0, 10).map((w) => `- ${w.name}: ${w.title}`).join("\n")}` : process.platform === "win32" ? "No active application windows with titles were detected." : "Running window enumeration requires a live Windows desktop session."
     };
   }
+  if (/\b(open|launch|show)\b/i.test(lower) && (/\b(downloads?|desktop|documents?|pictures?|videos?|music)\s*(folder|directory)?\b/i.test(lower) || /[a-zA-Z]:\\[^\n\r"'<>|]+/.test(trimmed)) && !/\b(file\s+explorer|explorer)\b/i.test(lower)) {
+    const folderRes = await openWindowsFolder(trimmed, allowedFolders);
+    return {
+      handled: true,
+      message: folderRes.message
+    };
+  }
+  if (/\bsettings\b/i.test(lower)) {
+    const settingsRes = await launchWindowsTarget(trimmed);
+    return {
+      handled: true,
+      message: settingsRes.detail
+    };
+  }
+  const explicitBrowser = /\bchrome\b/i.test(lower) ? "chrome" : /\bedge\b/i.test(lower) ? "edge" : void 0;
+  const websiteTarget = normalizeSafeWebsiteUrl(trimmed);
+  if (websiteTarget && (/\b(youtube|google|github|gmail|notion|wikipedia)\b/i.test(lower) || /https?:\/\/|[a-z0-9-]+\.(?:com|org|net|io|dev|in|edu|gov|ai)/i.test(lower)) && !/\b(google\s+chrome)\b/i.test(lower)) {
+    const webRes = await openWindowsWebsite(trimmed, explicitBrowser);
+    return {
+      handled: true,
+      message: webRes.message
+    };
+  }
   const alias = SEMANTIC_APP_ALIASES.find((a) => a.rx.test(lower));
   const matchedApp = apps.find((a) => lower.includes(a.name.toLowerCase()) || lower.includes(a.command.toLowerCase())) || (alias ? apps.find(
-    (a) => a.command.toLowerCase().includes(alias.lookup) || a.name.toLowerCase().includes(alias.lookup)
+    (a) => a.command.toLowerCase() === alias.lookup || a.command.toLowerCase().includes(alias.lookup) || a.name.toLowerCase().includes(alias.label.toLowerCase())
   ) : void 0);
-  const targetName = matchedApp?.command === "google-chrome" ? "chrome" : matchedApp?.command || alias?.lookup || "";
+  const targetName = alias?.lookup || (matchedApp?.command === "google-chrome" ? "chrome" : matchedApp?.command) || "";
   if (/\b(minimize)\b/i.test(lower) && targetName) {
     const ok = await setWindowsWindowState(targetName, "minimize");
     return {
       handled: true,
-      message: ok ? `Minimized ${matchedApp?.name || targetName}.` : `Could not locate an active window for "${matchedApp?.name || targetName}" to minimize.`
+      message: ok ? `Minimized ${matchedApp?.name || alias?.label || targetName}.` : `Could not locate an active window for "${matchedApp?.name || alias?.label || targetName}" to minimize.`
     };
   }
   if (/\b(maximize)\b/i.test(lower) && targetName) {
     const ok = await setWindowsWindowState(targetName, "maximize");
     return {
       handled: true,
-      message: ok ? `Maximized ${matchedApp?.name || targetName}.` : `Could not locate an active window for "${matchedApp?.name || targetName}" to maximize.`
+      message: ok ? `Maximized ${matchedApp?.name || alias?.label || targetName}.` : `Could not locate an active window for "${matchedApp?.name || alias?.label || targetName}" to maximize.`
     };
   }
   if (/\b(switch\s+to|focus)\b/i.test(lower) && targetName) {
     const ok = await focusWindowsWindow(targetName);
     if (ok) {
-      return { handled: true, message: `Switched focus to ${matchedApp?.name || targetName}.` };
+      return { handled: true, message: `Switched focus to ${matchedApp?.name || alias?.label || targetName}.` };
+    }
+    const winLaunch = await launchWindowsTarget(targetName);
+    return {
+      handled: true,
+      launchedApp: matchedApp,
+      message: winLaunch.detail
+    };
+  }
+  if (alias) {
+    if (process.platform === "win32") {
+      const res = await launchWindowsTarget(alias.lookup);
+      return {
+        handled: true,
+        launchedApp: matchedApp,
+        message: res.detail
+      };
     }
     if (matchedApp) {
       const launched = await launchApplication(matchedApp);
@@ -2849,12 +3668,26 @@ ${windows.slice(0, 10).map((w) => `- ${w.name}: ${w.title}`).join("\n")}` : proc
     }
     return {
       handled: true,
-      message: `No running window matched "${targetName}".`
+      message: `${alias.label} desktop launch requires a Windows 10/11 desktop session.`
     };
   }
   if (matchedApp) {
     const launched = await launchApplication(matchedApp);
     return { handled: true, launchedApp: matchedApp, message: launched.message };
+  }
+  const genericExtract = trimmed.match(
+    /^(?:hey[,\s]+friday[,\s]+|friday[,\s]+)?(?:open|launch|start)\s+(?:the\s+|my\s+)?([a-z0-9._ -]{2,40})$/i
+  );
+  if (genericExtract?.[1]) {
+    const requestedName = genericExtract[1].trim();
+    if (process.platform === "win32") {
+      const res = await launchWindowsTarget(requestedName);
+      return { handled: true, message: res.detail };
+    }
+    return {
+      handled: true,
+      message: `Application "${requestedName}" cannot be launched in this non-Windows server container. Run F.R.I.D.A.Y. on Windows Desktop to launch "${requestedName}".`
+    };
   }
   const startApps = await getCachedWindowsStartApps();
   const startMatch = startApps.find((s) => lower.includes(s.name.toLowerCase()));
@@ -2862,12 +3695,12 @@ ${windows.slice(0, 10).map((w) => `- ${w.name}: ${w.title}`).join("\n")}` : proc
     const res = await launchWindowsTarget(startMatch.appId);
     return {
       handled: true,
-      message: res.launched ? `Launched ${startMatch.name}.` : res.detail
+      message: res.detail
     };
   }
   return {
     handled: true,
-    message: `Which application would you like to open or switch to? Installed/known targets include: ${apps.slice(0, 8).map((a) => a.name).join(", ")}.`
+    message: `Which application would you like to open or switch to? Supported targets include Google Chrome, Microsoft Edge, Notepad, Calculator, File Explorer, Command Prompt, PowerShell, Windows Settings, Task Manager, VS Code, or any installed Start Menu app.`
   };
 }
 async function closeWindowSafe(targetSummary) {
@@ -3403,24 +4236,38 @@ async function streamAssistantCommand(userCommand, settings, emitEvent, signal) 
     });
   }
   if (parsed.category === "file_search" || parsed.category === "media_analyze") {
-    const files = getCachedFileIndex(settings.allowedFolders, settings.pausedIndexing, 300);
-    matchedFiles = searchIndexedFiles(files, userCommand).slice(0, 8);
-    contextParts.push(
-      matchedFiles.length > 0 ? `PERMITTED FILE SEARCH MATCHES (${matchedFiles.length}):
+    const wantsFolderOpen = parsed.category === "file_search" && /\b(open|launch|show)\b/i.test(userCommand) && (/\b(downloads?|desktop|documents?|pictures?|videos?|music)\s*(folder|directory)?\b/i.test(userCommand) || /[a-zA-Z]:\\[^\n\r"'<>|]+/.test(userCommand)) && !/\.(?:pdf|docx?|xlsx?|pptx?|txt|csv|png|jpe?g|webp|zip|mp[34]|mkv)$/i.test(userCommand);
+    if (wantsFolderOpen) {
+      const folderRes = await openWindowsFolder(userCommand, settings.allowedFolders);
+      appNotice = folderRes.message;
+      contextParts.push(`FOLDER OPEN RESULT: ${folderRes.message}`);
+      appendActionLog(db, {
+        agent: "file",
+        action: "Open Folder in Explorer",
+        target: folderRes.path || userCommand.slice(0, 48),
+        status: folderRes.opened ? "completed" : "blocked",
+        detail: folderRes.message
+      });
+    } else {
+      const files = getCachedFileIndex(settings.allowedFolders, settings.pausedIndexing, 300);
+      matchedFiles = searchIndexedFiles(files, userCommand).slice(0, 8);
+      contextParts.push(
+        matchedFiles.length > 0 ? `PERMITTED FILE SEARCH MATCHES (${matchedFiles.length}):
 ` + matchedFiles.map(
-        (m) => `- ${m.name} (${m.category}, ${formatBytes(m.sizeBytes)}, modified ${m.modifiedAt}) at ${m.relativePath}${m.matchReason ? ` [${m.matchReason}]` : ""}${m.previewText ? ` | snippet: ${m.previewText.slice(0, 140).replace(/\s+/g, " ")}` : ""}`
-      ).join("\n") : `PERMITTED FILE SEARCH: No matching files found across ${settings.allowedFolders.length} permitted folder(s). Total indexed files: ${files.length}.`
-    );
-    appendActionLog(db, {
-      agent: "file",
-      action: "Search Permitted Files",
-      target: userCommand.slice(0, 48),
-      status: "completed",
-      detail: `${matchedFiles.length} matching file(s)`
-    });
+          (m) => `- ${m.name} (${m.category}, ${formatBytes(m.sizeBytes)}, modified ${m.modifiedAt}) at ${m.relativePath}${m.matchReason ? ` [${m.matchReason}]` : ""}${m.previewText ? ` | snippet: ${m.previewText.slice(0, 140).replace(/\s+/g, " ")}` : ""}`
+        ).join("\n") : `PERMITTED FILE SEARCH: No matching files found across ${settings.allowedFolders.length} permitted folder(s). Total indexed files: ${files.length}.`
+      );
+      appendActionLog(db, {
+        agent: "file",
+        action: "Search Permitted Files",
+        target: userCommand.slice(0, 48),
+        status: "completed",
+        detail: `${matchedFiles.length} matching file(s)`
+      });
+    }
   }
-  if (parsed.category === "app_control") {
-    const appRes = await handleAppOrWindowCommand(userCommand, db.apps);
+  if (parsed.category === "app_control" || parsed.category === "phone_control") {
+    const appRes = await handleAppOrWindowCommand(userCommand, db.apps, settings.allowedFolders);
     appNotice = appRes.message;
     runningWindows = appRes.windows;
     if (appRes.launchedApp) {
@@ -3564,7 +4411,7 @@ ${webResults.slice(0, 6).map((r, i) => `${i + 1}. ${r.title} (${r.uri}): ${r.sni
   let firstTokenMs = 0;
   let finalText = "";
   let engineUsed = "local-core";
-  const isInstantDeterministicAction = parsed.category === "media_control" || parsed.category === "app_control" || parsed.category === "unit_convert" || parsed.category === "translate" || parsed.category === "read_aloud" || Boolean(memorySaved) || tryConvertUnits(userCommand) !== null || tryTranslateCommand(userCommand) !== null || tryEvaluateSafeMath(userCommand) !== null;
+  const isInstantDeterministicAction = parsed.category === "media_control" || parsed.category === "app_control" || parsed.category === "phone_control" || parsed.category === "unit_convert" || parsed.category === "translate" || parsed.category === "read_aloud" || Boolean(appNotice) || Boolean(memorySaved) || tryConvertUnits(userCommand) !== null || tryTranslateCommand(userCommand) !== null || tryEvaluateSafeMath(userCommand) !== null;
   const memorySummary = db.memory.filter((m) => m.approved).slice(0, 10).map((m) => `- ${m.key}: ${m.value}`).join("\n");
   const systemInstruction = `You are F.R.I.D.A.Y. (Fully Responsive Intelligent Digital Assistant for You), a fast, precise desktop AI companion speaking to ${settings.userName}.
 Respond concisely in clear natural language suitable for both screen reading and spoken voice output.
@@ -4096,16 +4943,34 @@ async function synthesizeSpeechWav(text, voiceName) {
   }
   return { audioBase64: base64Audio, localFallback: false };
 }
-async function transcribeAudioBase64(base64Data, mimeType) {
+async function transcribeAudioBase64(base64Data, mimeType, language = "en-US") {
+  const cleanMime = (mimeType || "audio/webm").split(";")[0].trim() || "audio/webm";
+  if (process.platform === "win32" && cleanMime.includes("wav")) {
+    const winStt = await recognizeWindowsSpeechFromWav(base64Data, language);
+    if (winStt.ok && winStt.text) {
+      return {
+        text: winStt.text,
+        localFallback: false,
+        engine: winStt.engine
+      };
+    }
+    if (!hasValidGeminiKey()) {
+      return {
+        text: "",
+        localFallback: true,
+        engine: winStt.engine,
+        reason: winStt.error || "Windows Speech Recognition could not detect clear speech or lacks the requested language pack."
+      };
+    }
+  }
   if (!hasValidGeminiKey()) {
     return {
       text: "",
       localFallback: true,
-      reason: "Use the primary Microphone button (Web Speech API) or text command bar in local mode without a paid cloud key."
+      reason: process.platform === "win32" ? "Configure Windows Speech Recognition or GEMINI_API_KEY in .env for audio transcription." : "Audio transcription without a browser Web Speech engine requires GEMINI_API_KEY in .env or Windows Desktop Speech Recognition."
     };
   }
   const ai = getGeminiClient();
-  const cleanMime = (mimeType || "audio/webm").split(";")[0].trim() || "audio/webm";
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3.5-transcribe",
@@ -4135,9 +5000,9 @@ async function transcribeAudioBase64(base64Data, mimeType) {
 }
 
 // server/diagnosticsService.ts
-import fs3 from "fs";
-import os3 from "os";
-import path3 from "path";
+import fs4 from "fs";
+import os4 from "os";
+import path4 from "path";
 import si2 from "systeminformation";
 
 // src/core/diagnostics.ts
@@ -4277,6 +5142,9 @@ function sanitizeSettingsPatch(input, current) {
   if (typeof raw.language === "string" && /^[a-z]{2}(-[A-Z]{2})?$/.test(raw.language)) {
     next.language = raw.language;
   }
+  if (typeof raw.audioInputDeviceId === "string") {
+    next.audioInputDeviceId = raw.audioInputDeviceId.trim().slice(0, 200);
+  }
   if (typeof raw.continuousListening === "boolean") next.continuousListening = raw.continuousListening;
   if (typeof raw.wakeWordEnabled === "boolean") next.wakeWordEnabled = raw.wakeWordEnabled;
   if (typeof raw.autoSpeakReplies === "boolean") next.autoSpeakReplies = raw.autoSpeakReplies;
@@ -4356,8 +5224,8 @@ async function getWindowsCompatibilityAudit() {
     si2.networkInterfaces().catch(() => [])
   ]);
   const isWindows = process.platform === "win32";
-  const ramTotalBytes = mem?.total ?? os3.totalmem();
-  const ramAvailableBytes = mem?.available ?? os3.freemem();
+  const ramTotalBytes = mem?.total ?? os4.totalmem();
+  const ramAvailableBytes = mem?.available ?? os4.freemem();
   const ramTotalGb = Number((ramTotalBytes / 1024 ** 3).toFixed(1));
   const ramAvailableGb = Number((ramAvailableBytes / 1024 ** 3).toFixed(1));
   const primaryDisk = fsSizes.find((d) => d.mount === "/" || d.mount.toUpperCase().startsWith("C:")) ?? fsSizes[0];
@@ -4370,15 +5238,15 @@ async function getWindowsCompatibilityAudit() {
   const gpuVendor = gpuCtrl?.vendor?.trim() || "Unavailable";
   const gpuVramMb = typeof gpuCtrl?.vram === "number" && gpuCtrl.vram > 0 ? gpuCtrl.vram : null;
   const gpuDriver = gpuCtrl?.driverVersion?.trim() || null;
-  const cpuCores = cpu?.cores ?? os3.cpus().length;
-  const cpuModel = cpu ? `${cpu.manufacturer} ${cpu.brand}`.trim() : os3.cpus()[0]?.model ?? "Unavailable";
+  const cpuCores = cpu?.cores ?? os4.cpus().length;
+  const cpuModel = cpu ? `${cpu.manufacturer} ${cpu.brand}`.trim() : os4.cpus()[0]?.model ?? "Unavailable";
   const cpuSpeedGhz = typeof cpu?.speed === "number" && cpu.speed > 0 ? Number(cpu.speed.toFixed(2)) : null;
-  const electronMainPath = path3.resolve(process.cwd(), "electron/main.ts");
-  const electronPreloadPath = path3.resolve(process.cwd(), "electron/preload.ts");
-  const electronBuilderPath = path3.resolve(process.cwd(), "electron-builder.yml");
-  const mainSource = fs3.existsSync(electronMainPath) ? fs3.readFileSync(electronMainPath, "utf-8") : "";
-  const preloadSource = fs3.existsSync(electronPreloadPath) ? fs3.readFileSync(electronPreloadPath, "utf-8") : "";
-  const electronConfigured = Boolean(mainSource) && Boolean(preloadSource) && fs3.existsSync(electronBuilderPath);
+  const electronMainPath = path4.resolve(process.cwd(), "electron/main.ts");
+  const electronPreloadPath = path4.resolve(process.cwd(), "electron/preload.ts");
+  const electronBuilderPath = path4.resolve(process.cwd(), "electron-builder.yml");
+  const mainSource = fs4.existsSync(electronMainPath) ? fs4.readFileSync(electronMainPath, "utf-8") : "";
+  const preloadSource = fs4.existsSync(electronPreloadPath) ? fs4.readFileSync(electronPreloadPath, "utf-8") : "";
+  const electronConfigured = Boolean(mainSource) && Boolean(preloadSource) && fs4.existsSync(electronBuilderPath);
   const db = loadDb();
   const activeNet = Array.isArray(netIfaces) ? netIfaces.some((n) => !n.internal && n.operstate === "up") : false;
   const majorNode = Number(process.versions.node.split(".")[0] || 0);
@@ -4387,7 +5255,7 @@ async function getWindowsCompatibilityAudit() {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     osName: osInfo?.distro || osInfo?.platform || process.platform,
     osEdition: isWindows ? osInfo?.release || "Windows Desktop" : "Container / Non-Windows Host",
-    osVersion: osInfo?.release || os3.release(),
+    osVersion: osInfo?.release || os4.release(),
     platform: process.platform,
     arch: process.arch,
     isWindows,
@@ -4405,7 +5273,7 @@ async function getWindowsCompatibilityAudit() {
     storageTotalGb,
     storageFreeGb,
     storageType,
-    networkAvailable: activeNet || Object.keys(os3.networkInterfaces()).length > 0,
+    networkAvailable: activeNet || Object.keys(os4.networkInterfaces()).length > 0,
     hasApiKey: hasValidGeminiKey(),
     electronConfigured,
     securityPosture: {
@@ -4612,7 +5480,7 @@ async function runSafeDiagnosticsSuite() {
       const unixBlocked = !isPathPermitted("/etc/passwd", db.settings.allowedFolders);
       const winBlocked = !isPathPermitted("C:\\Windows\\System32\\cmd.exe", db.settings.allowedFolders);
       const traversalBlocked = !isPathPermitted(
-        path3.resolve(process.cwd(), "../outside-sandbox-check.txt"),
+        path4.resolve(process.cwd(), "../outside-sandbox-check.txt"),
         db.settings.allowedFolders
       );
       if (unixBlocked && winBlocked && traversalBlocked) {
@@ -4680,6 +5548,29 @@ async function runSafeDiagnosticsSuite() {
       };
     }
   );
+  await runCheck(
+    "voice-speech-bridge",
+    "Voice & Audio",
+    "Windows Native Speech Recognition & SAPI TTS Readiness",
+    "Inspect Windows System.Speech offline recognizers, SAPI voices, and mic privacy registry",
+    async () => {
+      const voiceCaps = await getWindowsSpeechCapabilities();
+      if (audit.isWindows) {
+        const denied = voiceCaps.micAccessStatus === "denied" || voiceCaps.micAccessStatus === "desktop-apps-denied";
+        return {
+          actual: `Recognizers: [${voiceCaps.recognizers.join(", ") || "None"}] \xB7 SAPI Voices: ${voiceCaps.ttsVoices.length} \xB7 Mic Privacy: ${voiceCaps.micAccessStatus}`,
+          status: !denied && (voiceCaps.offlineSttReady || voiceCaps.ttsVoices.length > 0) ? "pass" : "warning",
+          error: denied ? "Windows Microphone Privacy denies desktop apps." : void 0,
+          recommendation: denied ? 'Enable Settings -> Privacy & security -> Microphone -> "Let desktop apps access your microphone".' : voiceCaps.offlineSttReady ? void 0 : "Install a Windows Speech language pack or configure GEMINI_API_KEY in .env."
+        };
+      }
+      return {
+        actual: `Linux container host \u2014 Windows System.Speech & SAPI TTS unavailable (${hasValidGeminiKey() ? "Gemini cloud fallback ready" : "Browser Web Speech / Gemini optional"})`,
+        status: "unavailable",
+        recommendation: "Run on Windows 10/11 desktop for native offline System.Speech recognition & SAPI TTS."
+      };
+    }
+  );
   const report = {
     generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
     environment: `${audit.osName} (${audit.platform}/${audit.arch})`,
@@ -4691,8 +5582,8 @@ async function runSafeDiagnosticsSuite() {
 }
 function writeTestReportFile(report) {
   const md = formatTestReportMarkdown(report);
-  const target = path3.resolve(process.cwd(), "TEST_REPORT.md");
-  fs3.writeFileSync(target, md, "utf-8");
+  const target = path4.resolve(process.cwd(), "TEST_REPORT.md");
+  fs4.writeFileSync(target, md, "utf-8");
   return target;
 }
 
@@ -4869,18 +5760,18 @@ async function startServer() {
       const { filePath } = req.body;
       if (!filePath) return res.status(400).json({ error: "filePath is required" });
       const db = loadDb();
-      const resolved = path4.resolve(filePath);
+      const resolved = path5.resolve(filePath);
       if (!isPathPermitted(resolved, db.settings.allowedFolders)) {
         return res.status(403).json({ error: "Access denied: file is outside user-permitted folders." });
       }
-      if (!fs4.existsSync(resolved)) {
+      if (!fs5.existsSync(resolved)) {
         return res.status(404).json({ error: "File not found." });
       }
       const result = await openLocalPathInDefaultApp(resolved);
       appendActionLog(db, {
         agent: "file",
         action: "Open Local File in Default App",
-        target: path4.basename(resolved),
+        target: path5.basename(resolved),
         status: result.opened ? "completed" : "blocked",
         detail: result.detail
       });
@@ -4894,11 +5785,11 @@ async function startServer() {
       const rawPath = String(req.query.path ?? "");
       if (!rawPath) return res.status(400).json({ error: "path query parameter is required" });
       const db = loadDb();
-      const resolved = path4.resolve(rawPath);
+      const resolved = path5.resolve(rawPath);
       if (!isPathPermitted(resolved, db.settings.allowedFolders)) {
         return res.status(403).json({ error: "Access denied: file is outside permitted directories." });
       }
-      if (!fs4.existsSync(resolved) || !fs4.statSync(resolved).isFile()) {
+      if (!fs5.existsSync(resolved) || !fs5.statSync(resolved).isFile()) {
         return res.status(404).json({ error: "File not found." });
       }
       res.sendFile(resolved);
@@ -4913,19 +5804,19 @@ async function startServer() {
         return res.status(400).json({ error: "folderPath is required" });
       }
       const db = loadDb();
-      const resolved = path4.resolve(folderPath);
+      const resolved = path5.resolve(folderPath);
       if (!isPathPermitted(resolved, db.settings.allowedFolders)) {
         return res.status(403).json({ error: "Target folder is outside permitted workspace directories." });
       }
       if (!confirmCreate) {
         return res.status(400).json({ error: "Explicit confirmation is required to create a folder." });
       }
-      fs4.mkdirSync(resolved, { recursive: true });
+      fs5.mkdirSync(resolved, { recursive: true });
       invalidateFileIndexCache();
       appendActionLog(db, {
         agent: "file",
         action: "Create Directory",
-        target: path4.basename(resolved),
+        target: path5.basename(resolved),
         status: "completed"
       });
       res.json({ created: true, path: resolved });
@@ -5061,11 +5952,11 @@ async function startServer() {
         const match = summary.match(/\bcreate\s+(?:a\s+)?(?:new\s+)?folder\s+([a-zA-Z0-9._-]+)/i);
         const folderName = match?.[1]?.replace(/[^a-zA-Z0-9._-]/g, "_") || "NewFolder";
         const base = db.settings.allowedFolders[0] || process.cwd();
-        const target = path4.resolve(base, folderName);
+        const target = path5.resolve(base, folderName);
         if (!isPathPermitted(target, db.settings.allowedFolders)) {
           return res.status(403).json({ error: "Target folder outside permitted workspace." });
         }
-        fs4.mkdirSync(target, { recursive: true });
+        fs5.mkdirSync(target, { recursive: true });
         invalidateFileIndexCache();
         appendActionLog(db, {
           agent: "file",
@@ -5182,11 +6073,47 @@ async function startServer() {
   });
   app.post("/api/voice/transcribe", async (req, res) => {
     try {
-      const { base64Data, mimeType } = req.body;
+      const { base64Data, mimeType, language } = req.body;
       if (!base64Data) {
         return res.status(400).json({ error: "base64Data is required" });
       }
-      const result = await transcribeAudioBase64(base64Data, mimeType || "audio/webm");
+      const result = await transcribeAudioBase64(
+        base64Data,
+        mimeType || "audio/webm",
+        language || "en-US"
+      );
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  app.get("/api/diagnostics/voice", async (_req, res) => {
+    try {
+      const caps = await getWindowsSpeechCapabilities();
+      res.json({
+        ...caps,
+        geminiSpeechAvailable: hasValidGeminiKey()
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/apps/open-folder", async (req, res) => {
+    try {
+      const { folder } = req.body;
+      if (!folder) return res.status(400).json({ error: "folder is required" });
+      const db = loadDb();
+      const result = await openWindowsFolder(folder, db.settings.allowedFolders);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/apps/open-website", async (req, res) => {
+    try {
+      const { url, browser } = req.body;
+      if (!url) return res.status(400).json({ error: "url is required" });
+      const result = await openWindowsWebsite(url, browser);
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -5427,10 +6354,10 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = process.env.FRIDAY_DIST_DIR ? path4.resolve(process.env.FRIDAY_DIST_DIR) : path4.resolve(process.cwd(), "dist");
+    const distPath = process.env.FRIDAY_DIST_DIR ? path5.resolve(process.env.FRIDAY_DIST_DIR) : path5.resolve(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (_req, res) => {
-      res.sendFile(path4.join(distPath, "index.html"));
+      res.sendFile(path5.join(distPath, "index.html"));
     });
   }
   app.listen(PORT, "0.0.0.0", () => {

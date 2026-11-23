@@ -74,7 +74,9 @@ const PHONE_CONTROL_PATTERNS = [
 ];
 
 const APP_PATTERNS = [
-  /\b(open|launch|start|switch\s+to|focus|minimize|maximize)\s+(google\s+chrome|chrome|edge|vs\s*code|vscode|visual\s+studio|whatsapp|android\s+studio|spotify|terminal|explorer|notepad|calculator|browser|music\s+player|vlc)\b/i,
+  /\b(open|launch|start|switch\s+to|focus|minimize|maximize)\s+(?:the\s+)?(google\s+chrome|chrome|microsoft\s+edge|edge|msedge|vs\s*code|vscode|visual\s+studio(?:\s+code)?|whatsapp|android\s+studio|spotify|windows\s+terminal|terminal|powershell|command\s+prompt|cmd|file\s+explorer|explorer|notepad|calculator|calc|windows\s+settings|task\s+manager|taskmgr|paint|mspaint|browser|music\s+player|vlc)\b/i,
+  /\b(open|launch|visit)\s+(?:website\s+)?(?:https?:\/\/\S+|[a-z0-9-]+\.(?:com|org|net|io|dev|in|edu|gov|ai)(?:\/\S*)?)\b/i,
+  /\b(open|launch|start)\s+(?:the\s+)?(?:google|wikipedia)\b/i,
   /\b(open\s+the\s+app(lication)?\s+i\s+use\s+for\s+(coding|browsing|music|notes|messaging|files))\b/i,
   /\b(show\s+me\s+(the\s+)?applications\s+currently\s+running|running\s+windows|installed\s+apps)\b/i,
 ];
@@ -260,19 +262,6 @@ export function analyzeUserCommand(command: string): ParsedIntent {
     };
   }
 
-  if (PHONE_CONTROL_PATTERNS.some((rx) => rx.test(trimmed))) {
-    return {
-      category: 'phone_control',
-      agents: ['core', 'application', 'system'],
-      requiresConfirmation: false,
-      extractedTarget: trimmed,
-      steps: [
-        { id: 'step-1', agent: 'core', title: 'Parse Android/device system control intent', status: 'completed' },
-        { id: 'step-2', agent: 'application', title: 'Dispatch device bridge or app action', status: 'running' },
-      ],
-    };
-  }
-
   if (APP_PATTERNS.some((rx) => rx.test(trimmed))) {
     return {
       category: 'app_control',
@@ -280,8 +269,21 @@ export function analyzeUserCommand(command: string): ParsedIntent {
       requiresConfirmation: false,
       extractedTarget: trimmed,
       steps: [
-        { id: 'step-1', agent: 'core', title: 'Identify target desktop application or window', status: 'completed' },
-        { id: 'step-2', agent: 'application', title: 'Resolve executable or active window & dispatch action', status: 'running' },
+        { id: 'step-1', agent: 'core', title: 'Identify target desktop application, website, or window', status: 'completed' },
+        { id: 'step-2', agent: 'application', title: 'Resolve executable, URL, or active window & dispatch action', status: 'running' },
+      ],
+    };
+  }
+
+  if (PHONE_CONTROL_PATTERNS.some((rx) => rx.test(trimmed))) {
+    return {
+      category: 'phone_control',
+      agents: ['core', 'application', 'system'],
+      requiresConfirmation: false,
+      extractedTarget: trimmed,
+      steps: [
+        { id: 'step-1', agent: 'core', title: 'Parse device/platform app or control intent', status: 'completed' },
+        { id: 'step-2', agent: 'application', title: 'Dispatch device bridge or desktop app/site action', status: 'running' },
       ],
     };
   }

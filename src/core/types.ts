@@ -295,6 +295,7 @@ export interface AssistantSettings {
   speakingSpeed: number;
   speakingPitch: number;
   language: string;
+  audioInputDeviceId?: string;
   continuousListening: boolean;
   wakeWordEnabled: boolean;
   autoSpeakReplies: boolean;
@@ -411,4 +412,68 @@ export interface DiagnosticsReportPayload {
   audit: HardwareCompatibilityAudit;
   checks: DiagnosticCheckItem[];
 }
+
+export interface DesktopVoiceCapabilities {
+  platform: string;
+  offlineSttReady: boolean;
+  recognizers: string[];
+  ttsVoices: string[];
+  micAccessStatus: string;
+}
+
+export interface DesktopSpeechRecognitionResult {
+  ok: boolean;
+  text: string;
+  engine: string;
+  recognizerCulture?: string;
+  error?: string;
+  errorCode?: string;
+}
+
+export interface DesktopAppLaunchResult {
+  launched: boolean;
+  alreadyRunning?: boolean;
+  resolvedTarget?: string;
+  message: string;
+  errorCode?: string;
+}
+
+export interface FridayDesktopBridge {
+  hideToDesktop: () => Promise<{ hidden: boolean }>;
+  restoreWindow: () => Promise<{ visible: boolean }>;
+  minimizeWindow?: () => Promise<{ minimized: boolean }>;
+  toggleMaximize?: () => Promise<{ maximized: boolean }>;
+  setFullscreen?: (enabled: boolean) => Promise<unknown>;
+  setFloatingMode?: (enabled: boolean) => Promise<unknown>;
+  setStartupLaunch?: (enabled: boolean) => Promise<unknown>;
+  updateReopenShortcut?: (shortcut: string) => Promise<{ registered: boolean; shortcut: string }>;
+  getDesktopState?: () => Promise<{
+    fullscreen: boolean;
+    maximized: boolean;
+    floatingMode: boolean;
+    reopenShortcut: string;
+    openAtLogin: boolean;
+  }>;
+  quitApp?: () => Promise<{ quitting: boolean }>;
+  getVoiceCapabilities?: () => Promise<DesktopVoiceCapabilities>;
+  requestMicPermission?: () => Promise<{ granted: boolean; status: string; detail: string }>;
+  recognizeSpeechWav?: (payload: {
+    wavBase64: string;
+    language: string;
+  }) => Promise<DesktopSpeechRecognitionResult>;
+  speakWindowsTts?: (payload: {
+    text: string;
+    language: string;
+    gender: string;
+    rate: number;
+    pitch: number;
+  }) => Promise<{ ok: boolean; detail?: string }>;
+  stopWindowsTts?: () => Promise<{ stopped: boolean }>;
+  launchApp?: (target: string) => Promise<DesktopAppLaunchResult>;
+  openWebsite?: (urlOrAlias: string) => Promise<{ opened: boolean; url?: string; message: string }>;
+  openFolder?: (folderNameOrPath: string) => Promise<{ opened: boolean; path?: string; message: string }>;
+  getWindowsDiagnostics?: () => Promise<Record<string, unknown>>;
+  isDesktopShell: boolean;
+}
+
 
