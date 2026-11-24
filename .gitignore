@@ -1,8 +1,14 @@
-node_modules/
+﻿node_modules/
 build/
 dist/
+dist-electron/
+release/
+release*/
 coverage/
+.friday-data/
+.friday-backup/
 .DS_Store
 *.log
 .env*
 !.env.example
+t SUCCESS*

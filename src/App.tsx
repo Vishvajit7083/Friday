@@ -14,18 +14,6 @@ import {
   type LocalClientState,
 } from './core/localClientEngine';
 import {
-  beginSpeechEpoch,
-  createSpeechEpochTracker,
-  invalidateSpeechEpoch,
-  isEchoOfAssistantSpeech,
-  isSpeechTokenValid,
-  resolvePostInterruptState,
-  shouldIgnoreDuplicateSubmission,
-  type SpeechEpochTracker,
-  type SubmissionDedupState,
-} from './core/voiceStateMachine';
-import { getNewSevereWeatherAlertKey, type TemperatureUnit } from './core/weatherUtils';
-import {
   classifyMicrophoneError,
   computeRmsLevel,
   encodeMonoWav16kBase64,
@@ -57,7 +45,6 @@ import { LeftSidebar } from './components/LeftSidebar';
 import { TopHudBar } from './components/TopHudBar';
 import { BottomQuickActions } from './components/BottomQuickActions';
 import { CommandWorkspace } from './components/CommandWorkspace';
-import { WeatherDetailModal } from './components/WeatherDetailModal';
 import {
   AIChatFullView,
   SystemMonitorFullView,
@@ -137,9 +124,6 @@ const DEFAULT_SETTINGS: AssistantSettings = {
   themeAccent: 'violet',
   animationQuality: 'high',
   weatherLocation: 'Kolhapur, MH',
-  temperatureUnit: 'celsius',
-  favoriteWeatherLocations: ['Kolhapur, MH'],
-  weatherNotificationsEnabled: true,
   allowedFolders: ['.'],
   pausedIndexing: false,
   screenCaptureConsent: false,
@@ -190,8 +174,6 @@ export default function App() {
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherError, setWeatherError] = useState<string | null>(null);
-  const [loadingWeather, setLoadingWeather] = useState(false);
-  const [weatherModalOpen, setWeatherModalOpen] = useState(false);
   const [activeAgents, setActiveAgents] = useState<AgentId[]>([]);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [launchNotice, setLaunchNotice] = useState<string | null>(null);
@@ -232,10 +214,6 @@ export default function App() {
   const wavFinishingRef = useRef<boolean>(false);
   const speechQueueRef = useRef<string[]>([]);
   const speechActiveRef = useRef<boolean>(false);
-  const speechTrackerRef = useRef<SpeechEpochTracker>(createSpeechEpochTracker());
-  const isSpeakingRef = useRef<boolean>(false);
-  const lastSubmissionRef = useRef<SubmissionDedupState | null>(null);
-  const lastWeatherAlertKeyRef = useRef<string | null>(null);
 
   const refreshAudioInputDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -325,7 +303,6 @@ export default function App() {
         requiresPaidKey: data.requiresPaidKey ?? false,
         latencyMs: data.latencyMs,
         error: data.error,
-        optionalProviders: data.optionalProviders,
       });
     } catch {
       backendAvailableRef.current = false;
@@ -362,11 +339,9 @@ export default function App() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       backendAvailableRef.current = true;
-      if (data.settings) setSettings({ ...DEFAULT_SETTINGS, speakingPitch: 1.0, ...data.settings });
+      if (data.settings) setSettings({ speakingPitch: 1.0, ...data.settings });
       if (data.calendar) setCalendar(data.calendar);
       if (data.memory) setMemory(data.memory);
-      if (Array.isArray(data.notes)) setNotes(data.notes);
-      if (Array.isArray(data.todos)) setTodos(data.todos);
       if (data.chatHistory) setMessages(data.chatHistory);
       if (data.actionLogs) setActionLogs(data.actionLogs);
       if (data.workflows) setWorkflows(data.workflows);
@@ -422,91 +397,65 @@ export default function App() {
     };
   }, []);
 
-  const notifySevereWeatherIfNeeded = useCallback(
-    (data: WeatherData) => {
-      if (settings.weatherNotificationsEnabled === false) return;
-      const key = getNewSevereWeatherAlertKey(data.alerts);
-      if (!key || lastWeatherAlertKeyRef.current === key) return;
-      lastWeatherAlertKeyRef.current = key;
-      const topAlert = data.alerts?.[0];
-      if (topAlert && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        try {
-          new Notification(`Weather Alert · ${data.location}`, {
-            body: `${topAlert.title}: ${topAlert.description}`,
-          });
-        } catch {
-          // Notification unavailable in headless/sandbox context
-        }
-      }
-    },
-    [settings.weatherNotificationsEnabled]
-  );
-
-  const fetchWeatherData = useCallback(
-    async (opts?: { location?: string; lat?: number; lon?: number; label?: string; force?: boolean }) => {
-      setLoadingWeather(true);
-      setWeatherError(null);
-      const targetLoc = opts?.location || settings.weatherLocation;
-      try {
-        if (backendAvailableRef.current && !isAndroidHost()) {
-          try {
-            const params = new URLSearchParams();
-            if (typeof opts?.lat === 'number' && typeof opts?.lon === 'number') {
-              params.set('lat', String(opts.lat));
-              params.set('lon', String(opts.lon));
-              if (opts.label) params.set('label', opts.label);
-            } else {
-              params.set('location', targetLoc);
-            }
-            if (opts?.force) params.set('refresh', '1');
-            const res = await fetch(`/api/weather?${params.toString()}`);
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-            setWeather(data as WeatherData);
-            notifySevereWeatherIfNeeded(data as WeatherData);
-            return data as WeatherData;
-          } catch (err) {
-            // Fall through to client Open-Meteo lookup only when location query provided
-            if (typeof opts?.lat === 'number') {
-              setWeatherError((err as Error).message);
-              return null;
-            }
-          }
-        }
-        const directWeather = await fetchOpenMeteoClientWeather(targetLoc);
-        if (directWeather) {
-          setWeather(directWeather);
-          notifySevereWeatherIfNeeded(directWeather);
-          return directWeather;
-        }
-        setWeatherError(`Unable to fetch live weather for "${targetLoc}".`);
-        return null;
-      } finally {
-        setLoadingWeather(false);
-      }
-    },
-    [notifySevereWeatherIfNeeded, settings.weatherLocation]
-  );
-
-  // Live weather polling & periodic 15-minute refresh
+  // Live weather polling (falls back to CORS-safe Open-Meteo when running offline/APK)
   useEffect(() => {
-    void fetchWeatherData({ location: settings.weatherLocation });
-    const timer = window.setInterval(() => {
-      void fetchWeatherData({ location: settings.weatherLocation });
-    }, 15 * 60_000);
-    return () => window.clearInterval(timer);
-  }, [fetchWeatherData, settings.weatherLocation]);
+    let mounted = true;
+    const loadWeather = async () => {
+      setWeatherError(null);
+      if (backendAvailableRef.current && !isAndroidHost()) {
+        try {
+          const res = await fetch(`/api/weather?location=${encodeURIComponent(settings.weatherLocation)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (mounted) setWeather(data);
+            return;
+          }
+        } catch {
+          // Fall through to client Open-Meteo lookup
+        }
+      }
+      const directWeather = await fetchOpenMeteoClientWeather(settings.weatherLocation);
+      if (!mounted) return;
+      if (directWeather) {
+        setWeather(directWeather);
+      } else {
+        setWeatherError('Weather unavailable offline');
+      }
+    };
+    loadWeather();
+    return () => {
+      mounted = false;
+    };
+  }, [settings.weatherLocation]);
+
+  // ESC key hides F.R.I.D.A.Y. to desktop, Ctrl+Shift+Space / Ctrl+Space restores
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isInput =
+        target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT';
+
+      if (e.key === 'Escape' && !isInput) {
+        e.preventDefault();
+        setHiddenToDesktop((prev) => !prev);
+        window.fridayDesktop?.hideToDesktop().catch(() => {});
+      } else if (e.ctrlKey && e.code === 'Space') {
+        e.preventDefault();
+        setHiddenToDesktop(false);
+        window.fridayDesktop?.restoreWindow().catch(() => {});
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const stopSpeaking = useCallback(() => {
-    speechTrackerRef.current = invalidateSpeechEpoch(speechTrackerRef.current);
     speechQueueRef.current = [];
     speechActiveRef.current = false;
-    isSpeakingRef.current = false;
     window.fridayAndroid?.stopSpeaking?.();
     window.fridayDesktop?.stopWindowsTts?.().catch(() => {});
     if (audioElRef.current) {
       audioElRef.current.pause();
-      audioElRef.current.src = '';
       audioElRef.current = null;
     }
     if ('speechSynthesis' in window) {
@@ -517,110 +466,85 @@ export default function App() {
     setVoiceState((curr) => (curr === 'speaking' ? 'standby' : curr));
   }, []);
 
-  // ESC key hides F.R.I.D.A.Y. to desktop (and stops speech), Ctrl+Space restores; desktop IPC stop-speech & pagehide clean up
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const isInput =
-        target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT';
-
-      if (e.key === 'Escape' && !isInput) {
-        e.preventDefault();
-        setHiddenToDesktop((prev) => {
-          const next = !prev;
-          if (next) stopSpeaking();
-          return next;
-        });
-        window.fridayDesktop?.hideToDesktop().catch(() => {});
-      } else if (e.ctrlKey && e.code === 'Space') {
-        e.preventDefault();
-        setHiddenToDesktop(false);
-        window.fridayDesktop?.restoreWindow().catch(() => {});
-      }
-    };
-    const unsubStopSpeech = window.fridayDesktop?.onStopSpeech?.(() => {
-      stopSpeaking();
-    });
-    const onPageHide = () => {
-      stopSpeaking();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('pagehide', onPageHide);
-    window.addEventListener('beforeunload', onPageHide);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('pagehide', onPageHide);
-      window.removeEventListener('beforeunload', onPageHide);
-      unsubStopSpeech?.();
-    };
-  }, [stopSpeaking]);
-
-  const interruptAssistant = useCallback(
-    (transcript = 'Stopped speaking.') => {
-      abortRef.current?.abort();
-      stopSpeaking();
-      setActiveAgents([]);
-      setLiveTranscript(transcript);
-      setVoiceState('interrupted');
-      window.setTimeout(() => {
-        setVoiceState((curr) =>
-          curr === 'interrupted' ? resolvePostInterruptState(settings.continuousListening) : curr
-        );
-      }, 900);
-    },
-    [settings.continuousListening, stopSpeaking]
-  );
-
   const selectBestSpeechVoice = useCallback(
     (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null =>
       selectPreferredSpeechVoice(voices, settings.language, settings.voiceGender),
     [settings.language, settings.voiceGender]
   );
 
-  const pumpLocalSpeechQueue = useCallback(
-    (expectedToken?: number) => {
-      if (expectedToken !== undefined && !isSpeechTokenValid(speechTrackerRef.current, expectedToken)) {
-        return;
-      }
-      if (speechActiveRef.current) return;
-      const nextSentence = speechQueueRef.current.shift();
-      if (!nextSentence) {
-        speechActiveRef.current = false;
-        isSpeakingRef.current = false;
-        setIsSpeaking(false);
-        setAudioLevel(0);
-        setVoiceState((curr) => (curr === 'speaking' ? 'standby' : curr));
-        setLiveTranscript((curr) => (curr && curr.startsWith('Heard:') ? null : curr));
-        return;
-      }
+  const pumpLocalSpeechQueue = useCallback(() => {
+    if (speechActiveRef.current) return;
+    const nextSentence = speechQueueRef.current.shift();
+    if (!nextSentence) {
+      setIsSpeaking(false);
+      setAudioLevel(0);
+      setVoiceState((curr) => (curr === 'speaking' ? 'standby' : curr));
+      setLiveTranscript((curr) => (curr && curr.startsWith('Heard:') ? null : curr));
+      return;
+    }
 
-      const activeToken = speechTrackerRef.current.epoch;
+    if (window.fridayAndroid?.speak) {
+      speechActiveRef.current = true;
+      setIsSpeaking(true);
+      setVoiceState('speaking');
+      setAudioLevel(0.6);
+      window.fridayAndroid.speak(
+        nextSentence,
+        settings.language,
+        settings.voiceGender,
+        settings.speakingSpeed,
+        settings.speakingPitch ?? 1.0
+      );
+      return;
+    }
 
-      if (window.fridayAndroid?.speak) {
-        speechActiveRef.current = true;
-        isSpeakingRef.current = true;
-        setIsSpeaking(true);
-        setVoiceState('speaking');
-        setAudioLevel(0.6);
-        window.fridayAndroid.speak(
-          nextSentence,
-          settings.language,
-          settings.voiceGender,
-          settings.speakingSpeed,
-          settings.speakingPitch ?? 1.0
-        );
-        return;
-      }
+    const voices = 'speechSynthesis' in window ? window.speechSynthesis.getVoices() : [];
+    const matchedVoice = selectBestSpeechVoice(voices);
 
-      const voices = 'speechSynthesis' in window ? window.speechSynthesis.getVoices() : [];
-      const matchedVoice = selectBestSpeechVoice(voices);
+    if ((!('speechSynthesis' in window) || voices.length === 0) && window.fridayDesktop?.speakWindowsTts) {
+      speechActiveRef.current = true;
+      setIsSpeaking(true);
+      setVoiceState('speaking');
+      setAudioLevel(0.6);
+      window.fridayDesktop
+        .speakWindowsTts({
+          text: nextSentence,
+          language: settings.language,
+          gender: settings.voiceGender,
+          rate: settings.speakingSpeed,
+          pitch: settings.speakingPitch ?? 1.0,
+        })
+        .catch(() => {})
+        .finally(() => {
+          speechActiveRef.current = false;
+          setTimeout(() => {
+            pumpLocalSpeechQueue();
+          }, 60);
+        });
+      return;
+    }
 
-      if ((!('speechSynthesis' in window) || voices.length === 0) && window.fridayDesktop?.speakWindowsTts) {
-        speechActiveRef.current = true;
-        isSpeakingRef.current = true;
-        setIsSpeaking(true);
-        setVoiceState('speaking');
-        setAudioLevel(0.6);
+    if (typeof window.speechSynthesis === 'undefined') return;
+    speechActiveRef.current = true;
+    setIsSpeaking(true);
+    setVoiceState('speaking');
+    setAudioLevel(0.6);
+
+    const utter = new SpeechSynthesisUtterance(nextSentence);
+    utter.rate = settings.speakingSpeed;
+    utter.pitch = settings.speakingPitch ?? 1.0;
+    utter.lang = settings.language;
+    if (matchedVoice) utter.voice = matchedVoice;
+
+    utter.onend = () => {
+      speechActiveRef.current = false;
+      setTimeout(() => {
+        pumpLocalSpeechQueue();
+      }, 85);
+    };
+    utter.onerror = () => {
+      speechActiveRef.current = false;
+      if (window.fridayDesktop?.speakWindowsTts) {
         window.fridayDesktop
           .speakWindowsTts({
             text: nextSentence,
@@ -630,61 +554,16 @@ export default function App() {
             pitch: settings.speakingPitch ?? 1.0,
           })
           .catch(() => {})
-          .finally(() => {
-            speechActiveRef.current = false;
-            if (!isSpeechTokenValid(speechTrackerRef.current, activeToken)) return;
-            window.setTimeout(() => {
-              pumpLocalSpeechQueue(activeToken);
-            }, 60);
-          });
+          .finally(() => pumpLocalSpeechQueue());
         return;
       }
-
-      if (typeof window.speechSynthesis === 'undefined') return;
-      speechActiveRef.current = true;
-      isSpeakingRef.current = true;
-      setIsSpeaking(true);
-      setVoiceState('speaking');
-      setAudioLevel(0.6);
-
-      const utter = new SpeechSynthesisUtterance(nextSentence);
-      utter.rate = settings.speakingSpeed;
-      utter.pitch = settings.speakingPitch ?? 1.0;
-      utter.lang = settings.language;
-      if (matchedVoice) utter.voice = matchedVoice;
-
-      utter.onend = () => {
-        speechActiveRef.current = false;
-        if (!isSpeechTokenValid(speechTrackerRef.current, activeToken)) return;
-        window.setTimeout(() => {
-          pumpLocalSpeechQueue(activeToken);
-        }, 85);
-      };
-      utter.onerror = () => {
-        speechActiveRef.current = false;
-        if (!isSpeechTokenValid(speechTrackerRef.current, activeToken)) return;
-        if (window.fridayDesktop?.speakWindowsTts) {
-          window.fridayDesktop
-            .speakWindowsTts({
-              text: nextSentence,
-              language: settings.language,
-              gender: settings.voiceGender,
-              rate: settings.speakingSpeed,
-              pitch: settings.speakingPitch ?? 1.0,
-            })
-            .catch(() => {})
-            .finally(() => pumpLocalSpeechQueue(activeToken));
-          return;
-        }
-        pumpLocalSpeechQueue(activeToken);
-      };
-      window.speechSynthesis.speak(utter);
-    },
-    [selectBestSpeechVoice, settings.language, settings.speakingPitch, settings.speakingSpeed, settings.voiceGender]
-  );
+      pumpLocalSpeechQueue();
+    };
+    window.speechSynthesis.speak(utter);
+  }, [selectBestSpeechVoice, settings.language, settings.speakingPitch, settings.speakingSpeed, settings.voiceGender]);
 
   const enqueueLocalSpeech = useCallback(
-    (sentence: string, token?: number) => {
+    (sentence: string) => {
       const clean = sentence.replace(/[*_`#]/g, '').trim();
       if (!clean) return;
       if (
@@ -694,21 +573,8 @@ export default function App() {
       ) {
         return;
       }
-      if (token !== undefined && !isSpeechTokenValid(speechTrackerRef.current, token)) {
-        return;
-      }
-      if (token === undefined) {
-        const started = beginSpeechEpoch(speechTrackerRef.current, `stream-${Date.now()}`, clean);
-        speechTrackerRef.current = started.next;
-        token = started.token;
-      } else {
-        speechTrackerRef.current = {
-          ...speechTrackerRef.current,
-          speakingText: `${speechTrackerRef.current.speakingText} ${clean}`.trim(),
-        };
-      }
       speechQueueRef.current.push(clean);
-      pumpLocalSpeechQueue(token);
+      pumpLocalSpeechQueue();
     },
     [pumpLocalSpeechQueue]
   );
@@ -719,15 +585,12 @@ export default function App() {
       const cleanText = text.replace(/[*_`#]/g, '').trim();
       if (!cleanText) return;
 
-      const { next, token } = beginSpeechEpoch(speechTrackerRef.current, `tts-${Date.now()}`, cleanText);
-      speechTrackerRef.current = next;
-
       if (window.fridayAndroid?.speak) {
         const sentences = cleanText.match(/[^.!?\n]+[.!?\n]*/g) ?? [cleanText];
         for (const s of sentences) {
           if (s.trim()) speechQueueRef.current.push(s.trim());
         }
-        pumpLocalSpeechQueue(token);
+        pumpLocalSpeechQueue();
         return;
       }
 
@@ -740,12 +603,11 @@ export default function App() {
         for (const s of sentences) {
           if (s.trim()) speechQueueRef.current.push(s.trim());
         }
-        pumpLocalSpeechQueue(token);
+        pumpLocalSpeechQueue();
         return;
       }
 
       setVoiceState('speaking');
-      isSpeakingRef.current = true;
       setIsSpeaking(true);
       try {
         const res = await fetch('/api/voice/tts', {
@@ -753,26 +615,18 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: cleanText, voiceName: settings.voiceName }),
         });
-        if (!isSpeechTokenValid(speechTrackerRef.current, token)) return;
         const data = await res.json();
-        if (!isSpeechTokenValid(speechTrackerRef.current, token)) return;
         if (res.ok && data.audioBase64) {
           const audio = new Audio(`data:${data.mimeType || 'audio/wav'};base64,${data.audioBase64}`);
           audio.playbackRate = settings.speakingSpeed;
           audioElRef.current = audio;
           audio.onended = () => {
-            if (!isSpeechTokenValid(speechTrackerRef.current, token)) return;
-            isSpeakingRef.current = false;
             setIsSpeaking(false);
             setAudioLevel(0);
             setVoiceState('completed');
-            window.setTimeout(() => {
-              setVoiceState((curr) => (curr === 'completed' ? 'standby' : curr));
-            }, 1400);
+            setTimeout(() => setVoiceState('standby'), 1400);
           };
           audio.onerror = () => {
-            if (!isSpeechTokenValid(speechTrackerRef.current, token)) return;
-            isSpeakingRef.current = false;
             setIsSpeaking(false);
             setVoiceState('standby');
           };
@@ -783,11 +637,9 @@ export default function App() {
         // Fallback below
       }
 
-      if (!isSpeechTokenValid(speechTrackerRef.current, token)) return;
       if (typeof window.speechSynthesis !== 'undefined' || window.fridayDesktop?.speakWindowsTts) {
-        enqueueLocalSpeech(cleanText, token);
+        enqueueLocalSpeech(cleanText);
       } else {
-        isSpeakingRef.current = false;
         setIsSpeaking(false);
         setVoiceState('standby');
       }
@@ -803,21 +655,19 @@ export default function App() {
   );
 
   const handleSubmitCommand = useCallback(
-    async (command: string, options?: { fromVoice?: boolean; allowDuplicate?: boolean }): Promise<boolean> => {
+    async (command: string, options?: { fromVoice?: boolean }): Promise<boolean> => {
       const cleanCmd = command.trim();
       if (!cleanCmd) return false;
       const shouldSpeakReply = Boolean(options?.fromVoice || settings.autoSpeakReplies);
 
       if (isInterruptionCommand(cleanCmd)) {
-        interruptAssistant('Interrupted — standing by.');
+        abortRef.current?.abort();
+        stopSpeaking();
+        setActiveAgents([]);
+        setVoiceState('standby');
+        setLiveTranscript('Interrupted — standing by.');
         return false;
       }
-
-      const nowMs = Date.now();
-      if (!options?.allowDuplicate && shouldIgnoreDuplicateSubmission(lastSubmissionRef.current, cleanCmd, nowMs)) {
-        return false;
-      }
-      lastSubmissionRef.current = { lastText: cleanCmd, lastTimestampMs: nowMs };
 
       abortRef.current?.abort();
       stopSpeaking();
@@ -831,12 +681,8 @@ export default function App() {
       const controller = new AbortController();
       abortRef.current = controller;
 
-      const reqEpoch = beginSpeechEpoch(speechTrackerRef.current, `cmd-${nowMs}`, '');
-      speechTrackerRef.current = reqEpoch.next;
-      const streamSpeechToken = reqEpoch.token;
-
-      const tempUserId = `msg-temp-u-${nowMs}`;
-      const tempAssistantId = `msg-temp-a-${nowMs}`;
+      const tempUserId = `msg-temp-u-${Date.now()}`;
+      const tempAssistantId = `msg-temp-a-${Date.now()}`;
       const optimisticUser: ChatMessage = {
         id: tempUserId,
         role: 'user',
@@ -873,12 +719,12 @@ export default function App() {
         );
         setActiveAgents(result.activeAgents);
         if (result.speakText) {
-          void speakText(result.speakText);
+          speakText(result.speakText);
         } else if (shouldSpeakReply && result.assistantMessage.content) {
-          void speakText(result.assistantMessage.content);
+          speakText(result.assistantMessage.content);
         } else {
           setVoiceState('completed');
-          window.setTimeout(() => {
+          setTimeout(() => {
             setVoiceState((curr) => (curr === 'completed' ? 'standby' : curr));
             setActiveAgents([]);
           }, 1400);
@@ -953,11 +799,11 @@ export default function App() {
                 )
               );
 
-              if (shouldSpeakReply && isSpeechTokenValid(speechTrackerRef.current, streamSpeechToken)) {
+              if (shouldSpeakReply) {
                 speechBuffer += tok;
                 const match = speechBuffer.match(/^([\s\S]*?[.!?](?:\s+|$)|\S[\s\S]{18,}?\n)/);
                 if (match && match[1].trim().length >= 12) {
-                  enqueueLocalSpeech(match[1], streamSpeechToken);
+                  enqueueLocalSpeech(match[1]);
                   speechBuffer = speechBuffer.slice(match[1].length);
                 }
               }
@@ -975,18 +821,18 @@ export default function App() {
               );
               setActiveAgents(ev.activeAgents ?? ['core']);
 
-              if (finalAssistant.intent === 'read_aloud' && finalAssistant.content && !streamedAnyText) {
-                void speakText(finalAssistant.content);
-              } else if (shouldSpeakReply && isSpeechTokenValid(speechTrackerRef.current, streamSpeechToken)) {
+              if (finalAssistant.intent === 'read_aloud' && finalAssistant.content) {
+                speakText(finalAssistant.content);
+              } else if (shouldSpeakReply) {
                 if (speechBuffer.trim()) {
-                  enqueueLocalSpeech(speechBuffer, streamSpeechToken);
+                  enqueueLocalSpeech(speechBuffer);
                   speechBuffer = '';
                 } else if (!streamedAnyText && finalAssistant.content) {
-                  void speakText(finalAssistant.content);
+                  speakText(finalAssistant.content);
                 }
               } else {
                 setVoiceState('completed');
-                window.setTimeout(() => {
+                setTimeout(() => {
                   setVoiceState((curr) => (curr === 'completed' ? 'standby' : curr));
                   setActiveAgents([]);
                 }, 1400);
@@ -1010,14 +856,7 @@ export default function App() {
         return true;
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === tempAssistantId && !m.content.trim()
-                ? { ...m, content: 'Command cancelled before completion.' }
-                : m
-            )
-          );
-          setVoiceState(resolvePostInterruptState(settings.continuousListening));
+          setVoiceState('standby');
           return false;
         }
         // Network disconnect fallback (works offline and inside Android APK)
@@ -1027,16 +866,7 @@ export default function App() {
         abortRef.current = null;
       }
     },
-    [
-      enqueueLocalSpeech,
-      interruptAssistant,
-      refreshBootstrap,
-      settings.autoSpeakReplies,
-      settings.continuousListening,
-      snapshotLocalState,
-      speakText,
-      stopSpeaking,
-    ]
+    [enqueueLocalSpeech, refreshBootstrap, settings.autoSpeakReplies, snapshotLocalState, speakText, stopSpeaking]
   );
 
   const handleConfirmAction = useCallback(
@@ -1209,17 +1039,9 @@ export default function App() {
 
       if (recognizedText) {
         if (isInterruptionCommand(recognizedText)) {
-          interruptAssistant('Stopped speaking.');
-          return;
-        }
-        if (
-          isEchoOfAssistantSpeech(
-            recognizedText,
-            speechTrackerRef.current.speakingText,
-            isSpeakingRef.current
-          )
-        ) {
-          setLiveTranscript(null);
+          abortRef.current?.abort();
+          stopSpeaking();
+          setLiveTranscript('Stopped speaking.');
           setVoiceState('standby');
           return;
         }
@@ -1241,7 +1063,7 @@ export default function App() {
     } finally {
       wavFinishingRef.current = false;
     }
-  }, [cleanupWavNodes, handleSubmitCommand, interruptAssistant, settings.language, settings.wakeWord]);
+  }, [cleanupWavNodes, handleSubmitCommand, settings.language, settings.wakeWord, stopSpeaking]);
 
   const startWavVoiceCapture = useCallback(
     async (mode: 'speech' | 'manual') => {
@@ -1457,24 +1279,20 @@ export default function App() {
       }
 
       if (interim) {
-        if (isInterruptionCommand(interim)) {
-          interruptAssistant('Stopped speaking.');
-          return;
-        }
-        if (isEchoOfAssistantSpeech(interim, speechTrackerRef.current.speakingText, isSpeakingRef.current)) {
-          return;
-        }
         setAudioLevel(0.8);
         setLiveTranscript(`Hearing: "${interim}"`);
+        if (isInterruptionCommand(interim)) {
+          abortRef.current?.abort();
+          stopSpeaking();
+        }
       }
 
       if (finalText) {
         if (isInterruptionCommand(finalText)) {
-          interruptAssistant('Stopped speaking.');
+          abortRef.current?.abort();
+          stopSpeaking();
+          setLiveTranscript('Stopped speaking.');
           if (!settings.continuousListening) stopMicCapture();
-          return;
-        }
-        if (isEchoOfAssistantSpeech(finalText, speechTrackerRef.current.speakingText, isSpeakingRef.current)) {
           return;
         }
         const parsedVoice = extractVoiceCommand(finalText, settings.wakeWord, false);
@@ -1532,7 +1350,6 @@ export default function App() {
   }, [
     finishWavVoiceCapture,
     handleSubmitCommand,
-    interruptAssistant,
     isListening,
     isRecordingAudio,
     settings.continuousListening,
@@ -1544,9 +1361,12 @@ export default function App() {
   ]);
 
   const handleStopExecution = useCallback(() => {
-    interruptAssistant('Execution stopped.');
+    abortRef.current?.abort();
+    stopSpeaking();
     stopMicCapture();
-  }, [interruptAssistant, stopMicCapture]);
+    setActiveAgents([]);
+    setVoiceState('standby');
+  }, [stopMicCapture, stopSpeaking]);
 
   // Register Android native voice & speech event hooks
   useEffect(() => {
@@ -1718,33 +1538,6 @@ export default function App() {
     [calendar, refreshBootstrap, snapshotLocalState]
   );
 
-  const handleUpdateEvent = useCallback(
-    async (
-      id: string,
-      patch: Partial<Pick<CalendarEvent, 'title' | 'date' | 'time' | 'category' | 'notes' | 'completed'>>
-    ) => {
-      const nextCal = calendar.map((e) => (e.id === id ? { ...e, ...patch } : e));
-      setCalendar(nextCal);
-      saveLocalClientState(snapshotLocalState({ calendar: nextCal }));
-      if (backendAvailableRef.current && !isAndroidHost()) {
-        try {
-          const res = await fetch(`/api/calendar/${id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(patch),
-          });
-          if (res.ok) {
-            const updated = await res.json();
-            setCalendar((prev) => prev.map((e) => (e.id === id ? updated : e)));
-          }
-        } catch {
-          // Local copy preserved
-        }
-      }
-    },
-    [calendar, snapshotLocalState]
-  );
-
   const handleDeleteEvent = useCallback(
     async (id: string) => {
       const nextCal = calendar.filter((e) => e.id !== id);
@@ -1759,29 +1552,12 @@ export default function App() {
   );
 
   const handleAddNote = useCallback(
-    async (note: { title: string; content: string; pinned?: boolean }) => {
-      if (backendAvailableRef.current && !isAndroidHost()) {
-        try {
-          const res = await fetch('/api/notes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(note),
-          });
-          if (res.ok) {
-            const created = (await res.json()) as NoteItem;
-            setNotes((prev) => [created, ...prev]);
-            return;
-          }
-        } catch {
-          // Fallback to local state
-        }
-      }
+    (note: { title: string; content: string }) => {
       const nowIso = new Date().toISOString();
       const created: NoteItem = {
         id: `note-${Date.now()}`,
         title: note.title,
         content: note.content,
-        pinned: Boolean(note.pinned),
         createdAt: nowIso,
         updatedAt: nowIso,
       };
@@ -1792,69 +1568,22 @@ export default function App() {
     [notes, snapshotLocalState]
   );
 
-  const handleUpdateNote = useCallback(
-    async (id: string, patch: Partial<Pick<NoteItem, 'title' | 'content' | 'pinned'>>) => {
-      const nowIso = new Date().toISOString();
-      const nextNotes = notes.map((n) => (n.id === id ? { ...n, ...patch, updatedAt: nowIso } : n));
-      setNotes(nextNotes);
-      saveLocalClientState(snapshotLocalState({ notes: nextNotes }));
-      if (backendAvailableRef.current && !isAndroidHost()) {
-        try {
-          const res = await fetch(`/api/notes/${id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(patch),
-          });
-          if (res.ok) {
-            const updated = (await res.json()) as NoteItem;
-            setNotes((prev) => prev.map((n) => (n.id === id ? updated : n)));
-          }
-        } catch {
-          // Local state preserved
-        }
-      }
-    },
-    [notes, snapshotLocalState]
-  );
-
   const handleDeleteNote = useCallback(
-    async (id: string) => {
+    (id: string) => {
       const nextNotes = notes.filter((n) => n.id !== id);
       setNotes(nextNotes);
       saveLocalClientState(snapshotLocalState({ notes: nextNotes }));
-      if (backendAvailableRef.current && !isAndroidHost()) {
-        await fetch(`/api/notes/${id}`, { method: 'DELETE' }).catch(() => {});
-      }
     },
     [notes, snapshotLocalState]
   );
 
   const handleAddTodo = useCallback(
-    async (payload: string | { title: string; priority?: TodoItem['priority']; dueDate?: string }) => {
-      const normalized =
-        typeof payload === 'string' ? { title: payload, priority: 'normal' as const } : payload;
-      if (backendAvailableRef.current && !isAndroidHost()) {
-        try {
-          const res = await fetch('/api/todos', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(normalized),
-          });
-          if (res.ok) {
-            const created = (await res.json()) as TodoItem;
-            setTodos((prev) => [created, ...prev]);
-            return;
-          }
-        } catch {
-          // Fallback to local state
-        }
-      }
+    (title: string) => {
       const created: TodoItem = {
         id: `todo-${Date.now()}`,
-        title: normalized.title,
+        title,
         completed: false,
-        priority: normalized.priority ?? 'normal',
-        dueDate: normalized.dueDate,
+        priority: 'normal',
         createdAt: new Date().toISOString(),
       };
       const nextTodos = [created, ...todos];
@@ -1865,56 +1594,19 @@ export default function App() {
   );
 
   const handleToggleTodo = useCallback(
-    async (id: string) => {
-      const target = todos.find((t) => t.id === id);
-      if (!target) return;
-      const nextCompleted = !target.completed;
-      const nextTodos = todos.map((t) => (t.id === id ? { ...t, completed: nextCompleted } : t));
+    (id: string) => {
+      const nextTodos = todos.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t));
       setTodos(nextTodos);
       saveLocalClientState(snapshotLocalState({ todos: nextTodos }));
-      if (backendAvailableRef.current && !isAndroidHost()) {
-        await fetch(`/api/todos/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ completed: nextCompleted }),
-        }).catch(() => {});
-      }
-    },
-    [snapshotLocalState, todos]
-  );
-
-  const handleUpdateTodo = useCallback(
-    async (id: string, patch: Partial<Pick<TodoItem, 'title' | 'priority' | 'dueDate' | 'completed'>>) => {
-      const nextTodos = todos.map((t) => (t.id === id ? { ...t, ...patch } : t));
-      setTodos(nextTodos);
-      saveLocalClientState(snapshotLocalState({ todos: nextTodos }));
-      if (backendAvailableRef.current && !isAndroidHost()) {
-        try {
-          const res = await fetch(`/api/todos/${id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(patch),
-          });
-          if (res.ok) {
-            const updated = (await res.json()) as TodoItem;
-            setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)));
-          }
-        } catch {
-          // Local state preserved
-        }
-      }
     },
     [snapshotLocalState, todos]
   );
 
   const handleDeleteTodo = useCallback(
-    async (id: string) => {
+    (id: string) => {
       const nextTodos = todos.filter((t) => t.id !== id);
       setTodos(nextTodos);
       saveLocalClientState(snapshotLocalState({ todos: nextTodos }));
-      if (backendAvailableRef.current && !isAndroidHost()) {
-        await fetch(`/api/todos/${id}`, { method: 'DELETE' }).catch(() => {});
-      }
     },
     [snapshotLocalState, todos]
   );
@@ -2126,33 +1818,6 @@ export default function App() {
     [snapshotLocalState, workflows]
   );
 
-  const handleRefreshApps = useCallback(async () => {
-    if (isAndroidHost() || !backendAvailableRef.current) return;
-    try {
-      const res = await fetch('/api/apps/refresh', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'App refresh failed');
-      if (Array.isArray(data.apps)) {
-        setApps(data.apps);
-        setLaunchNotice('Application catalog refreshed.');
-      }
-    } catch (err) {
-      setLaunchNotice(`Failed to refresh apps: ${(err as Error).message}`);
-    }
-  }, []);
-
-  const handleDeleteMessage = useCallback(
-    async (id: string) => {
-      const nextMsgs = messages.filter((m) => m.id !== id);
-      setMessages(nextMsgs);
-      saveLocalClientState(snapshotLocalState({ chatHistory: nextMsgs }));
-      if (backendAvailableRef.current && !isAndroidHost()) {
-        await fetch(`/api/chat/${id}`, { method: 'DELETE' }).catch(() => {});
-      }
-    },
-    [messages, snapshotLocalState]
-  );
-
   const handleClearHistory = useCallback(async () => {
     setMessages([]);
     saveLocalClientState(snapshotLocalState({ chatHistory: [] }));
@@ -2160,40 +1825,6 @@ export default function App() {
       await fetch('/api/chat', { method: 'DELETE' }).catch(() => {});
     }
   }, [snapshotLocalState]);
-
-  const handleSelectWeatherLocation = useCallback(
-    async (locationQuery: string, force = true) => {
-      const fetched = await fetchWeatherData({ location: locationQuery, force });
-      if (fetched) {
-        void updateSettings({ weatherLocation: fetched.location });
-      }
-    },
-    [fetchWeatherData, updateSettings]
-  );
-
-  const handleSelectWeatherCoordinates = useCallback(
-    async (lat: number, lon: number, label?: string) => {
-      const fetched = await fetchWeatherData({ lat, lon, label, force: true });
-      if (fetched) {
-        void updateSettings({ weatherLocation: fetched.location });
-      }
-    },
-    [fetchWeatherData, updateSettings]
-  );
-
-  const handleToggleFavoriteWeatherLocation = useCallback(
-    (location: string) => {
-      const trimmed = location.trim();
-      if (!trimmed) return;
-      const existing = settings.favoriteWeatherLocations ?? [];
-      const exists = existing.some((f) => f.toLowerCase() === trimmed.toLowerCase());
-      const nextFavs = exists
-        ? existing.filter((f) => f.toLowerCase() !== trimmed.toLowerCase())
-        : [trimmed, ...existing].slice(0, 8);
-      void updateSettings({ favoriteWeatherLocations: nextFavs });
-    },
-    [settings.favoriteWeatherLocations, updateSettings]
-  );
 
   const agentList = useMemo(
     () => buildAgentList(settings.enabledAgents, activeAgents),
@@ -2318,7 +1949,6 @@ export default function App() {
               cpuHistory={cpuHistory}
               weather={weather}
               weatherError={weatherError}
-              temperatureUnit={(settings.temperatureUnit || 'celsius') as TemperatureUnit}
               onSelectSection={setActiveSection}
               onSubmitCommand={handleSubmitCommand}
               onConfirmAction={handleConfirmAction}
@@ -2331,8 +1961,6 @@ export default function App() {
               onLaunchApp={handleLaunchApp}
               onToggleEvent={handleToggleEvent}
               onSpeakText={speakText}
-              onStopSpeaking={stopSpeaking}
-              onOpenWeatherDetails={() => setWeatherModalOpen(true)}
               onCheckApiConnection={() => checkApiConnection(true)}
               onDismissError={() => setErrorBanner(null)}
               onDismissLaunchNotice={() => setLaunchNotice(null)}
@@ -2385,11 +2013,9 @@ export default function App() {
               voiceState={voiceState}
               audioLevel={audioLevel}
               isListening={isListening}
-              isSpeaking={isSpeaking}
               audioInputDevices={audioInputDevices}
               liveTranscript={liveTranscript}
               onToggleListening={toggleListening}
-              onStopSpeaking={stopSpeaking}
               onUpdateSettings={updateSettings}
               onTestSpeech={speakText}
               onRefreshAudioDevices={refreshAudioInputDevices}
@@ -2401,7 +2027,6 @@ export default function App() {
               apps={apps}
               onLaunchApp={handleLaunchApp}
               onTogglePinApp={handleTogglePinApp}
-              onRefreshApps={handleRefreshApps}
               launchNotice={launchNotice}
             />
           )}
@@ -2415,17 +2040,8 @@ export default function App() {
           {activeSection === 'tasks-workflows' && (
             <TasksWorkflowsView
               workflows={workflows}
-              todos={todos}
-              notes={notes}
               onRunWorkflow={handleRunWorkflow}
               onCreateWorkflow={handleCreateWorkflow}
-              onAddTodo={handleAddTodo}
-              onToggleTodo={handleToggleTodo}
-              onUpdateTodo={handleUpdateTodo}
-              onDeleteTodo={handleDeleteTodo}
-              onAddNote={handleAddNote}
-              onUpdateNote={handleUpdateNote}
-              onDeleteNote={handleDeleteNote}
               runningId={runningWorkflowId}
             />
           )}
@@ -2445,7 +2061,6 @@ export default function App() {
               todos={todos}
               onCreateEvent={handleCreateEvent}
               onToggleEvent={handleToggleEvent}
-              onUpdateEvent={handleUpdateEvent}
               onDeleteEvent={handleDeleteEvent}
               onAddNote={handleAddNote}
               onDeleteNote={handleDeleteNote}
@@ -2466,41 +2081,14 @@ export default function App() {
           )}
 
           {activeSection === 'chat-history' && (
-            <ChatHistoryView
-              messages={messages}
-              onDeleteMessage={handleDeleteMessage}
-              onClearHistory={handleClearHistory}
-            />
+            <ChatHistoryView messages={messages} onClearHistory={handleClearHistory} />
           )}
 
           {activeSection === 'settings' && (
-            <SettingsView
-              settings={settings}
-              apiStatus={apiStatus}
-              onUpdateSettings={updateSettings}
-              onCheckApiConnection={() => checkApiConnection(true)}
-            />
+            <SettingsView settings={settings} onUpdateSettings={updateSettings} />
           )}
         </main>
       </div>
-
-      {/* Weather Detail & 7-Day Forecast Modal */}
-      <WeatherDetailModal
-        open={weatherModalOpen}
-        onClose={() => setWeatherModalOpen(false)}
-        weather={weather}
-        weatherError={weatherError}
-        loadingWeather={loadingWeather}
-        unit={(settings.temperatureUnit || 'celsius') as TemperatureUnit}
-        favorites={settings.favoriteWeatherLocations ?? []}
-        onToggleUnit={(unit) => void updateSettings({ temperatureUnit: unit })}
-        onSelectLocation={handleSelectWeatherLocation}
-        onSelectCoordinates={handleSelectWeatherCoordinates}
-        onToggleFavorite={handleToggleFavoriteWeatherLocation}
-        onRefresh={async () => {
-          await fetchWeatherData({ location: weather?.location || settings.weatherLocation, force: true });
-        }}
-      />
 
       {/* Bottom Quick Actions Bar */}
       <BottomQuickActions

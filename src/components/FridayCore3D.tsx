@@ -29,7 +29,6 @@ const STATE_COLOR_MAP: Record<VoiceState, number> = {
   searching: 0xe879f9,
   executing: 0xc026d3,
   speaking: 0xf0abfc,
-  interrupted: 0xf59e0b,
   completed: 0xc084fc,
   error: 0xfb7185,
 };
@@ -375,7 +374,6 @@ export function FridayCore3D({
         antialias: !isSoftwareGl,
         alpha: true,
         powerPreference: 'high-performance',
-        preserveDrawingBuffer: isSoftwareGl,
       });
     } catch {
       setWebglFailed(true);
@@ -387,10 +385,8 @@ export function FridayCore3D({
     renderer.toneMappingExposure = 1.24;
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
 
-    let curWidth = container.clientWidth || 420;
-    let curHeight = container.clientHeight || 430;
-    const width = curWidth;
-    const height = curHeight;
+    const width = container.clientWidth || 420;
+    const height = container.clientHeight || 430;
     renderer.setSize(width, height);
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
@@ -976,15 +972,11 @@ export function FridayCore3D({
 
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const w = Math.max(160, Math.round(entry.contentRect.width));
-        const h = Math.max(160, Math.round(entry.contentRect.height));
-        if (w === curWidth && h === curHeight) continue;
-        curWidth = w;
-        curHeight = h;
+        const w = Math.max(160, entry.contentRect.width);
+        const h = Math.max(160, entry.contentRect.height);
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
-        renderer.render(scene, camera);
       }
     });
     resizeObserver.observe(container);
@@ -1278,6 +1270,16 @@ export function FridayCore3D({
             compact
               ? 'w-full max-w-[540px] h-[470px] sm:h-[505px] cursor-grab'
               : 'h-[320px] w-[320px] sm:h-[380px] sm:w-[380px] cursor-grab'
+          }
+          style={
+            compact
+              ? {
+                  WebkitMaskImage:
+                    'radial-gradient(ellipse 90% 92% at 50% 48%, black 72%, transparent 100%)',
+                  maskImage:
+                    'radial-gradient(ellipse 90% 92% at 50% 48%, black 72%, transparent 100%)',
+                }
+              : undefined
           }
         />
       )}

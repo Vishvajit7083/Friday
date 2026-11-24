@@ -8,7 +8,6 @@ import {
 } from './productivityTools';
 import { tryTranslateCommand } from './translator';
 import { tryConvertUnits } from './unitConverter';
-import { buildWeatherChatSummary, degreesToCompass, parseWeatherQuery } from './weatherUtils';
 import type {
   ActionLogEntry,
   AgentId,
@@ -298,7 +297,7 @@ export async function fetchOpenMeteoClientWeather(locationQuery: string): Promis
     if (!place) return null;
 
     const wRes = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,wind_direction_10m,surface_pressure,cloud_cover,precipitation,weather_code&hourly=temperature_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,uv_index_max,sunrise,sunset,wind_speed_10m_max&timezone=auto&forecast_days=7`,
+      `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto&forecast_days=3`,
       { signal: AbortSignal.timeout(5000) }
     );
     if (!wRes.ok) return null;
@@ -308,30 +307,13 @@ export async function fetchOpenMeteoClientWeather(locationQuery: string): Promis
         relative_humidity_2m: number;
         apparent_temperature: number;
         wind_speed_10m: number;
-        wind_direction_10m?: number;
-        surface_pressure?: number;
-        cloud_cover?: number;
-        precipitation?: number;
         weather_code: number;
-      };
-      hourly?: {
-        time: string[];
-        temperature_2m: number[];
-        apparent_temperature?: number[];
-        precipitation_probability?: number[];
-        weather_code: number[];
-        wind_speed_10m?: number[];
       };
       daily?: {
         time: string[];
         temperature_2m_max: number[];
         temperature_2m_min: number[];
         weather_code: number[];
-        precipitation_probability_max?: number[];
-        uv_index_max?: number[];
-        sunrise?: string[];
-        sunset?: string[];
-        wind_speed_10m_max?: number[];
       };
     };
     if (!wData.current) return null;
@@ -341,19 +323,8 @@ export async function fetchOpenMeteoClientWeather(locationQuery: string): Promis
       if (code <= 48) return 'Fog';
       if (code <= 67) return 'Rain';
       if (code <= 77) return 'Snow';
-      if (code >= 95) return 'Thunderstorm';
       return 'Showers';
     };
-
-    const hourlyPoints = (wData.hourly?.time ?? []).slice(0, 24).map((t, idx) => ({
-      time: t,
-      temp: Math.round(wData.hourly?.temperature_2m[idx] ?? wData.current!.temperature_2m),
-      feelsLike: Math.round(wData.hourly?.apparent_temperature?.[idx] ?? wData.current!.apparent_temperature),
-      precipProb: Math.round(wData.hourly?.precipitation_probability?.[idx] ?? 0),
-      windSpeedKmh: Math.round(wData.hourly?.wind_speed_10m?.[idx] ?? wData.current!.wind_speed_10m),
-      code: wData.hourly?.weather_code[idx] ?? 0,
-      condition: codeLabel(wData.hourly?.weather_code[idx] ?? 0),
-    }));
 
     return {
       location: `${place.name}${place.country ? `, ${place.country}` : ''}`,
@@ -361,23 +332,8 @@ export async function fetchOpenMeteoClientWeather(locationQuery: string): Promis
       longitude: place.longitude,
       temperature: Math.round(wData.current.temperature_2m),
       condition: codeLabel(wData.current.weather_code),
-      conditionCode: wData.current.weather_code,
       humidity: Math.round(wData.current.relative_humidity_2m),
       windSpeedKmh: Math.round(wData.current.wind_speed_10m),
-      windDirectionDeg: wData.current.wind_direction_10m,
-      windDirectionLabel: degreesToCompass(wData.current.wind_direction_10m),
-      pressureHpa:
-        typeof wData.current.surface_pressure === 'number'
-          ? Math.round(wData.current.surface_pressure)
-          : undefined,
-      cloudCover:
-        typeof wData.current.cloud_cover === 'number'
-          ? Math.round(wData.current.cloud_cover)
-          : undefined,
-      precipitationMm: wData.current.precipitation,
-      uvIndex: wData.daily?.uv_index_max?.[0],
-      sunrise: wData.daily?.sunrise?.[0],
-      sunset: wData.daily?.sunset?.[0],
       feelsLike: Math.round(wData.current.apparent_temperature),
       updatedAt: new Date().toISOString(),
       forecast: (wData.daily?.time ?? []).map((date, idx) => ({
@@ -386,13 +342,7 @@ export async function fetchOpenMeteoClientWeather(locationQuery: string): Promis
         tempMin: Math.round(wData.daily?.temperature_2m_min[idx] ?? 0),
         condition: codeLabel(wData.daily?.weather_code[idx] ?? 0),
         code: wData.daily?.weather_code[idx] ?? 0,
-        precipProbMax: wData.daily?.precipitation_probability_max?.[idx],
-        uvMax: wData.daily?.uv_index_max?.[idx],
-        sunrise: wData.daily?.sunrise?.[idx],
-        sunset: wData.daily?.sunset?.[idx],
-        windSpeedMaxKmh: wData.daily?.wind_speed_10m_max?.[idx],
       })),
-      hourly: hourlyPoints,
       source: 'Open-Meteo Live Public API',
     };
   } catch {
@@ -863,18 +813,12 @@ export async function executeClientOfflineCommand(
   }
 
   // 10. Weather or Live Public Knowledge Search (only if online)
-  const parsedWeather = parseWeatherQuery(command);
-  if (!reply && (parsedWeather.isWeather || parsed.category === 'weather_query')) {
-    const targetLocation = parsedWeather.location || draftState.settings.weatherLocation;
-    const w = await fetchOpenMeteoClientWeather(targetLocation);
+  if (!reply && /\bweather|temperature|forecast\b/i.test(lower)) {
+    const w = await fetchOpenMeteoClientWeather(draftState.settings.weatherLocation);
     if (w) {
-      reply = buildWeatherChatSummary(
-        w,
-        parsedWeather,
-        draftState.settings.temperatureUnit || 'celsius'
-      );
+      reply = `Weather in ${w.location}: ${w.temperature}°C (${w.condition}), feels like ${w.feelsLike}°C, humidity ${w.humidity}%.`;
     } else {
-      reply = `Weather data for "${targetLocation}" could not be fetched (offline or unreachable).`;
+      reply = 'Weather requires an active internet connection. Offline tools remain ready.';
     }
   }
 

@@ -1,19 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   Bot,
   Check,
   CheckCircle2,
   Circle,
-  CloudSun,
   Download,
   History,
   Image as ImageIcon,
   Layers,
-  MapPin,
   Pencil,
   Plus,
   Power,
-  RefreshCw,
   Search,
   Settings as SettingsIcon,
   Shield,
@@ -22,7 +19,6 @@ import {
   X,
 } from 'lucide-react';
 import type {
-  ApiConnectionStatus,
   AssistantSettings,
   CalendarEvent,
   ChatMessage,
@@ -38,7 +34,6 @@ export function CalendarView({
   todos = [],
   onCreateEvent,
   onToggleEvent,
-  onUpdateEvent,
   onDeleteEvent,
   onAddNote,
   onDeleteNote,
@@ -56,7 +51,6 @@ export function CalendarView({
     category: CalendarEvent['category'];
   }) => Promise<void>;
   onToggleEvent: (id: string) => void;
-  onUpdateEvent?: (id: string, patch: Partial<CalendarEvent>) => Promise<void> | void;
   onDeleteEvent: (id: string) => void;
   onAddNote?: (note: { title: string; content: string }) => void;
   onDeleteNote?: (id: string) => void;
@@ -68,15 +62,6 @@ export function CalendarView({
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [time, setTime] = useState('15:00');
   const [category, setCategory] = useState<CalendarEvent['category']>('meeting');
-  const [formError, setFormError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [dateFilter, setDateFilter] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState('');
-  const [editDate, setEditDate] = useState('');
-  const [editTime, setEditTime] = useState('');
-  const [editCategory, setEditCategory] = useState<CalendarEvent['category']>('meeting');
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [briefing, setBriefing] = useState<string | null>(null);
   const [loadingBriefing, setLoadingBriefing] = useState(false);
   const [noteTitle, setNoteTitle] = useState('');
@@ -85,23 +70,10 @@ export function CalendarView({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) {
-      setFormError('Enter an event or task title first.');
-      return;
-    }
-    setFormError(null);
-    await onCreateEvent({ title: title.trim(), date, time, category });
+    if (!title.trim()) return;
+    await onCreateEvent({ title, date, time, category });
     setTitle('');
   };
-
-  const filteredEvents = events.filter((evt) => {
-    const matchText =
-      !searchQuery.trim() ||
-      evt.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      evt.category.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchDate = !dateFilter || evt.date === dateFilter;
-    return matchText && matchDate;
-  });
 
   const handleGenerateBriefing = async () => {
     setLoadingBriefing(true);
@@ -158,234 +130,88 @@ export function CalendarView({
 
       <form
         onSubmit={handleSubmit}
-        className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-2"
+        className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 grid grid-cols-1 md:grid-cols-5 gap-3"
       >
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => {
-              setTitle(e.target.value);
-              if (formError) setFormError(null);
-            }}
-            placeholder="Event or task title..."
-            aria-label="New calendar event title"
-            className="md:col-span-2 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-          />
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            aria-label="Event date"
-            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-          />
-          <input
-            type="time"
-            value={time}
-            onChange={(e) => setTime(e.target.value)}
-            aria-label="Event time"
-            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-          />
-          <div className="flex gap-2">
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value as CalendarEvent['category'])}
-              aria-label="Event category"
-              className="flex-1 px-2 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-            >
-              <option value="meeting">Meeting</option>
-              <option value="task">Task</option>
-              <option value="reminder">Reminder</option>
-              <option value="focus">Focus</option>
-            </select>
-            <button
-              type="submit"
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400 shrink-0"
-            >
-              <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Add</span>
-            </button>
-          </div>
-        </div>
-        {formError && <p className="text-xs text-rose-300">{formError}</p>}
-      </form>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" aria-hidden="true" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter calendar events..."
-            aria-label="Filter calendar events"
-            className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-          />
-        </div>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Event or task title..."
+          aria-label="New calendar event title"
+          className="md:col-span-2 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+        />
         <input
           type="date"
-          value={dateFilter}
-          onChange={(e) => setDateFilter(e.target.value)}
-          aria-label="Filter by date"
-          className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          aria-label="Event date"
+          className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
         />
-        {(searchQuery || dateFilter) && (
-          <button
-            type="button"
-            onClick={() => {
-              setSearchQuery('');
-              setDateFilter('');
-            }}
-            className="px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-300"
+        <input
+          type="time"
+          value={time}
+          onChange={(e) => setTime(e.target.value)}
+          aria-label="Event time"
+          className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+        />
+        <div className="flex gap-2">
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value as CalendarEvent['category'])}
+            aria-label="Event category"
+            className="flex-1 px-2 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
           >
-            Clear Filter
+            <option value="meeting">Meeting</option>
+            <option value="task">Task</option>
+            <option value="reminder">Reminder</option>
+            <option value="focus">Focus</option>
+          </select>
+          <button
+            type="submit"
+            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400 shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>Add</span>
           </button>
-        )}
-      </div>
+        </div>
+      </form>
 
       <div className="space-y-2">
-        {filteredEvents.length === 0 ? (
-          <p className="text-sm text-slate-400">No events match your view.</p>
+        {events.length === 0 ? (
+          <p className="text-sm text-slate-400">No events scheduled yet.</p>
         ) : (
-          filteredEvents.map((evt) => (
+          events.map((evt) => (
             <div
               key={evt.id}
               className="p-3.5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 flex items-center justify-between gap-3"
             >
-              {editingId === evt.id ? (
-                <div className="flex-1 grid grid-cols-1 md:grid-cols-5 gap-2">
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    aria-label="Edit event title"
-                    className="md:col-span-2 px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
-                  />
-                  <input
-                    type="date"
-                    value={editDate}
-                    onChange={(e) => setEditDate(e.target.value)}
-                    aria-label="Edit event date"
-                    className="px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
-                  />
-                  <input
-                    type="time"
-                    value={editTime}
-                    onChange={(e) => setEditTime(e.target.value)}
-                    aria-label="Edit event time"
-                    className="px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
-                  />
-                  <div className="flex items-center gap-1.5">
-                    <select
-                      value={editCategory}
-                      onChange={(e) => setEditCategory(e.target.value as CalendarEvent['category'])}
-                      aria-label="Edit event category"
-                      className="flex-1 px-2 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
-                    >
-                      <option value="meeting">Meeting</option>
-                      <option value="task">Task</option>
-                      <option value="reminder">Reminder</option>
-                      <option value="focus">Focus</option>
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (editTitle.trim()) {
-                          void onUpdateEvent?.(evt.id, {
-                            title: editTitle.trim(),
-                            date: editDate,
-                            time: editTime,
-                            category: editCategory,
-                          });
-                        }
-                        setEditingId(null);
-                      }}
-                      aria-label={`Save event "${evt.title}"`}
-                      className="p-1.5 rounded bg-cyan-500 text-slate-950"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingId(null)}
-                      aria-label="Cancel event edit"
-                      className="p-1.5 rounded bg-slate-800 text-slate-300"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
+              <button
+                type="button"
+                onClick={() => onToggleEvent(evt.id)}
+                className="flex items-center gap-3 text-left min-w-0 flex-1"
+              >
+                {evt.completed ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <Circle className="w-4 h-4 text-cyan-400 shrink-0" />
+                )}
+                <div className="min-w-0">
+                  <div className={`text-sm font-medium ${evt.completed ? 'line-through text-slate-500' : 'text-slate-100'}`}>
+                    {evt.title}
+                  </div>
+                  <div className="text-xs font-mono-tabular text-slate-400">
+                    {evt.date} · {evt.time} · {evt.category}
                   </div>
                 </div>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => onToggleEvent(evt.id)}
-                    className="flex items-center gap-3 text-left min-w-0 flex-1"
-                  >
-                    {evt.completed ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    ) : (
-                      <Circle className="w-4 h-4 text-cyan-400 shrink-0" />
-                    )}
-                    <div className="min-w-0">
-                      <div className={`text-sm font-medium ${evt.completed ? 'line-through text-slate-500' : 'text-slate-100'}`}>
-                        {evt.title}
-                      </div>
-                      <div className="text-xs font-mono-tabular text-slate-400">
-                        {evt.date} · {evt.time} · {evt.category}
-                      </div>
-                    </div>
-                  </button>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {onUpdateEvent && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingId(evt.id);
-                          setEditTitle(evt.title);
-                          setEditDate(evt.date);
-                          setEditTime(evt.time);
-                          setEditCategory(evt.category);
-                        }}
-                        aria-label={`Edit event "${evt.title}"`}
-                        className="p-2 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-slate-800"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                    )}
-                    {confirmDeleteId === evt.id ? (
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onDeleteEvent(evt.id);
-                            setConfirmDeleteId(null);
-                          }}
-                          className="px-2 py-1 rounded text-[11px] font-semibold bg-rose-500/25 border border-rose-400/50 text-rose-100"
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeleteId(null)}
-                          className="px-2 py-1 rounded text-[11px] bg-slate-800 text-slate-300"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteId(evt.id)}
-                        aria-label={`Delete event "${evt.title}"`}
-                        className="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-slate-800"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                </>
-              )}
+              </button>
+              <button
+                type="button"
+                onClick={() => onDeleteEvent(evt.id)}
+                aria-label={`Delete event "${evt.title}"`}
+                className="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-slate-800"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
           ))
         )}
@@ -563,10 +389,6 @@ export function MemoryView({
   const [category, setCategory] = useState<MemoryItem['category']>('preference');
   const [key, setKey] = useState('');
   const [value, setValue] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterCategory, setFilterCategory] = useState<'all' | MemoryItem['category']>('all');
-  const [formError, setFormError] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editCategory, setEditCategory] = useState<MemoryItem['category']>('preference');
@@ -575,12 +397,8 @@ export function MemoryView({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!key.trim() || !value.trim()) {
-      setFormError('Enter both a memory label and detail.');
-      return;
-    }
-    setFormError(null);
-    await onAddMemory({ category, key: key.trim(), value: value.trim() });
+    if (!key.trim() || !value.trim()) return;
+    await onAddMemory({ category, key, value });
     setKey('');
     setValue('');
   };
@@ -601,15 +419,6 @@ export function MemoryView({
     });
     setEditingId(null);
   };
-
-  const filteredMemory = memory.filter((item) => {
-    const matchCat = filterCategory === 'all' || item.category === filterCategory;
-    const matchText =
-      !searchQuery.trim() ||
-      item.key.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.value.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchCat && matchText;
-  });
 
   return (
     <div className="flex-1 h-full overflow-y-auto p-6 space-y-6">
@@ -638,189 +447,127 @@ export function MemoryView({
 
       <form
         onSubmit={handleSubmit}
-        className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-2"
+        className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 grid grid-cols-1 md:grid-cols-4 gap-3"
       >
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value as MemoryItem['category'])}
-            aria-label="Memory category"
-            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-          >
-            <option value="preference">Preference</option>
-            <option value="project">Project</option>
-            <option value="profile">Profile</option>
-            <option value="folder">Favorite Folder</option>
-            <option value="workflow">Workflow</option>
-          </select>
-          <input
-            type="text"
-            value={key}
-            onChange={(e) => {
-              setKey(e.target.value);
-              if (formError) setFormError(null);
-            }}
-            placeholder="Memory Label (e.g., Active Thesis)"
-            aria-label="Memory label"
-            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-          />
-          <input
-            type="text"
-            value={value}
-            onChange={(e) => {
-              setValue(e.target.value);
-              if (formError) setFormError(null);
-            }}
-            placeholder="Detail to remember..."
-            aria-label="Memory detail"
-            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-          />
-          <button
-            type="submit"
-            className="px-4 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
-          >
-            Save Memory
-          </button>
-        </div>
-        {formError && <p className="text-xs text-rose-300">{formError}</p>}
-      </form>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" aria-hidden="true" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search saved memories..."
-            aria-label="Search saved memories"
-            className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-          />
-        </div>
         <select
-          value={filterCategory}
-          onChange={(e) => setFilterCategory(e.target.value as 'all' | MemoryItem['category'])}
-          aria-label="Filter memories by category"
-          className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+          value={category}
+          onChange={(e) => setCategory(e.target.value as MemoryItem['category'])}
+          aria-label="Memory category"
+          className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
         >
-          <option value="all">All Categories</option>
           <option value="preference">Preference</option>
           <option value="project">Project</option>
           <option value="profile">Profile</option>
           <option value="folder">Favorite Folder</option>
           <option value="workflow">Workflow</option>
         </select>
-      </div>
+        <input
+          type="text"
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          placeholder="Memory Label (e.g., Active Thesis)"
+          aria-label="Memory label"
+          className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+        />
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Detail to remember..."
+          aria-label="Memory detail"
+          className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+        />
+        <button
+          type="submit"
+          className="px-4 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+        >
+          Save Memory
+        </button>
+      </form>
 
       <div className="space-y-2.5">
-        {filteredMemory.length === 0 ? (
-          <p className="text-sm text-slate-400">No memory entries match your filter.</p>
-        ) : (
-          filteredMemory.map((item) => (
-            <div
-              key={item.id}
-              className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 flex items-start justify-between gap-3"
-            >
-              {editingId === item.id ? (
-                <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-2">
-                  <select
-                    value={editCategory}
-                    onChange={(e) => setEditCategory(e.target.value as MemoryItem['category'])}
-                    aria-label="Edit memory category"
-                    className="px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
+        {memory.map((item) => (
+          <div
+            key={item.id}
+            className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 flex items-start justify-between gap-3"
+          >
+            {editingId === item.id ? (
+              <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-2">
+                <select
+                  value={editCategory}
+                  onChange={(e) => setEditCategory(e.target.value as MemoryItem['category'])}
+                  aria-label="Edit memory category"
+                  className="px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
+                >
+                  <option value="preference">Preference</option>
+                  <option value="project">Project</option>
+                  <option value="profile">Profile</option>
+                  <option value="folder">Favorite Folder</option>
+                  <option value="workflow">Workflow</option>
+                </select>
+                <input
+                  type="text"
+                  value={editKey}
+                  onChange={(e) => setEditKey(e.target.value)}
+                  aria-label="Edit memory label"
+                  className="px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
+                />
+                <input
+                  type="text"
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  aria-label="Edit memory detail"
+                  className="px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
+                />
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => saveEdit(item.id)}
+                    aria-label="Save edited memory"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
                   >
-                    <option value="preference">Preference</option>
-                    <option value="project">Project</option>
-                    <option value="profile">Profile</option>
-                    <option value="folder">Favorite Folder</option>
-                    <option value="workflow">Workflow</option>
-                  </select>
-                  <input
-                    type="text"
-                    value={editKey}
-                    onChange={(e) => setEditKey(e.target.value)}
-                    aria-label="Edit memory label"
-                    className="px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
-                  />
-                  <input
-                    type="text"
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    aria-label="Edit memory detail"
-                    className="px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
-                  />
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => saveEdit(item.id)}
-                      aria-label="Save edited memory"
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
-                    >
-                      <Check className="w-3.5 h-3.5" aria-hidden="true" />
-                      <span>Save</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingId(null)}
-                      aria-label="Cancel editing memory"
-                      className="p-1.5 rounded bg-slate-800 text-slate-300 hover:bg-slate-700"
-                    >
-                      <X className="w-3.5 h-3.5" aria-hidden="true" />
-                    </button>
-                  </div>
+                    <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Save</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(null)}
+                    aria-label="Cancel editing memory"
+                    className="p-1.5 rounded bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  >
+                    <X className="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
                 </div>
-              ) : (
-                <>
-                  <div>
-                    <div className="text-xs font-mono-tabular text-cyan-300 uppercase">{item.category}</div>
-                    <div className="text-sm font-semibold text-slate-100 mt-0.5">{item.key}</div>
-                    <div className="text-xs text-slate-300 mt-1">{item.value}</div>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => startEditing(item)}
-                      aria-label={`Edit memory "${item.key}"`}
-                      className="p-2 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-slate-800"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    {confirmDeleteId === item.id ? (
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onDeleteMemory(item.id);
-                            setConfirmDeleteId(null);
-                          }}
-                          className="px-2 py-1 rounded text-[11px] font-semibold bg-rose-500/25 border border-rose-400/50 text-rose-100"
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeleteId(null)}
-                          className="px-2 py-1 rounded text-[11px] bg-slate-800 text-slate-300"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteId(item.id)}
-                        aria-label={`Delete memory "${item.key}"`}
-                        className="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-slate-800"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          ))
-        )}
+              </div>
+            ) : (
+              <>
+                <div>
+                  <div className="text-xs font-mono-tabular text-cyan-300 uppercase">{item.category}</div>
+                  <div className="text-sm font-semibold text-slate-100 mt-0.5">{item.key}</div>
+                  <div className="text-xs text-slate-300 mt-1">{item.value}</div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => startEditing(item)}
+                    aria-label={`Edit memory "${item.key}"`}
+                    className="p-2 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-slate-800"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteMemory(item.id)}
+                    aria-label={`Delete memory "${item.key}"`}
+                    className="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-slate-800"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -828,15 +575,12 @@ export function MemoryView({
 
 export function ChatHistoryView({
   messages,
-  onDeleteMessage,
   onClearHistory,
 }: {
   messages: ChatMessage[];
-  onDeleteMessage?: (id: string) => void;
   onClearHistory: () => void;
 }) {
   const [search, setSearch] = useState('');
-  const [confirmClear, setConfirmClear] = useState(false);
   const filtered = messages.filter(
     (m) =>
       !search.trim() ||
@@ -867,35 +611,13 @@ export function ChatHistoryView({
               className="pl-8 pr-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
             />
           </div>
-          {confirmClear ? (
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  onClearHistory();
-                  setConfirmClear(false);
-                }}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-500/25 text-rose-100 border border-rose-400/50"
-              >
-                Confirm Clear All
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmClear(false)}
-                className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-800 text-slate-300 border border-slate-700"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setConfirmClear(true)}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500/15 text-rose-200 border border-rose-500/35 hover:bg-rose-500/25"
-            >
-              Clear History
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={onClearHistory}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500/15 text-rose-200 border border-rose-500/35 hover:bg-rose-500/25"
+          >
+            Clear History
+          </button>
         </div>
       </div>
 
@@ -908,26 +630,14 @@ export function ChatHistoryView({
               key={msg.id}
               className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-1.5"
             >
-              <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
+              <div className="flex items-center justify-between text-xs text-slate-400">
                 <span className="font-semibold text-cyan-300">
                   {msg.role === 'user' ? 'User' : 'F.R.I.D.A.Y.'}
                   {msg.intent ? ` · ${msg.intent}` : ''}
                 </span>
-                <div className="flex items-center gap-2">
-                  <span className="font-mono-tabular">
-                    {new Date(msg.timestamp).toLocaleString()}
-                  </span>
-                  {onDeleteMessage && (
-                    <button
-                      type="button"
-                      onClick={() => onDeleteMessage(msg.id)}
-                      aria-label={`Delete message ${msg.id}`}
-                      className="p-1 rounded text-slate-400 hover:text-rose-300 hover:bg-slate-800"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
+                <span className="font-mono-tabular">
+                  {new Date(msg.timestamp).toLocaleString()}
+                </span>
               </div>
               <div className="text-sm text-slate-200 whitespace-pre-wrap">{msg.content}</div>
             </div>
@@ -940,62 +650,12 @@ export function ChatHistoryView({
 
 export function SettingsView({
   settings,
-  apiStatus,
   onUpdateSettings,
-  onCheckApiConnection,
 }: {
   settings: AssistantSettings;
-  apiStatus?: ApiConnectionStatus;
   onUpdateSettings: (patch: Partial<AssistantSettings>) => void;
-  onCheckApiConnection?: () => void;
 }) {
   const [newFolder, setNewFolder] = useState('');
-  const [newFavoriteCity, setNewFavoriteCity] = useState('');
-  const [userNameDraft, setUserNameDraft] = useState(settings.userName);
-  const [weatherLocationDraft, setWeatherLocationDraft] = useState(settings.weatherLocation);
-  const [ollamaModelDraft, setOllamaModelDraft] = useState(settings.ollamaModel || '');
-  const [reopenShortcutDraft, setReopenShortcutDraft] = useState(settings.reopenShortcut);
-  const debounceTimersRef = useRef<Record<string, number>>({});
-
-  useEffect(() => {
-    setUserNameDraft(settings.userName);
-  }, [settings.userName]);
-
-  useEffect(() => {
-    setWeatherLocationDraft(settings.weatherLocation);
-  }, [settings.weatherLocation]);
-
-  useEffect(() => {
-    setOllamaModelDraft(settings.ollamaModel || '');
-  }, [settings.ollamaModel]);
-
-  useEffect(() => {
-    setReopenShortcutDraft(settings.reopenShortcut);
-  }, [settings.reopenShortcut]);
-
-  useEffect(() => {
-    return () => {
-      Object.values(debounceTimersRef.current).forEach((t) => window.clearTimeout(t));
-    };
-  }, []);
-
-  const scheduleDebouncedUpdate = (key: string, patch: Partial<AssistantSettings>) => {
-    if (debounceTimersRef.current[key]) {
-      window.clearTimeout(debounceTimersRef.current[key]);
-    }
-    debounceTimersRef.current[key] = window.setTimeout(() => {
-      delete debounceTimersRef.current[key];
-      onUpdateSettings(patch);
-    }, 350);
-  };
-
-  const flushDebouncedUpdate = (key: string, patch: Partial<AssistantSettings>) => {
-    if (debounceTimersRef.current[key]) {
-      window.clearTimeout(debounceTimersRef.current[key]);
-      delete debounceTimersRef.current[key];
-    }
-    onUpdateSettings(patch);
-  };
 
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1262,30 +922,18 @@ export function SettingsView({
           <span className="text-slate-300 font-medium">User Name</span>
           <input
             type="text"
-            value={userNameDraft}
-            onChange={(e) => {
-              const v = e.target.value;
-              setUserNameDraft(v);
-              scheduleDebouncedUpdate('userName', { userName: v });
-            }}
-            onBlur={() => flushDebouncedUpdate('userName', { userName: userNameDraft })}
+            value={settings.userName}
+            onChange={(e) => onUpdateSettings({ userName: e.target.value })}
             className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
           />
         </label>
 
         <label className="block space-y-1.5">
-          <span className="text-slate-300 font-medium">Default Weather Location</span>
+          <span className="text-slate-300 font-medium">Weather Location</span>
           <input
             type="text"
-            value={weatherLocationDraft}
-            onChange={(e) => {
-              const v = e.target.value;
-              setWeatherLocationDraft(v);
-              scheduleDebouncedUpdate('weatherLocation', { weatherLocation: v });
-            }}
-            onBlur={() =>
-              flushDebouncedUpdate('weatherLocation', { weatherLocation: weatherLocationDraft })
-            }
+            value={settings.weatherLocation}
+            onChange={(e) => onUpdateSettings({ weatherLocation: e.target.value })}
             className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
           />
         </label>
@@ -1302,9 +950,9 @@ export function SettingsView({
             <option value="local-auto">Local-First Auto (Built-In Local Core + Live Web · Free)</option>
             <option value="local-core">Built-In Local Core Only (Zero External LLM)</option>
             <option value="ollama">External Local LLM (Ollama / LM Studio · Optional)</option>
-            <option value="gemini-4-hydrogen">Gemini 4 Hydrogen (Optional Cloud Env Key)</option>
-            <option value="gemini-4-neon">Gemini 4 Neon (Optional Cloud Env Key)</option>
-            <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Optional Cloud Env Key)</option>
+            <option value="gemini-4-hydrogen">Gemini 4 Hydrogen (Optional Cloud Key)</option>
+            <option value="gemini-4-neon">Gemini 4 Neon (Optional Cloud Key)</option>
+            <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Optional Cloud Key)</option>
           </select>
         </label>
 
@@ -1312,13 +960,8 @@ export function SettingsView({
           <span className="text-slate-300 font-medium">Optional Local LLM Model Name</span>
           <input
             type="text"
-            value={ollamaModelDraft}
-            onChange={(e) => {
-              const v = e.target.value;
-              setOllamaModelDraft(v);
-              scheduleDebouncedUpdate('ollamaModel', { ollamaModel: v });
-            }}
-            onBlur={() => flushDebouncedUpdate('ollamaModel', { ollamaModel: ollamaModelDraft })}
+            value={settings.ollamaModel || ''}
+            onChange={(e) => onUpdateSettings({ ollamaModel: e.target.value })}
             placeholder="Not required (only if using LM Studio / Ollama)"
             className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
           />
@@ -1345,15 +988,8 @@ export function SettingsView({
           <span className="text-slate-300 font-medium">Reopen Desktop Shortcut</span>
           <input
             type="text"
-            value={reopenShortcutDraft}
-            onChange={(e) => {
-              const v = e.target.value;
-              setReopenShortcutDraft(v);
-              scheduleDebouncedUpdate('reopenShortcut', { reopenShortcut: v });
-            }}
-            onBlur={() =>
-              flushDebouncedUpdate('reopenShortcut', { reopenShortcut: reopenShortcutDraft })
-            }
+            value={settings.reopenShortcut}
+            onChange={(e) => onUpdateSettings({ reopenShortcut: e.target.value })}
             className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
           />
         </label>
@@ -1386,178 +1022,6 @@ export function SettingsView({
             />
             <span>Start in Fullscreen Borderless Mode</span>
           </label>
-        </div>
-      </section>
-
-      {/* Weather Preferences */}
-      <section className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-4 text-xs">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-            <CloudSun className="w-4 h-4 text-cyan-400" aria-hidden="true" />
-            <span>Weather Preferences &amp; Saved Locations</span>
-          </h3>
-          <div className="inline-flex rounded-lg border border-slate-700 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => onUpdateSettings({ temperatureUnit: 'celsius' })}
-              className={`px-3 py-1 font-medium ${
-                (settings.temperatureUnit || 'celsius') === 'celsius'
-                  ? 'bg-cyan-500 text-slate-950'
-                  : 'bg-slate-900 text-slate-300'
-              }`}
-            >
-              °C Celsius
-            </button>
-            <button
-              type="button"
-              onClick={() => onUpdateSettings({ temperatureUnit: 'fahrenheit' })}
-              className={`px-3 py-1 font-medium ${
-                settings.temperatureUnit === 'fahrenheit'
-                  ? 'bg-cyan-500 text-slate-950'
-                  : 'bg-slate-900 text-slate-300'
-              }`}
-            >
-              °F Fahrenheit
-            </button>
-          </div>
-        </div>
-
-        <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={settings.weatherNotificationsEnabled ?? true}
-            onChange={(e) => onUpdateSettings({ weatherNotificationsEnabled: e.target.checked })}
-            className="accent-cyan-400"
-          />
-          <span>Notify inside activity feed when active severe weather advisories appear</span>
-        </label>
-
-        <div className="space-y-2">
-          <div className="text-slate-300 font-medium">Favorite Cities</div>
-          <div className="flex flex-wrap gap-2">
-            {(settings.favoriteWeatherLocations ?? []).length === 0 ? (
-              <span className="text-slate-400">No favorite cities added yet.</span>
-            ) : (
-              (settings.favoriteWeatherLocations ?? []).map((city) => (
-                <span
-                  key={city}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-200"
-                >
-                  <MapPin className="w-3 h-3 text-cyan-400" aria-hidden="true" />
-                  <span>{city}</span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onUpdateSettings({
-                        favoriteWeatherLocations: (settings.favoriteWeatherLocations ?? []).filter(
-                          (f) => f !== city
-                        ),
-                      })
-                    }
-                    aria-label={`Remove favorite city ${city}`}
-                    className="text-slate-400 hover:text-rose-300"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              ))
-            )}
-          </div>
-
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const clean = newFavoriteCity.trim();
-              if (!clean) return;
-              const existing = settings.favoriteWeatherLocations ?? [];
-              if (!existing.some((c) => c.toLowerCase() === clean.toLowerCase())) {
-                onUpdateSettings({ favoriteWeatherLocations: [...existing, clean].slice(0, 8) });
-              }
-              setNewFavoriteCity('');
-            }}
-            className="flex gap-2"
-          >
-            <input
-              type="text"
-              value={newFavoriteCity}
-              onChange={(e) => setNewFavoriteCity(e.target.value)}
-              placeholder="Add favorite city (e.g., Tokyo, London, Mumbai)..."
-              aria-label="Add favorite weather city"
-              className="flex-1 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
-            />
-            <button
-              type="submit"
-              className="px-4 py-2 rounded-lg font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
-            >
-              Add City
-            </button>
-          </form>
-        </div>
-      </section>
-
-      {/* Read-Only Optional Server Integrations Status (Zero Secret Inputs in Frontend) */}
-      <section className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3 text-xs">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-              <Shield className="w-4 h-4 text-cyan-400" aria-hidden="true" />
-              <span>Optional Server Integrations Status (Read-Only)</span>
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              Core voice, file search, Open-Meteo weather, and web research operate free with zero keys. Optional providers are configured strictly via server environment variables.
-            </p>
-          </div>
-          {onCheckApiConnection && (
-            <button
-              type="button"
-              onClick={onCheckApiConnection}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-cyan-200 hover:border-cyan-400/50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${apiStatus?.checking ? 'animate-spin' : ''}`} aria-hidden="true" />
-              <span>Re-Check Status</span>
-            </button>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-          <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1">
-            <div className="text-slate-400">Open-Meteo Weather</div>
-            <div className="font-semibold text-emerald-300">Active (Free · No Key)</div>
-          </div>
-          <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1">
-            <div className="text-slate-400">Free Web Research</div>
-            <div className="font-semibold text-emerald-300">
-              {apiStatus?.freeWebReady === false ? 'Unavailable' : 'Active (Free · No Key)'}
-            </div>
-          </div>
-          <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1">
-            <div className="text-slate-400">Ollama / Local OpenAI</div>
-            <div
-              className={`font-semibold ${
-                apiStatus?.optionalProviders?.ollamaConfigured || apiStatus?.optionalProviders?.localOpenAiConfigured
-                  ? 'text-emerald-300'
-                  : 'text-slate-300'
-              }`}
-            >
-              {apiStatus?.optionalProviders?.ollamaConfigured
-                ? 'Configured (Ollama Env)'
-                : apiStatus?.optionalProviders?.localOpenAiConfigured
-                  ? 'Configured (Local Env)'
-                  : 'Optional (Not Configured)'}
-            </div>
-          </div>
-          <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1">
-            <div className="text-slate-400">Optional Cloud Gemini</div>
-            <div
-              className={`font-semibold ${
-                apiStatus?.optionalProviders?.geminiConfigured ? 'text-emerald-300' : 'text-slate-300'
-              }`}
-            >
-              {apiStatus?.optionalProviders?.geminiConfigured
-                ? 'Configured (Server Env)'
-                : 'Optional (Not Configured)'}
-            </div>
-          </div>
         </div>
       </section>
 

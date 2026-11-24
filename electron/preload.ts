@@ -7,8 +7,6 @@ interface ElectronPreloadApi {
   };
   ipcRenderer: {
     invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
-    on?: (channel: string, listener: (...args: unknown[]) => void) => void;
-    removeListener?: (channel: string, listener: (...args: unknown[]) => void) => void;
   };
 }
 
@@ -58,14 +56,6 @@ export function registerPreloadBridge(electronOverride?: ElectronPreloadApi): bo
     openFolder: (folderNameOrPath: string) =>
       ipcRenderer.invoke('friday:open-folder', String(folderNameOrPath)),
     getWindowsDiagnostics: () => ipcRenderer.invoke('friday:windows-diagnostics'),
-    onStopSpeech: (callback: () => void) => {
-      if (typeof ipcRenderer.on !== 'function') return () => {};
-      const handler = () => callback();
-      ipcRenderer.on('friday:stop-speech', handler);
-      return () => {
-        ipcRenderer.removeListener?.('friday:stop-speech', handler);
-      };
-    },
     isDesktopShell: true,
   });
 

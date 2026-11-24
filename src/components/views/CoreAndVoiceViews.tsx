@@ -1,25 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Activity,
-  Check,
-  CheckCircle2,
-  Circle,
   Cpu,
   ExternalLink,
   Layers,
   Mic,
   MicOff,
-  Pencil,
   Pin,
   Play,
   Plus,
   Radio,
   RefreshCw,
-  Trash2,
   Volume2,
-  VolumeX,
   Workflow,
-  X,
 } from 'lucide-react';
 import type {
   AgentDescriptor,
@@ -29,10 +22,8 @@ import type {
   DesktopAppItem,
   HologramMode,
   HologramSettings,
-  NoteItem,
   ProcessInfo,
   RunningWindowInfo,
-  TodoItem,
   VoiceState,
 } from '../../core/types';
 import { VOICE_STATE_META } from '../../core/agentRegistry';
@@ -245,11 +236,9 @@ export function VoiceAssistantView({
   voiceState,
   audioLevel,
   isListening,
-  isSpeaking = false,
   audioInputDevices = [],
   liveTranscript,
   onToggleListening,
-  onStopSpeaking,
   onUpdateSettings,
   onTestSpeech,
   onRefreshAudioDevices,
@@ -258,45 +247,20 @@ export function VoiceAssistantView({
   voiceState: VoiceState;
   audioLevel: number;
   isListening: boolean;
-  isSpeaking?: boolean;
   audioInputDevices?: Array<{ deviceId: string; label: string }>;
   liveTranscript?: string | null;
   onToggleListening: () => void;
-  onStopSpeaking?: () => void;
   onUpdateSettings: (patch: Partial<AssistantSettings>) => void;
   onTestSpeech: (phrase: string) => void;
   onRefreshAudioDevices?: () => Promise<void>;
 }) {
   const [testPhrase, setTestPhrase] = useState(
-    'All systems nominal. F.R.I.D.A.Y. holographic core and local voice pipeline active.'
+    'All systems nominal. F.R.I.D.A.Y. holographic core and neural voice pipeline active.'
   );
-  const [wakeWordDraft, setWakeWordDraft] = useState(settings.wakeWord);
-  const wakeTimerRef = useRef<number | null>(null);
   const [voiceDiagRunning, setVoiceDiagRunning] = useState(false);
   const [voiceDiagResults, setVoiceDiagResults] = useState<
     Array<{ id: string; label: string; status: 'pass' | 'warning' | 'fail'; detail: string }>
   >([]);
-
-  useEffect(() => {
-    setWakeWordDraft(settings.wakeWord);
-  }, [settings.wakeWord]);
-
-  useEffect(() => {
-    return () => {
-      if (wakeTimerRef.current) window.clearTimeout(wakeTimerRef.current);
-    };
-  }, []);
-
-  const flushWakeWord = (nextVal: string) => {
-    if (wakeTimerRef.current) {
-      window.clearTimeout(wakeTimerRef.current);
-      wakeTimerRef.current = null;
-    }
-    const clean = nextVal.trim();
-    if (clean && clean !== settings.wakeWord) {
-      onUpdateSettings({ wakeWord: clean });
-    }
-  };
 
   const runVoiceDiagnostics = async () => {
     setVoiceDiagRunning(true);
@@ -363,11 +327,11 @@ export function VoiceAssistantView({
 
       const sttDetail = voiceCaps?.offlineSttReady
         ? `Windows System.Speech ready (${(voiceCaps.recognizers || []).join(', ')})`
-        : speechRecSupported
-          ? 'Browser Web SpeechRecognition active (Windows System.Speech ready inside Desktop App)'
-          : voiceCaps?.geminiSpeechAvailable
-            ? 'Optional cloud speech transcription active'
-            : 'Ready inside Electron on Windows (System.Speech) or Web Speech browsers';
+        : voiceCaps?.geminiSpeechAvailable
+          ? 'Gemini cloud speech transcription active'
+          : speechRecSupported
+            ? 'Browser Web SpeechRecognition available (requires Chrome/Edge online service)'
+            : 'No offline Windows speech pack or Gemini key detected yet';
 
       items.push({
         id: 'stt',
@@ -429,30 +393,18 @@ export function VoiceAssistantView({
               {liveTranscript ? ` · ${liveTranscript}` : ''}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {isSpeaking && onStopSpeaking && (
-              <button
-                type="button"
-                onClick={onStopSpeaking}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-rose-500/20 text-rose-200 border border-rose-400/50 hover:bg-rose-500/30"
-              >
-                <VolumeX className="w-4 h-4" />
-                <span>Stop Speaking</span>
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onToggleListening}
-              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold border transition-colors ${
-                isListening
-                  ? 'bg-cyan-500 text-slate-950 border-cyan-400'
-                  : 'bg-slate-900 text-cyan-200 border-cyan-500/40 hover:bg-cyan-500/15'
-              }`}
-            >
-              {isListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-              <span>{isListening ? 'Listening Active (Click to Send/Stop)' : 'Start Microphone Capture'}</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onToggleListening}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+              isListening
+                ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                : 'bg-slate-900 text-cyan-200 border-cyan-500/40 hover:bg-cyan-500/15'
+            }`}
+          >
+            {isListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+            <span>{isListening ? 'Listening Active (Click to Send/Stop)' : 'Start Microphone Capture'}</span>
+          </button>
         </div>
 
         <div className="h-24 rounded-lg bg-slate-950/80 border border-slate-800 px-4 flex items-center justify-between gap-1.5">
@@ -470,14 +422,8 @@ export function VoiceAssistantView({
             <span className="text-slate-300 font-medium">Wake Word</span>
             <input
               type="text"
-              value={wakeWordDraft}
-              onChange={(e) => {
-                const v = e.target.value;
-                setWakeWordDraft(v);
-                if (wakeTimerRef.current) window.clearTimeout(wakeTimerRef.current);
-                wakeTimerRef.current = window.setTimeout(() => flushWakeWord(v), 350);
-              }}
-              onBlur={() => flushWakeWord(wakeWordDraft)}
+              value={settings.wakeWord}
+              onChange={(e) => onUpdateSettings({ wakeWord: e.target.value })}
               className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
             />
           </label>
@@ -689,13 +635,11 @@ export function ApplicationsView({
   apps,
   onLaunchApp,
   onTogglePinApp,
-  onRefreshApps,
   launchNotice,
 }: {
   apps: DesktopAppItem[];
   onLaunchApp: (app: DesktopAppItem) => void;
   onTogglePinApp: (id: string) => void;
-  onRefreshApps?: () => Promise<void>;
   launchNotice: string | null;
 }) {
   const [filter, setFilter] = useState<'all' | DesktopAppItem['category']>('all');
@@ -703,14 +647,11 @@ export function ApplicationsView({
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [windowsList, setWindowsList] = useState<RunningWindowInfo[]>([]);
   const [windowActionMsg, setWindowActionMsg] = useState<string | null>(null);
-  const [procError, setProcError] = useState<string | null>(null);
   const [pendingCloseTarget, setPendingCloseTarget] = useState<string | null>(null);
   const [loadingProc, setLoadingProc] = useState(false);
-  const [refreshingApps, setRefreshingApps] = useState(false);
 
   const loadProcesses = async () => {
     setLoadingProc(true);
-    setProcError(null);
     try {
       const [procRes, winRes] = await Promise.all([
         fetch('/api/system/processes'),
@@ -719,27 +660,15 @@ export function ApplicationsView({
       if (procRes.ok) {
         const procData = await procRes.json();
         setProcesses(procData.processes ?? []);
-      } else {
-        setProcError('Unable to fetch live OS process list.');
       }
       if (winRes.ok) {
         const winData = await winRes.json();
         setWindowsList(winData.windows ?? []);
       }
-    } catch (err) {
-      setProcError((err as Error).message || 'Process inspector offline.');
+    } catch {
+      // Offline / Android local runtime has no localhost Express process daemon
     } finally {
       setLoadingProc(false);
-    }
-  };
-
-  const handleRefreshCatalog = async () => {
-    if (!onRefreshApps) return;
-    setRefreshingApps(true);
-    try {
-      await onRefreshApps();
-    } finally {
-      setRefreshingApps(false);
     }
   };
 
@@ -753,18 +682,14 @@ export function ApplicationsView({
       return;
     }
     setPendingCloseTarget(null);
-    try {
-      const res = await fetch('/api/apps/window-action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ processName, action, confirmed }),
-      });
-      const data = await res.json();
-      setWindowActionMsg(data.detail || data.error || 'Action completed');
-      if (action === 'close') void loadProcesses();
-    } catch (err) {
-      setWindowActionMsg((err as Error).message || 'Window action failed');
-    }
+    const res = await fetch('/api/apps/window-action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ processName, action, confirmed }),
+    });
+    const data = await res.json();
+    setWindowActionMsg(data.detail || data.error || 'Action completed');
+    if (action === 'close') void loadProcesses();
   };
 
   useEffect(() => {
@@ -791,37 +716,19 @@ export function ApplicationsView({
             Launch installed tools, pin favorites, and inspect live OS process utilization.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {onRefreshApps && (
-            <button
-              type="button"
-              onClick={handleRefreshCatalog}
-              disabled={refreshingApps}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-slate-900 border border-cyan-500/35 text-cyan-200 hover:bg-cyan-500/15 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${refreshingApps ? 'animate-spin' : ''}`} aria-hidden="true" />
-              <span>{refreshingApps ? 'Scanning...' : 'Refresh Installed Apps'}</span>
-            </button>
-          )}
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter applications..."
-            aria-label="Filter applications"
-            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100 w-56"
-          />
-        </div>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter applications..."
+          aria-label="Filter applications"
+          className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100 w-56"
+        />
       </div>
 
       {launchNotice && (
         <div className="px-4 py-2.5 rounded-lg bg-cyan-950/70 border border-cyan-500/35 text-xs text-cyan-200">
           {launchNotice}
-        </div>
-      )}
-      {procError && (
-        <div className="px-4 py-2.5 rounded-lg bg-amber-950/60 border border-amber-500/35 text-xs text-amber-200">
-          {procError}
         </div>
       )}
 
@@ -1016,520 +923,119 @@ export function ApplicationsView({
 
 export function TasksWorkflowsView({
   workflows,
-  todos = [],
-  notes = [],
   onRunWorkflow,
   onCreateWorkflow,
-  onAddTodo,
-  onToggleTodo,
-  onUpdateTodo,
-  onDeleteTodo,
-  onAddNote,
-  onUpdateNote,
-  onDeleteNote,
   runningId,
 }: {
   workflows: AutomationWorkflow[];
-  todos?: TodoItem[];
-  notes?: NoteItem[];
   onRunWorkflow: (id: string) => Promise<void>;
   onCreateWorkflow: (payload: { name: string; description: string; triggerPhrase: string }) => Promise<void>;
-  onAddTodo?: (payload: string | { title: string; priority?: 'low' | 'normal' | 'high'; dueDate?: string }) => Promise<void> | void;
-  onToggleTodo?: (id: string) => Promise<void> | void;
-  onUpdateTodo?: (id: string, patch: Partial<TodoItem>) => Promise<void> | void;
-  onDeleteTodo?: (id: string) => Promise<void> | void;
-  onAddNote?: (payload: { title: string; content: string; pinned?: boolean }) => Promise<void> | void;
-  onUpdateNote?: (id: string, patch: Partial<NoteItem>) => Promise<void> | void;
-  onDeleteNote?: (id: string) => Promise<void> | void;
   runningId: string | null;
 }) {
-  const [todoTitle, setTodoTitle] = useState('');
-  const [todoPriority, setTodoPriority] = useState<TodoItem['priority']>('normal');
-  const [todoDueDate, setTodoDueDate] = useState('');
-  const [todoFilter, setTodoFilter] = useState<'all' | 'open' | 'completed'>('all');
-  const [todoError, setTodoError] = useState<string | null>(null);
-  const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
-  const [editTodoTitle, setEditTodoTitle] = useState('');
-
-  const [noteTitle, setNoteTitle] = useState('');
-  const [noteContent, setNoteContent] = useState('');
-  const [noteError, setNoteError] = useState<string | null>(null);
-  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
-  const [editNoteTitle, setEditNoteTitle] = useState('');
-  const [editNoteContent, setEditNoteContent] = useState('');
-
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [triggerPhrase, setTriggerPhrase] = useState('');
-  const [wfError, setWfError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !triggerPhrase.trim()) {
-      setWfError('Please enter both a workflow name and a command trigger phrase.');
-      return;
-    }
-    setWfError(null);
-    await onCreateWorkflow({ name: name.trim(), description: description.trim(), triggerPhrase: triggerPhrase.trim() });
+    if (!name.trim() || !triggerPhrase.trim()) return;
+    await onCreateWorkflow({ name, description, triggerPhrase });
     setName('');
     setDescription('');
     setTriggerPhrase('');
   };
 
-  const handleTodoSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!todoTitle.trim()) {
-      setTodoError('Enter a task description before adding.');
-      return;
-    }
-    setTodoError(null);
-    await onAddTodo?.({
-      title: todoTitle.trim(),
-      priority: todoPriority,
-      dueDate: todoDueDate || undefined,
-    });
-    setTodoTitle('');
-    setTodoDueDate('');
-  };
-
-  const handleNoteSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!noteTitle.trim() && !noteContent.trim()) {
-      setNoteError('Enter a note title or content before saving.');
-      return;
-    }
-    setNoteError(null);
-    await onAddNote?.({
-      title: noteTitle.trim() || noteContent.trim().slice(0, 48),
-      content: noteContent.trim() || noteTitle.trim(),
-    });
-    setNoteTitle('');
-    setNoteContent('');
-  };
-
-  const visibleTodos = todos.filter((t) =>
-    todoFilter === 'all' ? true : todoFilter === 'open' ? !t.completed : t.completed
-  );
-  const sortedNotes = [...notes].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
-
   return (
     <div className="flex-1 h-full overflow-y-auto p-6 space-y-6">
       <div>
-        <h2 className="font-display text-xl font-semibold text-slate-100">
-          Tasks, Notes &amp; Automation Workflows
-        </h2>
+        <h2 className="font-display text-xl font-semibold text-slate-100">Tasks & Multi-Agent Workflows</h2>
         <p className="text-sm text-slate-400">
-          Manage your personal to-do tasks, pinned notes, and repeatable desktop workflows with persistent storage.
+          Chain specialist agents into repeatable desktop workflows with explicit audit logging.
         </p>
       </div>
 
-      {/* Tasks & Notes Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        {/* To-Do Tasks Section */}
-        <section className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-slate-100">
-              To-Do Tasks ({todos.filter((t) => !t.completed).length} Open)
-            </h3>
-            <div className="flex items-center gap-1 text-[11px]">
-              {(['all', 'open', 'completed'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setTodoFilter(mode)}
-                  className={`px-2.5 py-1 rounded-md capitalize border ${
-                    todoFilter === mode
-                      ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200'
-                      : 'bg-slate-900 border-slate-700 text-slate-400'
-                  }`}
-                >
-                  {mode}
-                </button>
-              ))}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {workflows.map((wf) => (
+          <div
+            key={wf.id}
+            className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 flex flex-col justify-between gap-4"
+          >
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-semibold text-sm text-slate-100 flex items-center gap-2">
+                  <Workflow className="w-4 h-4 text-cyan-400" aria-hidden="true" />
+                  <span>{wf.name}</span>
+                </h3>
+                <span className="text-[11px] font-mono-tabular text-slate-400">
+                  Runs: {wf.runCount}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">{wf.description}</p>
+              <div className="mt-3 space-y-1">
+                {wf.steps.map((s, idx) => (
+                  <div key={idx} className="text-xs text-slate-300 flex items-center gap-2">
+                    <span className="font-mono-tabular text-cyan-400 uppercase">{s.agent}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{s.action}</span>
+                  </div>
+                ))}
+              </div>
             </div>
+
+            <button
+              type="button"
+              disabled={runningId === wf.id}
+              onClick={() => onRunWorkflow(wf.id)}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
+            >
+              <Play className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>{runningId === wf.id ? 'Executing Pipeline...' : 'Run Workflow'}</span>
+            </button>
           </div>
-
-          <form onSubmit={handleTodoSubmit} className="space-y-2">
-            <div className="flex flex-wrap gap-2">
-              <input
-                type="text"
-                value={todoTitle}
-                onChange={(e) => {
-                  setTodoTitle(e.target.value);
-                  if (todoError) setTodoError(null);
-                }}
-                placeholder="Add new task..."
-                aria-label="New task title"
-                className="flex-1 min-w-[160px] px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-              />
-              <select
-                value={todoPriority}
-                onChange={(e) => setTodoPriority(e.target.value as TodoItem['priority'])}
-                aria-label="Task priority"
-                className="px-2.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-              >
-                <option value="low">Low</option>
-                <option value="normal">Normal</option>
-                <option value="high">High</option>
-              </select>
-              <input
-                type="date"
-                value={todoDueDate}
-                onChange={(e) => setTodoDueDate(e.target.value)}
-                aria-label="Task due date"
-                className="px-2.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-              />
-              <button
-                type="submit"
-                className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400 shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Add Task</span>
-              </button>
-            </div>
-            {todoError && <p className="text-xs text-rose-300">{todoError}</p>}
-          </form>
-
-          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-            {visibleTodos.length === 0 ? (
-              <p className="text-xs text-slate-400">No tasks in this view.</p>
-            ) : (
-              visibleTodos.map((todo) => (
-                <div
-                  key={todo.id}
-                  className="p-2.5 rounded-lg bg-slate-900/75 border border-slate-800 flex items-center justify-between gap-2"
-                >
-                  {editingTodoId === todo.id ? (
-                    <div className="flex-1 flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={editTodoTitle}
-                        onChange={(e) => setEditTodoTitle(e.target.value)}
-                        aria-label="Edit task title"
-                        className="flex-1 px-2 py-1 rounded bg-slate-950 border border-slate-700 text-xs text-slate-100"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (editTodoTitle.trim()) {
-                            void onUpdateTodo?.(todo.id, { title: editTodoTitle.trim() });
-                          }
-                          setEditingTodoId(null);
-                        }}
-                        aria-label={`Save task "${todo.title}"`}
-                        className="p-1.5 rounded bg-cyan-500 text-slate-950"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingTodoId(null)}
-                        aria-label="Cancel task edit"
-                        className="p-1.5 rounded bg-slate-800 text-slate-300"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => onToggleTodo?.(todo.id)}
-                        className="flex items-center gap-2.5 text-left min-w-0 flex-1"
-                      >
-                        {todo.completed ? (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                        ) : (
-                          <Circle className="w-4 h-4 text-cyan-400 shrink-0" />
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div
-                            className={`text-xs font-medium truncate ${
-                              todo.completed ? 'line-through text-slate-500' : 'text-slate-100'
-                            }`}
-                          >
-                            {todo.title}
-                          </div>
-                          <div className="text-[11px] text-slate-400 font-mono-tabular">
-                            {todo.priority}
-                            {todo.dueDate ? ` · Due ${todo.dueDate}` : ''}
-                          </div>
-                        </div>
-                      </button>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {onUpdateTodo && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingTodoId(todo.id);
-                              setEditTodoTitle(todo.title);
-                            }}
-                            aria-label={`Edit task "${todo.title}"`}
-                            className="p-1.5 rounded text-slate-400 hover:text-cyan-300"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        {onDeleteTodo && (
-                          <button
-                            type="button"
-                            onClick={() => onDeleteTodo(todo.id)}
-                            aria-label={`Delete task "${todo.title}"`}
-                            className="p-1.5 rounded text-slate-400 hover:text-rose-300"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-
-        {/* Notes Section */}
-        <section className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-4">
-          <h3 className="text-sm font-semibold text-slate-100">
-            Personal Notes ({notes.length})
-          </h3>
-
-          <form onSubmit={handleNoteSubmit} className="space-y-2">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={noteTitle}
-                onChange={(e) => {
-                  setNoteTitle(e.target.value);
-                  if (noteError) setNoteError(null);
-                }}
-                placeholder="Note title..."
-                aria-label="Note title"
-                className="flex-1 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-              />
-              <button
-                type="submit"
-                className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400 shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Save Note</span>
-              </button>
-            </div>
-            <textarea
-              value={noteContent}
-              onChange={(e) => {
-                setNoteContent(e.target.value);
-                if (noteError) setNoteError(null);
-              }}
-              rows={2}
-              placeholder="Write detailed note..."
-              aria-label="Note content"
-              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-            />
-            {noteError && <p className="text-xs text-rose-300">{noteError}</p>}
-          </form>
-
-          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-            {sortedNotes.length === 0 ? (
-              <p className="text-xs text-slate-400">No notes saved yet.</p>
-            ) : (
-              sortedNotes.map((n) => (
-                <div
-                  key={n.id}
-                  className="p-3 rounded-lg bg-slate-900/75 border border-slate-800 space-y-1.5"
-                >
-                  {editingNoteId === n.id ? (
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        value={editNoteTitle}
-                        onChange={(e) => setEditNoteTitle(e.target.value)}
-                        aria-label="Edit note title"
-                        className="w-full px-2.5 py-1.5 rounded bg-slate-950 border border-slate-700 text-xs text-slate-100"
-                      />
-                      <textarea
-                        value={editNoteContent}
-                        onChange={(e) => setEditNoteContent(e.target.value)}
-                        rows={2}
-                        aria-label="Edit note content"
-                        className="w-full px-2.5 py-1.5 rounded bg-slate-950 border border-slate-700 text-xs text-slate-100"
-                      />
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void onUpdateNote?.(n.id, {
-                              title: editNoteTitle.trim() || n.title,
-                              content: editNoteContent.trim() || n.content,
-                            });
-                            setEditingNoteId(null);
-                          }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-cyan-500 text-slate-950 text-xs font-semibold"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Save</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditingNoteId(null)}
-                          className="px-2.5 py-1 rounded bg-slate-800 text-slate-300 text-xs"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-xs font-semibold text-slate-100 truncate">
-                          {n.pinned ? '📌 ' : ''}
-                          {n.title}
-                        </div>
-                        <div className="text-xs text-slate-300 whitespace-pre-wrap mt-0.5">{n.content}</div>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {onUpdateNote && (
-                          <button
-                            type="button"
-                            onClick={() => void onUpdateNote(n.id, { pinned: !n.pinned })}
-                            aria-label={n.pinned ? `Unpin note "${n.title}"` : `Pin note "${n.title}"`}
-                            className={`p-1 rounded ${n.pinned ? 'text-cyan-300' : 'text-slate-400 hover:text-cyan-300'}`}
-                          >
-                            <Pin className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        {onUpdateNote && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingNoteId(n.id);
-                              setEditNoteTitle(n.title);
-                              setEditNoteContent(n.content);
-                            }}
-                            aria-label={`Edit note "${n.title}"`}
-                            className="p-1 rounded text-slate-400 hover:text-cyan-300"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        {onDeleteNote && (
-                          <button
-                            type="button"
-                            onClick={() => onDeleteNote(n.id)}
-                            aria-label={`Delete note "${n.title}"`}
-                            className="p-1 rounded text-slate-400 hover:text-rose-300"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </section>
+        ))}
       </div>
 
-      {/* Multi-Agent Workflows Section */}
-      <div className="space-y-4 pt-2">
+      <form
+        onSubmit={handleSubmit}
+        className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3"
+      >
         <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-          <Workflow className="w-4 h-4 text-cyan-400" aria-hidden="true" />
-          <span>Multi-Agent Automation Workflows</span>
+          <Plus className="w-4 h-4 text-cyan-400" aria-hidden="true" />
+          <span>Create Automation Workflow</span>
         </h3>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {workflows.map((wf) => (
-            <div
-              key={wf.id}
-              className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 flex flex-col justify-between gap-4"
-            >
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <h4 className="font-semibold text-sm text-slate-100 flex items-center gap-2">
-                    <Workflow className="w-4 h-4 text-cyan-400" aria-hidden="true" />
-                    <span>{wf.name}</span>
-                  </h4>
-                  <span className="text-[11px] font-mono-tabular text-slate-400">
-                    Runs: {wf.runCount}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 mt-1">{wf.description}</p>
-                <div className="mt-3 space-y-1">
-                  {wf.steps.map((s, idx) => (
-                    <div key={idx} className="text-xs text-slate-300 flex items-center gap-2">
-                      <span className="font-mono-tabular text-cyan-400 uppercase">{s.agent}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{s.action}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <button
-                type="button"
-                disabled={runningId === wf.id}
-                onClick={() => onRunWorkflow(wf.id)}
-                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
-              >
-                <Play className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>{runningId === wf.id ? 'Executing Pipeline...' : 'Run Workflow'}</span>
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <form
-          onSubmit={handleSubmit}
-          className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3"
-        >
-          <h4 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-            <Plus className="w-4 h-4 text-cyan-400" aria-hidden="true" />
-            <span>Create Automation Workflow</span>
-          </h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                if (wfError) setWfError(null);
-              }}
-              placeholder="Workflow Name (e.g., Evening Project Backup Check)"
-              aria-label="Workflow name"
-              className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-            />
-            <input
-              type="text"
-              value={triggerPhrase}
-              onChange={(e) => {
-                setTriggerPhrase(e.target.value);
-                if (wfError) setWfError(null);
-              }}
-              placeholder="Command Trigger (e.g., Check system performance and schedule)"
-              aria-label="Workflow trigger phrase"
-              className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
-            />
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <input
             type="text"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Short description..."
-            aria-label="Workflow description"
-            className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Workflow Name (e.g., Evening Project Backup Check)"
+            aria-label="Workflow name"
+            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
           />
-          {wfError && <p className="text-xs text-rose-300">{wfError}</p>}
-          <button
-            type="submit"
-            className="px-4 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
-          >
-            Save Workflow
-          </button>
-        </form>
-      </div>
+          <input
+            type="text"
+            value={triggerPhrase}
+            onChange={(e) => setTriggerPhrase(e.target.value)}
+            placeholder="Command Trigger (e.g., Check system performance and schedule)"
+            aria-label="Workflow trigger phrase"
+            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+          />
+        </div>
+        <input
+          type="text"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Short description..."
+          aria-label="Workflow description"
+          className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+        />
+        <button
+          type="submit"
+          className="px-4 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+        >
+          Save Workflow
+        </button>
+      </form>
     </div>
   );
 }

@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  AlertTriangle,
   Calendar as CalendarIcon,
   Camera,
   Check,
-  Copy,
   Cpu,
   Droplets,
   ExternalLink,
@@ -16,12 +14,10 @@ import {
   MemoryStick,
   Mic,
   Monitor,
-  RefreshCw,
   Send,
   ShieldAlert,
   Sparkles,
   Volume2,
-  VolumeX,
   Wind,
   X,
 } from 'lucide-react';
@@ -32,7 +28,6 @@ import type {
   ChatMessage,
   DesktopAppItem,
   HologramSettings,
-  IndexedFileItem,
   NavSection,
   SystemTelemetry,
   VoiceState,
@@ -40,7 +35,6 @@ import type {
 } from '../core/types';
 import { VOICE_STATE_META } from '../core/agentRegistry';
 import { formatBytes } from '../core/fileIndex';
-import { formatTemperature, type TemperatureUnit } from '../core/weatherUtils';
 import { FridayCore3D } from './FridayCore3D';
 
 interface CommandWorkspaceProps {
@@ -66,7 +60,6 @@ interface CommandWorkspaceProps {
   cpuHistory: number[];
   weather: WeatherData | null;
   weatherError: string | null;
-  temperatureUnit?: TemperatureUnit;
   onSelectSection: (section: NavSection) => void;
   onSubmitCommand: (command: string) => Promise<boolean | void>;
   onConfirmAction: (actionType: string, summary: string, approved: boolean) => Promise<void>;
@@ -77,8 +70,6 @@ interface CommandWorkspaceProps {
   onLaunchApp: (app: DesktopAppItem) => void;
   onToggleEvent: (id: string) => void;
   onSpeakText: (text: string) => void;
-  onStopSpeaking: () => void;
-  onOpenWeatherDetails: () => void;
   onCheckApiConnection: () => void;
   onDismissError: () => void;
   onDismissLaunchNotice: () => void;
@@ -100,15 +91,36 @@ const REFERENCE_APPS: Array<{
   { id: 'app-github', label: 'GitHub', command: 'github', category: 'development' },
 ];
 
-function fileExtKind(extOrName: string): 'pptx' | 'pdf' | 'zip' | 'docx' | 'code' | 'other' {
-  const lower = extOrName.toLowerCase();
-  if (lower.endsWith('.pptx') || lower.endsWith('.ppt') || lower === 'pptx') return 'pptx';
-  if (lower.endsWith('.pdf') || lower === 'pdf') return 'pdf';
-  if (lower.endsWith('.zip') || lower.endsWith('.7z') || lower.endsWith('.tar') || lower === 'zip') return 'zip';
-  if (lower.endsWith('.docx') || lower.endsWith('.doc') || lower === 'docx') return 'docx';
-  if (/\.(ts|tsx|js|jsx|py|json|md|html|css)$/.test(lower)) return 'code';
-  return 'other';
-}
+const REFERENCE_RECENT_FILES = [
+  {
+    id: 'ref-file-1',
+    name: 'Shashvat_AI_Presentation.pptx',
+    type: 'pptx' as const,
+    sizeBytes: 4_820_400,
+    summary: 'Presentation deck covering F.R.I.D.A.Y. architecture, multi-agent orchestration, and edge intelligence benchmarks.',
+  },
+  {
+    id: 'ref-file-2',
+    name: 'Project_Report.pdf',
+    type: 'pdf' as const,
+    sizeBytes: 2_310_120,
+    summary: 'Comprehensive project report detailing system design, diagnostics audit results, and security sandboxing.',
+  },
+  {
+    id: 'ref-file-3',
+    name: 'FRIDAY_Code.zip',
+    type: 'zip' as const,
+    sizeBytes: 18_450_000,
+    summary: 'Packaged F.R.I.D.A.Y. Command Center source snapshot including Electron bridge and local AI services.',
+  },
+  {
+    id: 'ref-file-4',
+    name: 'AI_Models.docx',
+    type: 'docx' as const,
+    sizeBytes: 940_210,
+    summary: 'Model evaluation matrix comparing local Ollama weights, deterministic command engine, and Gemini routing.',
+  },
+];
 
 function formatAgendaTime(time24: string): string {
   const [hStr, mStr] = time24.split(':');
@@ -214,7 +226,7 @@ function AppBrandIcon({ id }: { id: string }) {
   );
 }
 
-function FileTypeBadge({ type }: { type: 'pptx' | 'pdf' | 'zip' | 'docx' | 'code' | 'other' }) {
+function FileTypeBadge({ type }: { type: 'pptx' | 'pdf' | 'zip' | 'docx' }) {
   if (type === 'pptx') {
     return (
       <div className="w-5 h-5 rounded bg-[#d9480f] text-white text-[10px] font-bold flex items-center justify-center shrink-0">
@@ -236,23 +248,9 @@ function FileTypeBadge({ type }: { type: 'pptx' | 'pdf' | 'zip' | 'docx' | 'code
       </div>
     );
   }
-  if (type === 'docx') {
-    return (
-      <div className="w-5 h-5 rounded bg-[#1c7ed6] text-white text-[10px] font-bold flex items-center justify-center shrink-0">
-        W
-      </div>
-    );
-  }
-  if (type === 'code') {
-    return (
-      <div className="w-5 h-5 rounded bg-purple-600 text-white text-[8px] font-bold flex items-center justify-center shrink-0">
-        &lt;/&gt;
-      </div>
-    );
-  }
   return (
-    <div className="w-5 h-5 rounded bg-slate-700 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
-      F
+    <div className="w-5 h-5 rounded bg-[#1c7ed6] text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+      W
     </div>
   );
 }
@@ -365,9 +363,7 @@ export function CommandWorkspace({
   wakeWordEnabled,
   isListening,
   isRecordingAudio,
-  isSpeaking,
   liveTranscript,
-  apiStatus,
   errorBanner,
   launchNotice,
   apps,
@@ -376,7 +372,6 @@ export function CommandWorkspace({
   cpuHistory,
   weather,
   weatherError,
-  temperatureUnit = 'celsius',
   onSelectSection,
   onSubmitCommand,
   onConfirmAction,
@@ -385,18 +380,11 @@ export function CommandWorkspace({
   onLaunchApp,
   onToggleEvent,
   onSpeakText,
-  onStopSpeaking,
-  onOpenWeatherDetails,
-  onCheckApiConnection,
   onDismissError,
   onDismissLaunchNotice,
 }: CommandWorkspaceProps) {
   const [input, setInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [copiedDrawer, setCopiedDrawer] = useState(false);
-  const [recentFiles, setRecentFiles] = useState<IndexedFileItem[]>([]);
-  const [loadingRecentFiles, setLoadingRecentFiles] = useState(false);
-  const [recentFilesError, setRecentFilesError] = useState<string | null>(null);
   const [previewModal, setPreviewModal] = useState<{
     name: string;
     content: string;
@@ -405,30 +393,6 @@ export function CommandWorkspace({
   const [showResponseDrawer, setShowResponseDrawer] = useState(false);
   const prevMsgCountRef = useRef(messages.length);
   const hasBootstrappedRef = useRef(false);
-
-  const loadRecentFiles = useCallback(async () => {
-    setLoadingRecentFiles(true);
-    setRecentFilesError(null);
-    try {
-      const res = await fetch('/api/files');
-      if (!res.ok) throw new Error('File index unavailable');
-      const data = await res.json();
-      const list = Array.isArray(data?.files) ? (data.files as IndexedFileItem[]) : [];
-      const sorted = [...list].sort(
-        (a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime()
-      );
-      setRecentFiles(sorted.slice(0, 5));
-    } catch (err) {
-      setRecentFiles([]);
-      setRecentFilesError((err as Error).message || 'Unable to load workspace files');
-    } finally {
-      setLoadingRecentFiles(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadRecentFiles();
-  }, [loadRecentFiles]);
 
   useEffect(() => {
     if (!hasBootstrappedRef.current) {
@@ -457,34 +421,32 @@ export function CommandWorkspace({
     }
   };
 
-  const handleOpenRecentFile = async (file: IndexedFileItem) => {
+  const handleOpenRecentFile = async (refFile: (typeof REFERENCE_RECENT_FILES)[number]) => {
     try {
-      const readRes = await fetch('/api/files/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath: file.path }),
-      });
-      const data = await readRes.json();
-      if (!readRes.ok) throw new Error(data.error || 'Failed to read file');
-      setPreviewModal(data);
-    } catch (err) {
-      setPreviewModal({
-        name: file.name,
-        content: `Unable to read "${file.name}": ${(err as Error).message}`,
-        sizeBytes: file.sizeBytes,
-      });
-    }
-  };
-
-  const handleCopyDrawerResponse = async (text: string) => {
-    if (!text) return;
-    try {
-      await navigator.clipboard?.writeText(text);
-      setCopiedDrawer(true);
-      window.setTimeout(() => setCopiedDrawer(false), 1600);
+      const searchRes = await fetch(`/api/files?q=${encodeURIComponent(refFile.name)}`);
+      if (searchRes.ok) {
+        const searchData = await searchRes.json();
+        const found = searchData?.files?.[0];
+        if (found?.path) {
+          const readRes = await fetch('/api/files/read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filePath: found.path }),
+          });
+          if (readRes.ok) {
+            setPreviewModal(await readRes.json());
+            return;
+          }
+        }
+      }
     } catch {
-      // Clipboard blocked in non-HTTPS contexts
+      // Fall through to structured preview
     }
+    setPreviewModal({
+      name: refFile.name,
+      content: `${refFile.name}\n\n${refFile.summary}`,
+      sizeBytes: refFile.sizeBytes,
+    });
   };
 
   const latestAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
@@ -559,35 +521,10 @@ export function CommandWorkspace({
               <h2 className="text-xs font-bold tracking-[0.12em] text-white uppercase">
                 AI STATUS
               </h2>
-              <button
-                type="button"
-                onClick={onCheckApiConnection}
-                title={apiStatus.provider}
-                className={`inline-flex items-center gap-1.5 text-xs font-medium transition-colors ${
-                  apiStatus.checking
-                    ? 'text-amber-300'
-                    : apiStatus.connected
-                      ? 'text-emerald-400 hover:text-emerald-300'
-                      : 'text-rose-300 hover:text-rose-200'
-                }`}
-              >
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    apiStatus.checking
-                      ? 'bg-amber-400 shadow-[0_0_8px_#fbbf24]'
-                      : apiStatus.connected
-                        ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
-                        : 'bg-rose-400 shadow-[0_0_8px_#fb7185]'
-                  }`}
-                />
-                <span>
-                  {apiStatus.checking
-                    ? 'Checking...'
-                    : apiStatus.connected
-                      ? 'Ready'
-                      : 'Offline Fallback'}
-                </span>
-              </button>
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
+                <span>Online</span>
+              </span>
             </div>
 
             <div className="hud-inset-box flex items-center justify-between gap-2 px-3 py-2 rounded-xl">
@@ -634,7 +571,7 @@ export function CommandWorkspace({
                 ))}
               </div>
               <span className="text-[11px] font-medium text-purple-100 whitespace-nowrap">
-                {voiceState === 'standby' ? 'Mic Ready' : voiceMeta.label}
+                {voiceState === 'standby' ? 'Listening Ready' : voiceMeta.label}
               </span>
             </div>
           </section>
@@ -707,59 +644,38 @@ export function CommandWorkspace({
 
           {/* 3. RECENT FILES CARD */}
           <section className="hud-panel rounded-2xl p-3.5 flex-1 min-h-[180px] flex flex-col gap-2.5">
-            <div className="flex items-center justify-between shrink-0 gap-2">
+            <div className="flex items-center justify-between shrink-0">
               <h2 className="text-xs font-bold tracking-[0.1em] text-white uppercase">
                 RECENT FILES
               </h2>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void loadRecentFiles()}
-                  disabled={loadingRecentFiles}
-                  aria-label="Refresh recent files"
-                  className="text-purple-200/80 hover:text-white transition-colors"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${loadingRecentFiles ? 'animate-spin' : ''}`} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSelectSection('file-explorer')}
-                  className="text-[11px] font-medium text-purple-200/90 hover:text-white transition-colors"
-                >
-                  View All →
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => onSelectSection('file-explorer')}
+                className="text-[11px] font-medium text-purple-200/90 hover:text-white transition-colors"
+              >
+                View All →
+              </button>
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-2 pr-0.5 flex flex-col">
-              {loadingRecentFiles && recentFiles.length === 0 ? (
-                <p className="text-[11px] text-purple-200/70 py-2">Scanning permitted folders...</p>
-              ) : recentFilesError ? (
-                <p className="text-[11px] text-amber-300 py-2">{recentFilesError}</p>
-              ) : recentFiles.length === 0 ? (
-                <p className="text-[11px] text-purple-200/70 py-2">
-                  No indexed files found in permitted folders yet. Open File Explorer to scan or add folders.
-                </p>
-              ) : (
-                recentFiles.map((file) => (
-                  <div
-                    key={file.id}
-                    className="hud-inset-box flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileTypeBadge type={fileExtKind(file.name)} />
-                      <span className="text-[11px] text-purple-50 truncate">{file.name}</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenRecentFile(file)}
-                      className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#17092b] text-purple-100 border border-purple-500/45 hover:border-fuchsia-400 hover:text-white shrink-0 transition-colors"
-                    >
-                      Open
-                    </button>
+              {REFERENCE_RECENT_FILES.map((file) => (
+                <div
+                  key={file.id}
+                  className="hud-inset-box flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileTypeBadge type={file.type} />
+                    <span className="text-[11px] text-purple-50 truncate">{file.name}</span>
                   </div>
-                ))
-              )}
+                  <button
+                    type="button"
+                    onClick={() => handleOpenRecentFile(file)}
+                    className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-[#17092b] text-purple-100 border border-purple-500/45 hover:border-fuchsia-400 hover:text-white shrink-0 transition-colors"
+                  >
+                    Open
+                  </button>
+                </div>
+              ))}
             </div>
           </section>
         </div>
@@ -806,37 +722,14 @@ export function CommandWorkspace({
                     </span>
                   </span>
                   <div className="flex items-center gap-2">
-                    {isSpeaking && (
-                      <button
-                        type="button"
-                        onClick={onStopSpeaking}
-                        aria-label="Stop speaking"
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/20 text-rose-200 border border-rose-400/40 hover:bg-rose-500/30"
-                      >
-                        <VolumeX className="w-3 h-3" />
-                        <span>Stop</span>
-                      </button>
-                    )}
-                    {latestAssistant.content && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => void handleCopyDrawerResponse(latestAssistant.content)}
-                          aria-label="Copy response"
-                          className="inline-flex items-center gap-1 text-purple-200 hover:text-white"
-                        >
-                          {copiedDrawer ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onSpeakText(latestAssistant.content)}
-                          aria-label="Speak response aloud"
-                          className="text-purple-200 hover:text-white"
-                        >
-                          <Volume2 className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => onSpeakText(latestAssistant.content)}
+                      aria-label="Speak response aloud"
+                      className="text-purple-200 hover:text-white"
+                    >
+                      <Volume2 className="w-3.5 h-3.5" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => onSelectSection('ai-chat')}
@@ -855,15 +748,9 @@ export function CommandWorkspace({
                   </div>
                 </div>
 
-                {latestAssistant.content ? (
-                  <p className="text-xs text-purple-50 whitespace-pre-wrap leading-relaxed">
-                    {latestAssistant.content}
-                  </p>
-                ) : (
-                  <p className="text-xs text-fuchsia-300 italic animate-pulse">
-                    F.R.I.D.A.Y. is thinking...
-                  </p>
-                )}
+                <p className="text-xs text-purple-50 whitespace-pre-wrap leading-relaxed">
+                  {latestAssistant.content}
+                </p>
 
                 {latestAssistant.sources && latestAssistant.sources.length > 0 && (
                   <div className="flex flex-wrap gap-2 pt-1 border-t border-purple-800/60">
@@ -974,30 +861,17 @@ export function CommandWorkspace({
               </div>
             </div>
 
-              <div className="flex items-center justify-center gap-2">
-                {isSpeaking && (
-                  <button
-                    type="button"
-                    onClick={onStopSpeaking}
-                    aria-label="Stop assistant speech"
-                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/20 border border-rose-400/50 text-rose-200 hover:bg-rose-500/30"
-                  >
-                    <VolumeX className="w-3 h-3" aria-hidden="true" />
-                    <span>Stop Speaking</span>
-                  </button>
-                )}
-                <div className="text-xs font-medium text-purple-100 text-center max-w-full px-2">
-                  <span className="truncate inline-block max-w-[460px]">
-                    {liveTranscript
-                      ? liveTranscript
-                      : isRecordingAudio
-                        ? 'Recording audio...'
-                        : voiceState === 'standby'
-                          ? 'Mic Ready'
-                          : `${voiceMeta.label}...`}
-                  </span>
-                </div>
-              </div>
+            <div className="text-xs font-medium text-purple-100 text-center max-w-full px-2">
+              <span className="truncate inline-block max-w-[460px]">
+                {liveTranscript
+                  ? liveTranscript
+                  : isRecordingAudio
+                    ? 'Recording audio...'
+                    : voiceState === 'standby'
+                      ? 'Listening...'
+                      : `${voiceMeta.label}...`}
+              </span>
+            </div>
 
             {/* Futuristic Command Input Pill */}
             <form
@@ -1062,41 +936,18 @@ export function CommandWorkspace({
                 <LayoutGrid className="w-3.5 h-3.5 text-purple-300" aria-hidden="true" />
                 <span>WEATHER</span>
               </h2>
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-purple-100 truncate max-w-[130px]">
-                  <MapPin className="w-3.5 h-3.5 text-purple-300 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{weather?.location ?? 'Syncing'}</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={onOpenWeatherDetails}
-                  className="text-[11px] font-medium text-fuchsia-300 hover:text-white shrink-0 transition-colors"
-                >
-                  7-Day / Search →
-                </button>
-              </div>
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-purple-100 truncate max-w-[175px]">
+                <MapPin className="w-3.5 h-3.5 text-purple-300 shrink-0" aria-hidden="true" />
+                <span>{weather?.location ?? 'Kolhapur, MH'}</span>
+              </span>
             </div>
-
-            {weather?.alerts && weather.alerts.length > 0 && (
-              <button
-                type="button"
-                onClick={onOpenWeatherDetails}
-                className="w-full flex items-center justify-between gap-2 px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-400/45 text-[11px] text-amber-200 hover:bg-amber-500/25"
-              >
-                <span className="inline-flex items-center gap-1.5 truncate font-medium">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-300 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{weather.alerts[0].title}</span>
-                </span>
-                <span className="shrink-0 underline">Details</span>
-              </button>
-            )}
 
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2.5">
                 <SunCloudWeatherSvg className="w-12 h-12" />
                 <div>
                   <div className="font-display text-[32px] font-bold text-white tabular-nums leading-none">
-                    {weather ? formatTemperature(weather.temperature, temperatureUnit) : '--'}
+                    {weather ? `${weather.temperature}°C` : '--'}
                   </div>
                   <div className="text-xs text-purple-100/90 mt-1">
                     {weather?.condition ?? (weatherError ? 'Weather Offline' : 'Syncing...')}
@@ -1129,7 +980,7 @@ export function CommandWorkspace({
                     <span>Feels</span>
                   </span>
                   <span className="font-semibold text-emerald-400">
-                    {weather ? formatTemperature(weather.feelsLike, temperatureUnit) : '--'}
+                    {weather ? `${weather.feelsLike}°C` : '--'}
                   </span>
                 </div>
               </div>
@@ -1144,15 +995,13 @@ export function CommandWorkspace({
                     ? 'Today'
                     : `+${idx}d`;
                 const rangeText = isForecastObj
-                  ? `${formatTemperature(dayItem.tempMax, temperatureUnit, false)}° / ${formatTemperature(dayItem.tempMin, temperatureUnit, false)}°`
+                  ? `${dayItem.tempMax}° / ${dayItem.tempMin}°`
                   : '-- / --';
                 const isClear = isForecastObj && dayItem.code <= 1;
                 return (
-                  <button
+                  <div
                     key={isForecastObj ? dayItem.date : idx}
-                    type="button"
-                    onClick={onOpenWeatherDetails}
-                    className="hud-inset-box px-2 py-1.5 rounded-xl flex items-center justify-center gap-1.5 tabular-nums hover:border-fuchsia-400/60 transition-colors text-left"
+                    className="hud-inset-box px-2 py-1.5 rounded-xl flex items-center justify-center gap-1.5 tabular-nums"
                   >
                     {isClear ? (
                       <SunOnlySvg className="w-6 h-6" />
@@ -1163,7 +1012,7 @@ export function CommandWorkspace({
                       <div className="text-[10px] font-medium text-purple-200">{label}</div>
                       <div className="text-[11px] font-semibold text-white">{rangeText}</div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>

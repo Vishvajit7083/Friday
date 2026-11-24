@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Activity,
-  AlertTriangle,
   AudioLines,
   Battery,
   Check,
   CheckCircle2,
-  Copy,
   Cpu,
   Download,
   ExternalLink,
@@ -73,19 +71,7 @@ export function AIChatFullView({
 }) {
   const [input, setInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-
-  const handleCopy = async (id: string, content: string) => {
-    if (!content) return;
-    try {
-      await navigator.clipboard?.writeText(content);
-      setCopiedId(id);
-      window.setTimeout(() => setCopiedId((prev) => (prev === id ? null : prev)), 1500);
-    } catch {
-      // Clipboard blocked in non-HTTPS contexts
-    }
-  };
 
   const handleSend = async (e?: React.FormEvent, preset?: string) => {
     e?.preventDefault();
@@ -121,7 +107,6 @@ export function AIChatFullView({
           {[
             'Check laptop performance',
             "What is today's schedule?",
-            'What is the 7-day weather forecast?',
             'Search Raspberry Pi AI projects',
             'Find workspace files',
           ].map((q) => (
@@ -157,29 +142,15 @@ export function AIChatFullView({
                   {msg.role === 'user' ? 'You' : 'F.R.I.D.A.Y.'}
                 </span>
                 <div className="flex items-center gap-2">
-                  {msg.role === 'assistant' && msg.content && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => void handleCopy(msg.id, msg.content)}
-                        aria-label={`Copy response ${msg.id}`}
-                        className="text-slate-400 hover:text-cyan-300"
-                      >
-                        {copiedId === msg.id ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onSpeakText(msg.content)}
-                        aria-label="Speak response aloud"
-                        className="text-slate-400 hover:text-cyan-300"
-                      >
-                        <Volume2 className="w-3.5 h-3.5" />
-                      </button>
-                    </>
+                  {msg.role === 'assistant' && (
+                    <button
+                      type="button"
+                      onClick={() => onSpeakText(msg.content)}
+                      aria-label="Speak response aloud"
+                      className="text-slate-400 hover:text-cyan-300"
+                    >
+                      <Volume2 className="w-3.5 h-3.5" />
+                    </button>
                   )}
                   <span className="font-mono-tabular">
                     {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -187,13 +158,7 @@ export function AIChatFullView({
                 </div>
               </div>
 
-              {msg.content ? (
-                <div className="whitespace-pre-wrap">{msg.content}</div>
-              ) : msg.role === 'assistant' ? (
-                <div className="text-xs italic text-cyan-300 animate-pulse">
-                  F.R.I.D.A.Y. is thinking...
-                </div>
-              ) : null}
+              <div className="whitespace-pre-wrap">{msg.content}</div>
 
               {msg.steps && msg.steps.length > 0 && (
                 <div className="mt-2.5 pt-2 border-t border-slate-800 space-y-1">
@@ -375,37 +340,30 @@ export function SystemMonitorFullView({
 }) {
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [loadingProc, setLoadingProc] = useState(false);
-  const [procError, setProcError] = useState<string | null>(null);
   const [audit, setAudit] = useState<HardwareCompatibilityAudit | null>(null);
-  const [auditError, setAuditError] = useState<string | null>(null);
   const [report, setReport] = useState<DiagnosticsReportPayload | null>(null);
   const [clientChecks, setClientChecks] = useState<DiagnosticCheckItem[]>([]);
   const [runningDiag, setRunningDiag] = useState(false);
 
   const loadProcesses = async () => {
     setLoadingProc(true);
-    setProcError(null);
     try {
       const res = await fetch('/api/system/processes');
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to read process telemetry');
       setProcesses(data.processes ?? []);
-    } catch (err) {
-      setProcError((err as Error).message || 'Unable to query system processes');
     } finally {
       setLoadingProc(false);
     }
   };
 
   const loadAudit = async () => {
-    setAuditError(null);
     try {
       const res = await fetch('/api/diagnostics/audit');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load compatibility audit');
-      setAudit(data);
-    } catch (err) {
-      setAuditError((err as Error).message || 'Compatibility audit unavailable');
+      if (res.ok) {
+        setAudit(await res.json());
+      }
+    } catch {
+      // Ignore transient error
     }
   };
 
@@ -445,15 +403,15 @@ export function SystemMonitorFullView({
       browserChecks.push({
         id: 'client-stt',
         category: 'Voice & Audio',
-        name: 'Web Speech Recognition & Local WAV Pipeline',
-        expected: 'SpeechRecognition or Windows System.Speech WAV capture ready',
+        name: 'Web Speech Recognition & Gemini STT Fallback',
+        expected: 'SpeechRecognition or MediaRecorder + /api/voice/transcribe ready',
         actual: hasSpeechRec
-          ? 'Browser Web SpeechRecognition + local WAV capture ready'
-          : 'Web SpeechRecognition unavailable; local microphone WAV capture active',
+          ? 'Web SpeechRecognition + Gemini fallback available'
+          : 'SpeechRecognition unavailable; Gemini MediaRecorder fallback active',
         status: hasSpeechRec ? 'pass' : 'warning',
         recommendation: hasSpeechRec
           ? undefined
-          : 'Run inside the Windows Electron shell for built-in Windows System.Speech recognition.',
+          : 'Speak using the Mic button to route via Gemini Voice Recorder.',
         durationMs: 1,
         checkedAt: nowIso,
       });
@@ -462,11 +420,9 @@ export function SystemMonitorFullView({
       browserChecks.push({
         id: 'client-tts',
         category: 'Voice & Audio',
-        name: 'Browser SpeechSynthesis & Windows SAPI Output',
-        expected: 'window.speechSynthesis, Windows SAPI, or /api/voice/tts ready',
-        actual: hasTts
-          ? 'Local SpeechSynthesis + Windows SAPI / optional TTS ready'
-          : 'Server/Desktop TTS active',
+        name: 'Neural TTS & Browser SpeechSynthesis Fallback',
+        expected: 'Server /api/voice/tts or window.speechSynthesis ready',
+        actual: hasTts ? 'Gemini Neural TTS + SpeechSynthesis ready' : 'Gemini Neural TTS primary active',
         status: 'pass',
         durationMs: 1,
         checkedAt: nowIso,
@@ -622,21 +578,6 @@ export function SystemMonitorFullView({
               <span>Refresh</span>
             </button>
           </div>
-          {procError ? (
-            <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/35 text-xs text-rose-200 flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
-                <span>{procError}</span>
-              </span>
-              <button
-                type="button"
-                onClick={loadProcesses}
-                className="px-2 py-1 rounded bg-rose-500/20 border border-rose-400/40 text-[11px]"
-              >
-                Retry
-              </button>
-            </div>
-          ) : null}
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left tabular-nums">
               <thead className="text-slate-400 border-b border-slate-800">
@@ -710,18 +651,7 @@ export function SystemMonitorFullView({
             </button>
           </div>
 
-          {auditError ? (
-            <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/35 text-xs text-rose-200 flex items-center justify-between gap-2">
-              <span>{auditError}</span>
-              <button
-                type="button"
-                onClick={loadAudit}
-                className="px-2 py-1 rounded bg-rose-500/20 border border-rose-400/40 text-[11px]"
-              >
-                Retry
-              </button>
-            </div>
-          ) : audit ? (
+          {audit ? (
             <div className="space-y-2 text-xs">
               <div className="grid grid-cols-2 gap-2">
                 <div className="p-2.5 rounded-xl bg-slate-950/65 border border-cyan-500/15">
@@ -783,7 +713,7 @@ export function SystemMonitorFullView({
                 <span>Automated Diagnostics & Test Suite</span>
               </h3>
               <p className="text-[11px] text-slate-400">
-                Runs safe verification across hardware sensors, Local AI Core & optional cloud integrations, file sandbox, Electron IPC, and voice APIs.
+                Runs safe verification across hardware sensors, Gemini API, file sandbox, Electron IPC, and voice APIs.
               </p>
             </div>
 

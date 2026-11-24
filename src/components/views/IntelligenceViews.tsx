@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   Camera,
-  Check,
   Copy,
   Download,
   ExternalLink,
@@ -76,15 +75,7 @@ export function FileExplorerView({
   const [fileSummary, setFileSummary] = useState<string | null>(null);
   const [summarizingFile, setSummarizingFile] = useState(false);
   const [mediaAnalysis, setMediaAnalysis] = useState<string | null>(null);
-  const [mediaError, setMediaError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
-  const [lastUploadedMedia, setLastUploadedMedia] = useState<{
-    base64Data: string;
-    mimeType: string;
-    name: string;
-  } | null>(null);
-  const [copiedMedia, setCopiedMedia] = useState(false);
-  const [copiedSummary, setCopiedSummary] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [folderStatus, setFolderStatus] = useState<string | null>(null);
 
@@ -166,34 +157,10 @@ export function FileExplorerView({
     }
   };
 
-  const runVisionAnalysisPayload = async (
-    payload: { base64Data: string; mimeType: string; prompt: string }
-  ) => {
-    setAnalyzing(true);
-    setMediaError(null);
-    setMediaAnalysis(null);
-    try {
-      const res = await fetch('/api/vision/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Analysis failed');
-      setMediaAnalysis(data.analysis);
-    } catch (err) {
-      setMediaError((err as Error).message || 'Media analysis failed.');
-    } finally {
-      setAnalyzing(false);
-    }
-  };
-
   const handleAnalyzeUploadedMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    e.target.value = '';
     if (!file) return;
     setAnalyzing(true);
-    setMediaError(null);
     setMediaAnalysis(null);
     try {
       const base64Data = await new Promise<string>((resolve, reject) => {
@@ -206,19 +173,21 @@ export function FileExplorerView({
         reader.readAsDataURL(file);
       });
 
-      const uploaded = {
-        base64Data,
-        mimeType: file.type || 'application/octet-stream',
-        name: file.name,
-      };
-      setLastUploadedMedia(uploaded);
-      await runVisionAnalysisPayload({
-        base64Data: uploaded.base64Data,
-        mimeType: uploaded.mimeType,
-        prompt: `Analyze "${uploaded.name}". Extract visible text, summarize key points, inspect charts/errors, or describe visual objects.`,
+      const res = await fetch('/api/vision/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base64Data,
+          mimeType: file.type || 'application/octet-stream',
+          prompt: `Analyze "${file.name}". Extract visible text, summarize key points, or describe visual objects.`,
+        }),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Analysis failed');
+      setMediaAnalysis(data.analysis);
     } catch (err) {
-      setMediaError(`Unable to read uploaded file: ${(err as Error).message}`);
+      setMediaAnalysis(`Error: ${(err as Error).message}`);
+    } finally {
       setAnalyzing(false);
     }
   };
@@ -226,77 +195,49 @@ export function FileExplorerView({
   const handleCaptureScreen = async (
     promptText = 'Explain what is visible on this screen, identify active UI or errors, and summarize key information.'
   ) => {
-    if (!settings.screenCaptureConsent && lastUploadedMedia) {
-      await runVisionAnalysisPayload({
-        base64Data: lastUploadedMedia.base64Data,
-        mimeType: lastUploadedMedia.mimeType,
-        prompt: `${promptText} (File: ${lastUploadedMedia.name})`,
-      });
-      return;
-    }
-
     if (!settings.screenCaptureConsent) {
-      setMediaError(
-        'Enable "Explicit Screen Capture Permission" to capture your live display, or upload an image/PDF/audio file first.'
-      );
+      setMediaAnalysis('Enable Explicit Screen Capture Permission first before capturing your screen.');
       return;
     }
-
     setAnalyzing(true);
-    setMediaError(null);
     setMediaAnalysis(null);
-    let stream: MediaStream | null = null;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const video = document.createElement('video');
-      video.muted = true;
-      video.playsInline = true;
       video.srcObject = stream;
-
-      await new Promise<void>((resolve) => {
-        const timer = window.setTimeout(resolve, 2000);
-        const onReady = () => {
-          if (video.videoWidth > 0 && video.videoHeight > 0) {
-            window.clearTimeout(timer);
-            resolve();
-          }
-        };
-        video.onloadedmetadata = onReady;
-        video.onplaying = onReady;
-      });
-      await video.play().catch(() => {});
-
+      await video.play();
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth || 1280;
       canvas.height = video.videoHeight || 720;
       canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
+      stream.getTracks().forEach((t) => t.stop());
 
       const dataUrl = canvas.toDataURL('image/png');
       const base64Data = dataUrl.split(',')[1];
-      setLastUploadedMedia({ base64Data, mimeType: 'image/png', name: 'screen-capture.png' });
-      await runVisionAnalysisPayload({
-        base64Data,
-        mimeType: 'image/png',
-        prompt: promptText,
+      const res = await fetch('/api/vision/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base64Data,
+          mimeType: 'image/png',
+          prompt: promptText,
+        }),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Screen analysis failed');
+      setMediaAnalysis(data.analysis);
     } catch (err) {
-      setMediaError(`Screen capture cancelled or unavailable: ${(err as Error).message}`);
-      setAnalyzing(false);
+      setMediaAnalysis(`Screen capture cancelled or unavailable: ${(err as Error).message}`);
     } finally {
-      stream?.getTracks().forEach((t) => t.stop());
+      setAnalyzing(false);
     }
   };
 
   const handleCreatePermittedFolder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newFolderName.trim()) {
-      setFolderStatus('Enter a folder name first.');
-      return;
-    }
-    const base = settings.allowedFolders[0] || '.';
-    const sep = base.includes('\\') ? '\\' : '/';
-    const cleanBase = base.replace(/[\\/]+$/, '');
-    const targetPath = `${cleanBase}${sep}${newFolderName.trim().replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    if (!newFolderName.trim()) return;
+    const base = settings.allowedFolders[0];
+    const targetPath = `${base}/${newFolderName.trim().replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     const res = await fetch('/api/files/folder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -307,7 +248,7 @@ export function FileExplorerView({
       setFolderStatus(`Created folder: ${data.path}`);
       setNewFolderName('');
     } else {
-      setFolderStatus(data.error || 'Failed to create folder');
+      setFolderStatus(data.error);
     }
   };
 
@@ -416,46 +357,14 @@ export function FileExplorerView({
         </label>
       </div>
 
-      {(analyzing || mediaAnalysis || mediaError) && (
-        <div
-          className={`p-4 rounded-xl border space-y-2 ${
-            mediaError ? 'border-rose-500/40 bg-rose-950/60' : 'border-indigo-400/30 bg-slate-900/90'
-          }`}
-        >
-          <div className="flex items-center justify-between gap-2 text-xs font-semibold">
-            <span className={`flex items-center gap-1.5 ${mediaError ? 'text-rose-200' : 'text-indigo-300'}`}>
-              <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>
-                {mediaError
-                  ? 'Media Intelligence Notice'
-                  : lastUploadedMedia
-                    ? `Vision & Media Output (${lastUploadedMedia.name})`
-                    : 'Vision & Media Intelligence Output'}
-              </span>
-            </span>
-            {mediaAnalysis && (
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard?.writeText(mediaAnalysis);
-                    setCopiedMedia(true);
-                    window.setTimeout(() => setCopiedMedia(false), 1500);
-                  } catch {
-                    // Ignore
-                  }
-                }}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 border border-slate-700 text-[11px] text-slate-200 hover:border-cyan-400/50"
-              >
-                {copiedMedia ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                <span>{copiedMedia ? 'Copied' : 'Copy'}</span>
-              </button>
-            )}
+      {(analyzing || mediaAnalysis) && (
+        <div className="p-4 rounded-xl border border-indigo-400/30 bg-slate-900/90 space-y-2">
+          <div className="text-xs font-semibold text-indigo-300 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>Vision & Media Intelligence Output</span>
           </div>
-          <p className={`text-xs whitespace-pre-wrap leading-relaxed ${mediaError ? 'text-rose-100' : 'text-slate-200'}`}>
-            {analyzing
-              ? 'Analyzing uploaded image, PDF, audio, or screen payload...'
-              : mediaError || mediaAnalysis}
+          <p className="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed">
+            {analyzing ? 'Analyzing media payload with Gemini multimodal intelligence...' : mediaAnalysis}
           </p>
         </div>
       )}
@@ -575,31 +484,8 @@ export function FileExplorerView({
               </form>
 
               {(summarizingFile || fileSummary) && (
-                <div className="p-3 rounded-lg border border-cyan-500/25 bg-cyan-950/35 text-xs text-slate-200 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-cyan-300">Document Analysis</span>
-                    {fileSummary && (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard?.writeText(fileSummary);
-                            setCopiedSummary(true);
-                            window.setTimeout(() => setCopiedSummary(false), 1500);
-                          } catch {
-                            // Ignore
-                          }
-                        }}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-[11px] text-slate-200"
-                      >
-                        {copiedSummary ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                        <span>{copiedSummary ? 'Copied' : 'Copy'}</span>
-                      </button>
-                    )}
-                  </div>
-                  <div className="whitespace-pre-wrap leading-relaxed">
-                    {summarizingFile ? 'Analyzing file contents with F.R.I.D.A.Y....' : fileSummary}
-                  </div>
+                <div className="p-3 rounded-lg border border-cyan-500/25 bg-cyan-950/35 text-xs text-slate-200 whitespace-pre-wrap leading-relaxed">
+                  {summarizingFile ? 'Analyzing file contents with F.R.I.D.A.Y....' : fileSummary}
                 </div>
               )}
 
@@ -626,14 +512,10 @@ export function BrowserIntelligenceView() {
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [sources, setSources] = useState<GroundingSource[]>([]);
-  const [copiedResearch, setCopiedResearch] = useState(false);
 
   const handleResearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim() && !url.trim()) {
-      setError('Enter a search query or target URL before running research.');
-      return;
-    }
+    if (!query.trim() && !url.trim()) return;
     setLoading(true);
     setError(null);
     try {
@@ -748,38 +630,16 @@ export function BrowserIntelligenceView() {
 
       {summary && (
         <div className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-cyan-300">Research Synthesis</h3>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard?.writeText(summary);
-                    setCopiedResearch(true);
-                    window.setTimeout(() => setCopiedResearch(false), 1500);
-                  } catch {
-                    // Ignore
-                  }
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 border border-slate-700 text-slate-200 hover:border-cyan-400/50"
-              >
-                {copiedResearch ? (
-                  <Check className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
-                ) : (
-                  <Copy className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
-                )}
-                <span>{copiedResearch ? 'Copied' : 'Copy Summary'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleExportMarkdown}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 border border-slate-700 text-slate-200 hover:border-cyan-400/50"
-              >
-                <Download className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
-                <span>Export Markdown Report</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={handleExportMarkdown}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 border border-slate-700 text-slate-200 hover:border-cyan-400/50"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
+              <span>Export Markdown Report</span>
+            </button>
           </div>
           <div className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">{summary}</div>
 

@@ -109,12 +109,6 @@ export const VOICE_STATE_META: Record<
     accentHex: '#67e8f9',
     description: 'Synthesizing natural voice response',
   },
-  interrupted: {
-    label: 'Interrupted',
-    color: 'text-amber-300',
-    accentHex: '#fbbf24',
-    description: 'Speech halted immediately by user command',
-  },
   completed: {
     label: 'Completed',
     color: 'text-emerald-300',

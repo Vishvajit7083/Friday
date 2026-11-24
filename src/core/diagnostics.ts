@@ -4,8 +4,6 @@ import type {
   DiagnosticCheckItem,
   DiagnosticsReportPayload,
   MemoryItem,
-  NoteItem,
-  TodoItem,
 } from './types';
 
 export function summarizeDiagnostics(checks: DiagnosticCheckItem[]) {
@@ -115,31 +113,6 @@ export function sanitizeMemoryPatch(input: unknown): Partial<MemoryItem> {
   return patch;
 }
 
-export function sanitizeNotePatch(input: unknown): Partial<NoteItem> {
-  if (!input || typeof input !== 'object') return {};
-  const raw = input as Record<string, unknown>;
-  const patch: Partial<NoteItem> = {};
-  if (typeof raw.title === 'string' && raw.title.trim()) patch.title = raw.title.trim().slice(0, 140);
-  if (typeof raw.content === 'string') patch.content = raw.content.trim().slice(0, 4000);
-  if (typeof raw.pinned === 'boolean') patch.pinned = raw.pinned;
-  return patch;
-}
-
-export function sanitizeTodoPatch(input: unknown): Partial<TodoItem> {
-  if (!input || typeof input !== 'object') return {};
-  const raw = input as Record<string, unknown>;
-  const patch: Partial<TodoItem> = {};
-  if (typeof raw.title === 'string' && raw.title.trim()) patch.title = raw.title.trim().slice(0, 200);
-  if (typeof raw.completed === 'boolean') patch.completed = raw.completed;
-  if (raw.priority === 'low' || raw.priority === 'normal' || raw.priority === 'high') {
-    patch.priority = raw.priority;
-  }
-  if (typeof raw.dueDate === 'string' && (/^\d{4}-\d{2}-\d{2}$/.test(raw.dueDate) || raw.dueDate === '')) {
-    patch.dueDate = raw.dueDate || undefined;
-  }
-  return patch;
-}
-
 const VALID_MODELS = new Set<AssistantSettings['aiModel']>([
   'local-auto',
   'ollama',
@@ -211,21 +184,6 @@ export function sanitizeSettingsPatch(
   }
   if (typeof raw.weatherLocation === 'string' && raw.weatherLocation.trim()) {
     next.weatherLocation = raw.weatherLocation.trim().slice(0, 80);
-  }
-  if (raw.temperatureUnit === 'celsius' || raw.temperatureUnit === 'fahrenheit') {
-    next.temperatureUnit = raw.temperatureUnit;
-  }
-  if (Array.isArray(raw.favoriteWeatherLocations)) {
-    next.favoriteWeatherLocations = Array.from(
-      new Set(
-        raw.favoriteWeatherLocations
-          .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-          .map((item) => item.trim().slice(0, 80))
-      )
-    ).slice(0, 10);
-  }
-  if (typeof raw.weatherNotificationsEnabled === 'boolean') {
-    next.weatherNotificationsEnabled = raw.weatherNotificationsEnabled;
   }
   if (Array.isArray(raw.allowedFolders)) {
     const clean = raw.allowedFolders

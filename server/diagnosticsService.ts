@@ -422,11 +422,11 @@ export async function runSafeDiagnosticsSuite(): Promise<DiagnosticsReportPayloa
             ? 'Enable Settings -> Privacy & security -> Microphone -> "Let desktop apps access your microphone".'
             : voiceCaps.offlineSttReady
               ? undefined
-              : 'Install a Windows Speech language pack in Windows Settings -> Time & language -> Speech for offline dictation.',
+              : 'Install a Windows Speech language pack or configure GEMINI_API_KEY in .env.',
         };
       }
       return {
-        actual: 'Linux container host — Browser Web Speech API & Linux mic input active; Windows System.Speech runs on Windows 10/11',
+        actual: `Linux container host — Windows System.Speech & SAPI TTS unavailable (${hasValidGeminiKey() ? 'Gemini cloud fallback ready' : 'Browser Web Speech / Gemini optional'})`,
         status: 'unavailable',
         recommendation: 'Run on Windows 10/11 desktop for native offline System.Speech recognition & SAPI TTS.',
       };
