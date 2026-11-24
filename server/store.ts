@@ -8,6 +8,8 @@ import type {
   ChatMessage,
   DesktopAppItem,
   MemoryItem,
+  NoteItem,
+  TodoItem,
 } from '../src/core/types.ts';
 import { getDefaultPermittedFolders } from './fileService.ts';
 
@@ -15,6 +17,8 @@ export interface FridayDatabase {
   settings: AssistantSettings;
   calendar: CalendarEvent[];
   memory: MemoryItem[];
+  notes: NoteItem[];
+  todos: TodoItem[];
   chatHistory: ChatMessage[];
   actionLogs: ActionLogEntry[];
   workflows: AutomationWorkflow[];
@@ -55,6 +59,9 @@ const DEFAULT_DB: FridayDatabase = {
     themeAccent: 'violet',
     animationQuality: 'high',
     weatherLocation: 'Kolhapur, MH',
+    temperatureUnit: 'celsius',
+    favoriteWeatherLocations: ['Kolhapur, MH'],
+    weatherNotificationsEnabled: true,
     allowedFolders: getDefaultPermittedFolders(),
     pausedIndexing: false,
     screenCaptureConsent: false,
@@ -142,6 +149,26 @@ const DEFAULT_DB: FridayDatabase = {
       value: 'Always confirm before deleting files, modifying schedules, or capturing screen.',
       approved: true,
       updatedAt: new Date().toISOString(),
+    },
+  ],
+  notes: [
+    {
+      id: 'note-1',
+      title: 'Workspace Quick Guide',
+      content: 'Ask F.R.I.D.A.Y. "take a note: ..." or create notes here to persist across desktop sessions.',
+      pinned: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  ],
+  todos: [
+    {
+      id: 'todo-1',
+      title: 'Review daily schedule and permitted workspace folders',
+      completed: false,
+      priority: 'normal',
+      dueDate: getTodayIsoDate(0),
+      createdAt: new Date().toISOString(),
     },
   ],
   chatHistory: [
@@ -390,6 +417,8 @@ export function loadDb(): FridayDatabase {
       settings: mergedSettings,
       calendar: Array.isArray(parsed.calendar) ? parsed.calendar : DEFAULT_DB.calendar,
       memory: Array.isArray(parsed.memory) ? parsed.memory : DEFAULT_DB.memory,
+      notes: Array.isArray(parsed.notes) ? parsed.notes : DEFAULT_DB.notes,
+      todos: Array.isArray(parsed.todos) ? parsed.todos : DEFAULT_DB.todos,
       chatHistory: Array.isArray(parsed.chatHistory) ? parsed.chatHistory : DEFAULT_DB.chatHistory,
       actionLogs: Array.isArray(parsed.actionLogs) ? parsed.actionLogs : DEFAULT_DB.actionLogs,
       workflows: Array.isArray(parsed.workflows) ? parsed.workflows : DEFAULT_DB.workflows,

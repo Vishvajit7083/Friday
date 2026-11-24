@@ -119,20 +119,43 @@ function stripHtmlToReadableText(html: string): { title: string; text: string } 
 }
 
 export async function fetchPublicWebPage(rawUrl: string): Promise<WebPageExtract> {
-  const safeUrl = await validatePublicHttpUrl(rawUrl);
-  const res = await fetch(safeUrl.toString(), {
-    method: 'GET',
-    headers: {
-      'User-Agent': USER_AGENT,
-      Accept: 'text/html, text/plain, application/json;q=0.9',
-    },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+  let currentUrl = await validatePublicHttpUrl(rawUrl);
+  let res: Response | null = null;
+
+  for (let hop = 0; hop < 5; hop += 1) {
+    const attempt = await fetch(currentUrl.toString(), {
+      method: 'GET',
+      headers: {
+        'User-Agent': USER_AGENT,
+        Accept: 'text/html, text/plain, application/json;q=0.9',
+      },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (attempt.status >= 300 && attempt.status < 400) {
+      const locationHeader = attempt.headers.get('location');
+      if (!locationHeader) {
+        throw new Error(`Website returned redirect HTTP ${attempt.status} without a Location header.`);
+      }
+      const nextRawUrl = new URL(locationHeader, currentUrl).toString();
+      currentUrl = await validatePublicHttpUrl(nextRawUrl);
+      continue;
+    }
+
+    res = attempt;
+    break;
+  }
+
+  if (!res) {
+    throw new Error('Too many HTTP redirects while fetching target webpage.');
+  }
 
   if (!res.ok) {
     throw new Error(`Website returned HTTP ${res.status} (${res.statusText || 'Error'}).`);
   }
+
+  const safeUrl = currentUrl;
 
   const contentType = res.headers.get('content-type') || 'text/plain';
   const rawBody = (await res.text()).slice(0, 300_000);
@@ -280,10 +303,26 @@ export async function searchFreeWeb(
   const effectiveQuery = `${query.trim()}${modeSuffix}`.trim();
 
   try {
-    const [ddgResults, wikiResults] = await Promise.all([
-      searchDuckDuckGoHtml(effectiveQuery).catch(() => []),
-      mode === 'video' ? Promise.resolve([]) : searchWikipediaOpen(query).catch(() => []),
+    const [ddgSettled, wikiSettled] = await Promise.allSettled([
+      searchDuckDuckGoHtml(effectiveQuery),
+      mode === 'video' ? Promise.resolve([]) : searchWikipediaOpen(query),
     ]);
+
+    const ddgFailed = ddgSettled.status === 'rejected';
+    const wikiFailed = mode !== 'video' && wikiSettled.status === 'rejected';
+    const allFailed = ddgFailed && (mode === 'video' || wikiFailed);
+
+    if (allFailed) {
+      return {
+        results: [],
+        sources: [],
+        online: false,
+        error: 'Live search providers were unreachable or timed out.',
+      };
+    }
+
+    const ddgResults = ddgSettled.status === 'fulfilled' ? ddgSettled.value : [];
+    const wikiResults = wikiSettled.status === 'fulfilled' ? wikiSettled.value : [];
 
     const seen = new Set<string>();
     const combined: WebSearchResultItem[] = [];

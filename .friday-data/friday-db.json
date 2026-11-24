@@ -21,6 +21,11 @@
     "themeAccent": "violet",
     "animationQuality": "high",
     "weatherLocation": "Kolhapur, MH",
+    "temperatureUnit": "celsius",
+    "favoriteWeatherLocations": [
+      "Kolhapur, MH"
+    ],
+    "weatherNotificationsEnabled": true,
     "allowedFolders": [
       "/app/applet"
     ],
@@ -110,6 +115,26 @@
       "value": "Always confirm before deleting files, modifying schedules, or capturing screen.",
       "approved": true,
       "updatedAt": "2026-11-21T06:32:16.710Z"
+    }
+  ],
+  "notes": [
+    {
+      "id": "note-1",
+      "title": "Workspace Quick Guide",
+      "content": "Ask F.R.I.D.A.Y. \"take a note: ...\" or create notes here to persist across desktop sessions.",
+      "pinned": true,
+      "createdAt": "2026-11-24T10:43:28.971Z",
+      "updatedAt": "2026-11-24T10:43:28.971Z"
+    }
+  ],
+  "todos": [
+    {
+      "id": "todo-1",
+      "title": "Review daily schedule and permitted workspace folders",
+      "completed": false,
+      "priority": "normal",
+      "dueDate": "2026-11-24",
+      "createdAt": "2026-11-24T10:43:28.971Z"
     }
   ],
   "chatHistory": [
@@ -982,9 +1007,125 @@
         "modelMs": 1,
         "totalMs": 81
       }
+    },
+    {
+      "id": "msg-1795517172761-u",
+      "role": "user",
+      "content": "What is the weather in London?",
+      "timestamp": "2026-11-24T10:46:12.761Z",
+      "intent": "weather_query"
+    },
+    {
+      "id": "msg-1795517175076-a",
+      "role": "assistant",
+      "content": "Weather in London, United Kingdom: 5°C (Overcast), feels like 2°C, humidity 88%, UV 0.1, 1018 hPa, Wind 12 km/h E.",
+      "timestamp": "2026-11-24T10:46:15.076Z",
+      "intent": "weather_query",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Parse weather location, timeframe & metric",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "browser",
+          "title": "Fetch live Open-Meteo conditions & forecast",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 11,
+        "toolMs": 2309,
+        "firstTokenMs": 2325,
+        "modelMs": 6,
+        "totalMs": 2326
+      }
+    },
+    {
+      "id": "msg-1795517439739-u",
+      "role": "user",
+      "content": "What is the weather in Tokyo tomorrow?",
+      "timestamp": "2026-11-24T10:50:39.739Z",
+      "intent": "weather_query"
+    },
+    {
+      "id": "msg-1795517442283-a",
+      "role": "assistant",
+      "content": "Tomorrow's forecast for Tokyo, Japan (2026-11-25): Clear Sky, high 13°C / low 7°C. Rain probability up to 27%.",
+      "timestamp": "2026-11-24T10:50:42.283Z",
+      "intent": "weather_query",
+      "steps": [
+        {
+          "id": "step-1",
+          "agent": "core",
+          "title": "Parse weather location, timeframe & metric",
+          "status": "completed"
+        },
+        {
+          "id": "step-2",
+          "agent": "browser",
+          "title": "Fetch live Open-Meteo conditions & forecast",
+          "status": "completed"
+        }
+      ],
+      "timings": {
+        "engine": "local-core",
+        "intentMs": 10,
+        "toolMs": 2538,
+        "firstTokenMs": 2553,
+        "modelMs": 6,
+        "totalMs": 2554
+      }
     }
   ],
   "actionLogs": [
+    {
+      "id": "log-1795517442283-1vzu",
+      "timestamp": "2026-11-24T10:50:42.283Z",
+      "agent": "core",
+      "action": "Command (weather_query)",
+      "target": "What is the weather in Tokyo tomorrow?",
+      "status": "completed",
+      "detail": "Engine: local-core · 2554ms"
+    },
+    {
+      "id": "log-1795517442275-h840",
+      "timestamp": "2026-11-24T10:50:42.275Z",
+      "agent": "browser",
+      "action": "Weather Telemetry Query",
+      "target": "Tokyo, Japan",
+      "status": "completed",
+      "detail": "13°C · Partly Cloudy"
+    },
+    {
+      "id": "log-1795517231867-dd3k",
+      "timestamp": "2026-11-24T10:47:11.867Z",
+      "agent": "calendar",
+      "action": "Create Task",
+      "target": "Verify E2E Persistence Task",
+      "status": "completed"
+    },
+    {
+      "id": "log-1795517175076-6cal",
+      "timestamp": "2026-11-24T10:46:15.076Z",
+      "agent": "core",
+      "action": "Command (weather_query)",
+      "target": "What is the weather in London?",
+      "status": "completed",
+      "detail": "Engine: local-core · 2326ms"
+    },
+    {
+      "id": "log-1795517175069-qd20",
+      "timestamp": "2026-11-24T10:46:15.069Z",
+      "agent": "browser",
+      "action": "Weather Telemetry Query",
+      "target": "London, United Kingdom",
+      "status": "completed",
+      "detail": "5°C · Overcast"
+    },
     {
       "id": "log-1795459246167-3608",
       "timestamp": "2026-11-23T18:40:46.167Z",

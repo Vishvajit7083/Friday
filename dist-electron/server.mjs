@@ -272,6 +272,157 @@ var init_fileIndex = __esm({
   }
 });
 
+// src/core/weatherUtils.ts
+function convertTemperature(tempC, unit) {
+  if (!Number.isFinite(tempC)) return 0;
+  if (unit === "fahrenheit") {
+    return Math.round(tempC * 9 / 5 + 32);
+  }
+  return Math.round(tempC);
+}
+function degreesToCompass(deg) {
+  if (typeof deg !== "number" || !Number.isFinite(deg)) return "N/A";
+  const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  const normalized = (deg % 360 + 360) % 360;
+  return dirs[Math.round(normalized / 45) % 8];
+}
+function describeUvIndex(uv) {
+  if (typeof uv !== "number" || !Number.isFinite(uv)) return "N/A";
+  if (uv <= 2) return `${uv.toFixed(1)} (Low)`;
+  if (uv <= 5) return `${uv.toFixed(1)} (Moderate)`;
+  if (uv <= 7) return `${uv.toFixed(1)} (High)`;
+  if (uv <= 10) return `${uv.toFixed(1)} (Very High)`;
+  return `${uv.toFixed(1)} (Extreme)`;
+}
+function parseWeatherQuery(rawCommand) {
+  const clean = rawCommand.trim().replace(/^(?:hey\s+friday[,\s]+|friday[,\s]+)?(?:please\s+)?/i, "").trim();
+  const lower = clean.toLowerCase();
+  const hasWeatherKeyword = /\b(weather|forecast|temperature|rain(?:ing)?|umbrella|humidity|uv\s*index|sunrise|sunset|storm\s+alert|weather\s+alert)\b/i.test(
+    lower
+  );
+  if (!hasWeatherKeyword) {
+    return { isWeather: false, timeframe: "current" };
+  }
+  let timeframe = "current";
+  if (/\b(alert|alerts|warning|advisory)\b/i.test(lower)) timeframe = "alerts";
+  else if (/\b(7[\s-]*day|week|weekly|forecast)\b/i.test(lower)) timeframe = "week";
+  else if (/\b(hourly|next\s+hours?|hour\s+by\s+hour)\b/i.test(lower)) timeframe = "hourly";
+  else if (/\btomorrow\b/i.test(lower)) timeframe = "tomorrow";
+  else if (/\b(today|tonight)\b/i.test(lower)) timeframe = "today";
+  let metric;
+  if (/\b(rain|raining|umbrella|precipitation|drizzle|shower)\b/i.test(lower)) metric = "rain";
+  else if (/\bwind\b/i.test(lower)) metric = "wind";
+  else if (/\bhumidity\b/i.test(lower)) metric = "humidity";
+  else if (/\buv\b/i.test(lower)) metric = "uv";
+  else if (/\bpressure\b/i.test(lower)) metric = "pressure";
+  else if (/\b(sunrise|sunset)\b/i.test(lower)) metric = "sunrise";
+  let location;
+  const inForMatch = clean.match(
+    /\b(?:in|for|at)\s+([A-Za-z][A-Za-z\s,.-]{1,48}?)(?=\s+(?:today|tomorrow|tonight|right\s+now|now|this\s+week|for\s+the\s+week|hourly|please)\b|[?.!]|$)/i
+  );
+  if (inForMatch?.[1]) {
+    const candidate = inForMatch[1].trim().replace(/[,?.!]+$/, "").trim();
+    if (candidate && !NON_LOCATION_TAIL_WORDS.has(candidate.toLowerCase())) {
+      location = candidate;
+    }
+  } else {
+    const prefixCityMatch = clean.match(/^([A-Za-z][A-Za-z\s.-]{1,36}?)\s+(?:weather|forecast|temperature)\b/i);
+    if (prefixCityMatch?.[1]) {
+      const candidate = prefixCityMatch[1].replace(
+        /^(?:what(?:'s|\s+is)|how(?:'s|\s+is)|tell\s+me|show\s+me|give\s+me|check|get|fetch)\s+/i,
+        ""
+      ).replace(/^(?:the|my|current|live|today'?s|tomorrow'?s|weekly|local)\b\s*/i, "").trim();
+      const nonCities = /* @__PURE__ */ new Set(["the", "a", "an", "is", "was", "what", "how", "my", "current", "live", "local", "your"]);
+      if (candidate && candidate.length >= 2 && !NON_LOCATION_TAIL_WORDS.has(candidate.toLowerCase()) && !nonCities.has(candidate.toLowerCase())) {
+        location = candidate;
+      }
+    }
+  }
+  return {
+    isWeather: true,
+    location,
+    timeframe,
+    metric
+  };
+}
+function buildWeatherChatSummary(weather, parsed, unit = "celsius") {
+  const unitChar = unit === "fahrenheit" ? "F" : "C";
+  const temp = convertTemperature(weather.temperature, unit);
+  const feels = convertTemperature(weather.feelsLike, unit);
+  if (parsed.timeframe === "alerts") {
+    if (!weather.alerts || weather.alerts.length === 0) {
+      return `No active weather warnings or advisories for ${weather.location}. Current conditions: ${temp}\xB0${unitChar}, ${weather.condition}.`;
+    }
+    return `Weather alerts for ${weather.location}:
+${weather.alerts.map((a) => `- [${a.severity.toUpperCase()}] ${a.title}: ${a.description}`).join("\n")}`;
+  }
+  if (parsed.timeframe === "tomorrow" && weather.forecast.length > 1) {
+    const tmr = weather.forecast[1];
+    const maxT = convertTemperature(tmr.tempMax, unit);
+    const minT = convertTemperature(tmr.tempMin, unit);
+    const rainStr = typeof tmr.precipProbMax === "number" ? ` Rain probability up to ${tmr.precipProbMax}%.` : "";
+    return `Tomorrow's forecast for ${weather.location} (${tmr.date}): ${tmr.condition}, high ${maxT}\xB0${unitChar} / low ${minT}\xB0${unitChar}.${rainStr}`;
+  }
+  if (parsed.timeframe === "week" && weather.forecast.length > 0) {
+    const lines = weather.forecast.slice(0, 7).map((d) => {
+      const rain = typeof d.precipProbMax === "number" ? ` \xB7 ${d.precipProbMax}% rain` : "";
+      return `- ${d.date}: ${d.condition} (${convertTemperature(d.tempMin, unit)}\xB0\u2013${convertTemperature(d.tempMax, unit)}\xB0${unitChar}${rain})`;
+    });
+    return `7-Day Forecast for ${weather.location} (Current: ${temp}\xB0${unitChar}, ${weather.condition}):
+${lines.join("\n")}`;
+  }
+  if (parsed.timeframe === "hourly" && weather.hourly && weather.hourly.length > 0) {
+    const nextHours = weather.hourly.slice(0, 6).map((h) => {
+      const label = h.time.slice(11, 16);
+      return `${label}: ${convertTemperature(h.temp, unit)}\xB0${unitChar} (${h.condition}, ${h.precipProb}% rain)`;
+    });
+    return `Upcoming hours in ${weather.location}:
+${nextHours.join(" | ")}`;
+  }
+  if (parsed.metric === "rain") {
+    const todayRain = weather.forecast[0]?.precipProbMax;
+    const nextRain = weather.hourly?.slice(0, 6).map((h) => `${h.time.slice(11, 16)}: ${h.precipProb}%`).join(", ");
+    return `Rain outlook for ${weather.location}: currently ${weather.condition} (${temp}\xB0${unitChar})${typeof todayRain === "number" ? `, today's peak rain chance ${todayRain}%` : ""}${nextRain ? `. Next hours: ${nextRain}` : "."}`;
+  }
+  if (parsed.metric === "uv" && typeof weather.uvIndex === "number") {
+    return `UV Index in ${weather.location}: ${describeUvIndex(weather.uvIndex)}. Conditions: ${weather.condition}, ${temp}\xB0${unitChar}.`;
+  }
+  if (parsed.metric === "sunrise" && (weather.sunrise || weather.sunset)) {
+    return `Sun schedule for ${weather.location}: Sunrise ${weather.sunrise?.slice(11, 16) || "N/A"}, Sunset ${weather.sunset?.slice(11, 16) || "N/A"}.`;
+  }
+  const extras = [];
+  if (typeof weather.uvIndex === "number") extras.push(`UV ${weather.uvIndex.toFixed(1)}`);
+  if (typeof weather.pressureHpa === "number") extras.push(`${weather.pressureHpa} hPa`);
+  if (weather.windDirectionLabel) extras.push(`Wind ${weather.windSpeedKmh} km/h ${weather.windDirectionLabel}`);
+  else extras.push(`Wind ${weather.windSpeedKmh} km/h`);
+  const alertNote = weather.alerts && weather.alerts.length > 0 ? ` Alert: ${weather.alerts[0].title}.` : "";
+  const cacheNote = weather.isCached ? " (cached reading)" : "";
+  return `Weather in ${weather.location}${cacheNote}: ${temp}\xB0${unitChar} (${weather.condition}), feels like ${feels}\xB0${unitChar}, humidity ${weather.humidity}%, ${extras.join(", ")}.${alertNote}`;
+}
+var NON_LOCATION_TAIL_WORDS;
+var init_weatherUtils = __esm({
+  "src/core/weatherUtils.ts"() {
+    NON_LOCATION_TAIL_WORDS = /* @__PURE__ */ new Set([
+      "today",
+      "tomorrow",
+      "now",
+      "right now",
+      "currently",
+      "this week",
+      "the week",
+      "next week",
+      "hourly",
+      "tonight",
+      "morning",
+      "evening",
+      "my area",
+      "my city",
+      "here",
+      "outside"
+    ]);
+  }
+});
+
 // src/core/unitConverter.ts
 function normalizeUnitToken(raw) {
   const clean = raw.trim().toLowerCase().replace(/[?.!,]+$/g, "");
@@ -283,7 +434,7 @@ function formatNumber(val) {
   const rounded = Number(val.toFixed(6));
   return String(rounded);
 }
-function convertTemperature(value, from, to) {
+function convertTemperature2(value, from, to) {
   let celsius;
   if (from === "C") celsius = value;
   else if (from === "F") celsius = (value - 32) * 5 / 9;
@@ -306,7 +457,7 @@ function tryConvertUnits(rawCommand) {
   const toUnit = normalizeUnitToken(match[3]);
   if (!fromUnit || !toUnit) return null;
   if ((fromUnit === "C" || fromUnit === "F" || fromUnit === "K") && (toUnit === "C" || toUnit === "F" || toUnit === "K")) {
-    const out = convertTemperature(inputValue, fromUnit, toUnit);
+    const out = convertTemperature2(inputValue, fromUnit, toUnit);
     if (out === null) return null;
     const formattedOutput2 = formatNumber(out);
     return {
@@ -1095,6 +1246,19 @@ function analyzeUserCommand(command) {
       ]
     };
   }
+  const parsedWeather = parseWeatherQuery(trimmed);
+  if (parsedWeather.isWeather) {
+    return {
+      category: "weather_query",
+      agents: ["core", "browser"],
+      requiresConfirmation: false,
+      extractedTarget: parsedWeather.location || trimmed,
+      steps: [
+        { id: "step-1", agent: "core", title: "Parse weather location, timeframe & metric", status: "completed" },
+        { id: "step-2", agent: "browser", title: "Fetch live Open-Meteo conditions & forecast", status: "running" }
+      ]
+    };
+  }
   if (APP_PATTERNS.some((rx) => rx.test(trimmed))) {
     return {
       category: "app_control",
@@ -1289,6 +1453,7 @@ var init_intentEngine = __esm({
     init_unitConverter();
     init_translator();
     init_productivityTools();
+    init_weatherUtils();
     SENSITIVE_PATTERNS = [
       /\b(delete|remove|erase|wipe|format|overwrite|destroy)\b/i,
       /\b(send\s+(email|message|sms|whatsapp)|purchase|buy|pay|transfer|install\s+software)\b/i,
@@ -1415,19 +1580,37 @@ function stripHtmlToReadableText(html) {
   };
 }
 async function fetchPublicWebPage(rawUrl) {
-  const safeUrl = await validatePublicHttpUrl(rawUrl);
-  const res = await fetch(safeUrl.toString(), {
-    method: "GET",
-    headers: {
-      "User-Agent": USER_AGENT,
-      Accept: "text/html, text/plain, application/json;q=0.9"
-    },
-    redirect: "follow",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-  });
+  let currentUrl = await validatePublicHttpUrl(rawUrl);
+  let res = null;
+  for (let hop = 0; hop < 5; hop += 1) {
+    const attempt = await fetch(currentUrl.toString(), {
+      method: "GET",
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "text/html, text/plain, application/json;q=0.9"
+      },
+      redirect: "manual",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    });
+    if (attempt.status >= 300 && attempt.status < 400) {
+      const locationHeader = attempt.headers.get("location");
+      if (!locationHeader) {
+        throw new Error(`Website returned redirect HTTP ${attempt.status} without a Location header.`);
+      }
+      const nextRawUrl = new URL(locationHeader, currentUrl).toString();
+      currentUrl = await validatePublicHttpUrl(nextRawUrl);
+      continue;
+    }
+    res = attempt;
+    break;
+  }
+  if (!res) {
+    throw new Error("Too many HTTP redirects while fetching target webpage.");
+  }
   if (!res.ok) {
     throw new Error(`Website returned HTTP ${res.status} (${res.statusText || "Error"}).`);
   }
+  const safeUrl = currentUrl;
   const contentType = res.headers.get("content-type") || "text/plain";
   const rawBody = (await res.text()).slice(0, 3e5);
   if (contentType.includes("application/json")) {
@@ -1541,10 +1724,23 @@ async function searchFreeWeb(query, mode = "web") {
   const modeSuffix = mode === "news" ? " latest news" : mode === "docs" ? " official documentation" : mode === "video" ? " youtube tutorial" : "";
   const effectiveQuery = `${query.trim()}${modeSuffix}`.trim();
   try {
-    const [ddgResults, wikiResults] = await Promise.all([
-      searchDuckDuckGoHtml(effectiveQuery).catch(() => []),
-      mode === "video" ? Promise.resolve([]) : searchWikipediaOpen(query).catch(() => [])
+    const [ddgSettled, wikiSettled] = await Promise.allSettled([
+      searchDuckDuckGoHtml(effectiveQuery),
+      mode === "video" ? Promise.resolve([]) : searchWikipediaOpen(query)
     ]);
+    const ddgFailed = ddgSettled.status === "rejected";
+    const wikiFailed = mode !== "video" && wikiSettled.status === "rejected";
+    const allFailed = ddgFailed && (mode === "video" || wikiFailed);
+    if (allFailed) {
+      return {
+        results: [],
+        sources: [],
+        online: false,
+        error: "Live search providers were unreachable or timed out."
+      };
+    }
+    const ddgResults = ddgSettled.status === "fulfilled" ? ddgSettled.value : [];
+    const wikiResults = wikiSettled.status === "fulfilled" ? wikiSettled.value : [];
     const seen = /* @__PURE__ */ new Set();
     const combined = [];
     for (const item of [...ddgResults, ...wikiResults]) {
@@ -1906,8 +2102,15 @@ ${list}`;
 ${lines}`;
   }
   if (params.weather) {
-    const w = params.weather;
-    return `Live weather in ${w.location}: ${w.temperature}\xB0C (${w.condition}), feels like ${w.feelsLike}\xB0C, humidity ${w.humidity}%, wind ${w.windSpeedKmh} km/h.`;
+    const parsedWeather = parseWeatherQuery(params.userCommand);
+    return buildWeatherChatSummary(
+      params.weather,
+      parsedWeather.isWeather ? parsedWeather : { isWeather: true, timeframe: "current" },
+      params.temperatureUnit || "celsius"
+    );
+  }
+  if (params.weatherError) {
+    return `Unable to retrieve live weather right now: ${params.weatherError}`;
   }
   const unitResult = tryConvertUnits(params.userCommand);
   if (unitResult) {
@@ -1918,6 +2121,18 @@ ${lines}`;
     return translateResult.explanation;
   }
   const prod = parseProductivityCommand(params.userCommand);
+  if (prod?.kind === "list_notes") {
+    const notes = params.notes ?? [];
+    if (notes.length === 0) return 'You have no saved notes yet. Say "take a note: ..." to add one.';
+    return `Saved Notes (${notes.length}):
+${notes.slice(0, 6).map((n, i) => `${i + 1}. ${n.title}: ${n.content}`).join("\n")}`;
+  }
+  if (prod?.kind === "list_todos") {
+    const todos = (params.todos ?? []).filter((t) => !t.completed);
+    if (todos.length === 0) return "All tasks are completed, or no open tasks are saved.";
+    return `Open Tasks (${todos.length}):
+${todos.slice(0, 6).map((t, i) => `${i + 1}. ${t.title}`).join("\n")}`;
+  }
   if (prod?.kind === "summarize" && prod.detail) {
     return `Summary:
 ${summarizeTextExtractive(prod.detail, 3)}`;
@@ -1950,6 +2165,7 @@ var init_localAiService = __esm({
     init_unitConverter();
     init_translator();
     init_productivityTools();
+    init_weatherUtils();
     PREFERRED_OLLAMA_PREFIXES = [
       "llama3.2",
       "qwen2.5",
@@ -1980,6 +2196,34 @@ import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
+
+// server/pdfParser.ts
+import { PDFParse } from "pdf-parse";
+async function extractPdfTextFromBuffer(buffer) {
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const [textResult, infoResult] = await Promise.all([
+      parser.getText(),
+      parser.getInfo().catch(() => null)
+    ]);
+    const rawText = (textResult?.text || "").replace(/\r\n/g, "\n").trim();
+    const numPages = typeof infoResult?.total === "number" ? infoResult.total : Array.isArray(textResult?.pages) ? textResult.pages.length : 0;
+    const isScannedImageOnly = numPages > 0 && rawText.replace(/\s+/g, "").length < 25;
+    const infoMap = infoResult?.info || {};
+    return {
+      text: rawText,
+      numPages,
+      title: typeof infoMap.Title === "string" && infoMap.Title.trim() ? infoMap.Title.trim() : void 0,
+      author: typeof infoMap.Author === "string" && infoMap.Author.trim() ? infoMap.Author.trim() : void 0,
+      isScannedImageOnly
+    };
+  } finally {
+    await parser.destroy().catch(() => {
+    });
+  }
+}
+
+// server/fileService.ts
 var IGNORED_DIRS = /* @__PURE__ */ new Set(["node_modules", ".git", "dist", "dist-electron", ".playwright-cli", ".friday-data"]);
 var TEXT_PREVIEW_EXTS = /* @__PURE__ */ new Set(["ts", "tsx", "js", "jsx", "json", "md", "txt", "css", "html", "csv", "py", "sql"]);
 var cachedIndex = null;
@@ -2073,7 +2317,7 @@ function getCachedFileIndex(allowedFolders, paused, maxFiles = 300, ttlMs = 3e4)
   cachedIndex = { key, scannedAt: now, files };
   return files;
 }
-function readPermittedFilePreview(filePath, allowedFolders) {
+async function readPermittedFilePreview(filePath, allowedFolders) {
   const resolved = path.resolve(filePath);
   if (!isPathPermitted(resolved, allowedFolders)) {
     throw new Error("Access denied: file is outside user-permitted folders.");
@@ -2087,6 +2331,35 @@ function readPermittedFilePreview(filePath, allowedFolders) {
   }
   const ext = path.extname(resolved).replace(/^\./, "").toLowerCase();
   const category = categorizeExtension(ext);
+  if (ext === "pdf") {
+    const buffer = fs.readFileSync(resolved);
+    const parsed = await extractPdfTextFromBuffer(buffer);
+    if (parsed.isScannedImageOnly) {
+      return {
+        name: path.basename(resolved),
+        content: `[PDF Document: ${path.basename(resolved)} \xB7 ${parsed.numPages} page(s)]
+This PDF appears to contain scanned images without an embedded text layer. Capture a page screenshot or upload it in Media & Screen Intelligence to inspect visual contents.`,
+        sizeBytes: stat.size,
+        extension: ext,
+        category
+      };
+    }
+    const headerMeta = [
+      `PDF Pages: ${parsed.numPages}`,
+      parsed.title ? `Title: ${parsed.title}` : null,
+      parsed.author ? `Author: ${parsed.author}` : null
+    ].filter(Boolean).join(" \xB7 ");
+    const body = parsed.text.slice(0, 24e3);
+    return {
+      name: path.basename(resolved),
+      content: `${headerMeta ? `[${headerMeta}]
+
+` : ""}${body}${parsed.text.length > 24e3 ? "\n\n... [PDF preview truncated at 24 KB]" : ""}`,
+      sizeBytes: stat.size,
+      extension: ext,
+      category
+    };
+  }
   if (category === "image" || category === "video" || category === "audio") {
     return {
       name: path.basename(resolved),
@@ -2145,6 +2418,9 @@ var DEFAULT_DB = {
     themeAccent: "violet",
     animationQuality: "high",
     weatherLocation: "Kolhapur, MH",
+    temperatureUnit: "celsius",
+    favoriteWeatherLocations: ["Kolhapur, MH"],
+    weatherNotificationsEnabled: true,
     allowedFolders: getDefaultPermittedFolders(),
     pausedIndexing: false,
     screenCaptureConsent: false,
@@ -2232,6 +2508,26 @@ var DEFAULT_DB = {
       value: "Always confirm before deleting files, modifying schedules, or capturing screen.",
       approved: true,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }
+  ],
+  notes: [
+    {
+      id: "note-1",
+      title: "Workspace Quick Guide",
+      content: 'Ask F.R.I.D.A.Y. "take a note: ..." or create notes here to persist across desktop sessions.',
+      pinned: true,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }
+  ],
+  todos: [
+    {
+      id: "todo-1",
+      title: "Review daily schedule and permitted workspace folders",
+      completed: false,
+      priority: "normal",
+      dueDate: getTodayIsoDate(0),
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
     }
   ],
   chatHistory: [
@@ -2468,6 +2764,8 @@ function loadDb() {
       settings: mergedSettings,
       calendar: Array.isArray(parsed.calendar) ? parsed.calendar : DEFAULT_DB.calendar,
       memory: Array.isArray(parsed.memory) ? parsed.memory : DEFAULT_DB.memory,
+      notes: Array.isArray(parsed.notes) ? parsed.notes : DEFAULT_DB.notes,
+      todos: Array.isArray(parsed.todos) ? parsed.todos : DEFAULT_DB.todos,
       chatHistory: Array.isArray(parsed.chatHistory) ? parsed.chatHistory : DEFAULT_DB.chatHistory,
       actionLogs: Array.isArray(parsed.actionLogs) ? parsed.actionLogs : DEFAULT_DB.actionLogs,
       workflows: Array.isArray(parsed.workflows) ? parsed.workflows : DEFAULT_DB.workflows,
@@ -3722,6 +4020,7 @@ async function getTopProcesses(limit = 12) {
 }
 
 // server/weatherService.ts
+init_weatherUtils();
 var WMO_CONDITIONS = {
   0: "Clear Sky",
   1: "Mainly Clear",
@@ -3732,72 +4031,257 @@ var WMO_CONDITIONS = {
   51: "Light Drizzle",
   53: "Moderate Drizzle",
   55: "Dense Drizzle",
+  56: "Light Freezing Drizzle",
+  57: "Dense Freezing Drizzle",
   61: "Slight Rain",
   63: "Moderate Rain",
   65: "Heavy Rain",
+  66: "Light Freezing Rain",
+  67: "Heavy Freezing Rain",
   71: "Slight Snow",
   73: "Moderate Snow",
   75: "Heavy Snow",
+  77: "Snow Grains",
   80: "Rain Showers",
   81: "Moderate Showers",
   82: "Violent Showers",
-  95: "Thunderstorm"
+  85: "Snow Showers",
+  86: "Heavy Snow Showers",
+  95: "Thunderstorm",
+  96: "Thunderstorm w/ Hail",
+  99: "Severe Thunderstorm"
 };
-var cachedWeather = null;
-async function getWeatherForLocation(locationQuery) {
-  const cleanLocation = locationQuery.trim() || "San Francisco, US";
-  const now = Date.now();
-  if (cachedWeather && cachedWeather.key === cleanLocation && now - cachedWeather.fetchedAt < 10 * 60 * 1e3) {
-    return cachedWeather.data;
+var CACHE_TTL_MS = 10 * 60 * 1e3;
+var weatherCache = /* @__PURE__ */ new Map();
+async function searchWeatherLocations(query) {
+  const clean = query.trim();
+  if (!clean || clean.length < 2) return [];
+  const res = await fetch(
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(clean)}&count=6&language=en&format=json`,
+    { signal: AbortSignal.timeout(4500) }
+  );
+  if (!res.ok) return [];
+  const json = await res.json();
+  return (json.results ?? []).map((item) => ({
+    name: item.name,
+    region: item.admin1,
+    country: item.country,
+    latitude: item.latitude,
+    longitude: item.longitude,
+    label: [item.name, item.admin1, item.country].filter(Boolean).join(", ")
+  }));
+}
+async function fetchNwsAlertsIfApplicable(latitude, longitude) {
+  if (latitude < 17 || latitude > 72 || longitude < -179 || longitude > -64) {
+    return [];
   }
-  let latitude = 37.7749;
-  let longitude = -122.4194;
-  let resolvedName = cleanLocation;
   try {
-    const cityOnly = cleanLocation.split(",")[0].trim();
-    const geoRes = await fetch(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityOnly)}&count=1&language=en&format=json`,
-      { signal: AbortSignal.timeout(4e3) }
-    );
-    if (geoRes.ok) {
-      const geoJson = await geoRes.json();
-      const first = geoJson.results?.[0];
-      if (first) {
-        latitude = first.latitude;
-        longitude = first.longitude;
-        resolvedName = first.country ? `${first.name}, ${first.country}` : first.name;
+    const res = await fetch(
+      `https://api.weather.gov/alerts/active?point=${latitude.toFixed(4)},${longitude.toFixed(4)}`,
+      {
+        headers: { "User-Agent": "FRIDAY-Command-Center/1.0 (local-desktop)" },
+        signal: AbortSignal.timeout(2500)
       }
+    );
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json.features ?? []).slice(0, 5).map((f, idx) => {
+      const p = f.properties || {};
+      const sevRaw = (p.severity || "").toLowerCase();
+      const severity = sevRaw === "extreme" || sevRaw === "severe" ? "warning" : sevRaw === "moderate" ? "watch" : "advisory";
+      return {
+        id: String(f.id || `nws-${idx}`),
+        title: p.event || "Weather Alert",
+        severity,
+        description: (p.headline || p.description || "Active meteorological alert.").slice(0, 280),
+        source: "National Weather Service (api.weather.gov)",
+        effective: p.effective,
+        expires: p.expires
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+function deriveThresholdAdvisories(currentCode, windSpeedKmh, forecast) {
+  const alerts = [];
+  if (currentCode >= 95) {
+    alerts.push({
+      id: "wmo-thunderstorm-now",
+      title: WMO_CONDITIONS[currentCode] || "Thunderstorm Active",
+      severity: "warning",
+      description: "Active thunderstorm conditions reported at your location. Take shelter if outdoors.",
+      source: "Open-Meteo WMO Telemetry"
+    });
+  } else if (currentCode === 65 || currentCode === 67 || currentCode === 82) {
+    alerts.push({
+      id: "wmo-heavy-rain-now",
+      title: "Heavy Rainfall Advisory",
+      severity: "watch",
+      description: `${WMO_CONDITIONS[currentCode] || "Heavy rain"} currently observed with reduced visibility.`,
+      source: "Open-Meteo WMO Telemetry"
+    });
+  }
+  if (windSpeedKmh >= 50) {
+    alerts.push({
+      id: "wmo-high-wind",
+      title: "High Wind Advisory",
+      severity: "watch",
+      description: `Sustained wind speed reached ${windSpeedKmh} km/h.`,
+      source: "Open-Meteo WMO Telemetry"
+    });
+  }
+  const upcomingStorm = forecast.find((d) => d.code >= 95 || d.tempMax >= 41);
+  if (upcomingStorm && !alerts.some((a) => a.id.startsWith("wmo-thunderstorm"))) {
+    alerts.push({
+      id: `wmo-forecast-${upcomingStorm.date}`,
+      title: upcomingStorm.code >= 95 ? `Storm Outlook (${upcomingStorm.date})` : `Extreme Heat Outlook (${upcomingStorm.date})`,
+      severity: "advisory",
+      description: upcomingStorm.code >= 95 ? `Thunderstorms forecasted on ${upcomingStorm.date} (${upcomingStorm.precipProbMax ?? 0}% precipitation chance).` : `Peak high temperature of ${upcomingStorm.tempMax}\xB0C forecasted on ${upcomingStorm.date}.`,
+      source: "Open-Meteo 7-Day Telemetry"
+    });
+  }
+  return alerts;
+}
+async function getWeatherForCoordinates(latitude, longitude, resolvedLabel, forceRefresh = false) {
+  const cacheKey = `coord:${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+  const now = Date.now();
+  const cached = weatherCache.get(cacheKey);
+  if (!forceRefresh && cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+    return {
+      ...cached.data,
+      isCached: false,
+      cacheAgeMinutes: Math.floor((now - cached.fetchedAt) / 6e4)
+    };
+  }
+  let locationName = resolvedLabel?.trim() || `${latitude.toFixed(2)}\xB0, ${longitude.toFixed(2)}\xB0`;
+  if (!resolvedLabel) {
+    try {
+      const revRes = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${latitude}&longitude=${longitude}&count=1&language=en&format=json`,
+        { signal: AbortSignal.timeout(3e3) }
+      );
+      if (revRes.ok) {
+        const revJson = await revRes.json();
+        const first = revJson.results?.[0];
+        if (first) {
+          locationName = first.country ? `${first.name}, ${first.country}` : first.name;
+        }
+      }
+    } catch {
     }
-    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=4`;
-    const res = await fetch(weatherUrl, { signal: AbortSignal.timeout(5e3) });
+  }
+  try {
+    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m&hourly=temperature_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m,visibility,uv_index&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,uv_index_max,sunrise,sunset,wind_speed_10m_max&timezone=auto&forecast_days=7&forecast_hours=24`;
+    const [res, nwsAlerts] = await Promise.all([
+      fetch(weatherUrl, { signal: AbortSignal.timeout(6e3) }),
+      fetchNwsAlertsIfApplicable(latitude, longitude)
+    ]);
     if (!res.ok) {
       throw new Error(`Open-Meteo HTTP ${res.status}`);
     }
     const json = await res.json();
-    const forecast = (json.daily.time ?? []).slice(0, 4).map((date, idx) => ({
+    const forecast = (json.daily?.time ?? []).slice(0, 7).map((date, idx) => ({
       date,
-      tempMax: Math.round(json.daily.temperature_2m_max[idx] ?? 0),
-      tempMin: Math.round(json.daily.temperature_2m_min[idx] ?? 0),
-      code: json.daily.weather_code[idx] ?? 0,
-      condition: WMO_CONDITIONS[json.daily.weather_code[idx] ?? 0] ?? "Clear"
+      tempMax: Math.round(json.daily?.temperature_2m_max?.[idx] ?? 0),
+      tempMin: Math.round(json.daily?.temperature_2m_min?.[idx] ?? 0),
+      code: json.daily?.weather_code?.[idx] ?? 0,
+      condition: WMO_CONDITIONS[json.daily?.weather_code?.[idx] ?? 0] ?? "Clear",
+      precipProbMax: json.daily?.precipitation_probability_max?.[idx],
+      uvMax: json.daily?.uv_index_max?.[idx],
+      sunrise: json.daily?.sunrise?.[idx],
+      sunset: json.daily?.sunset?.[idx],
+      windSpeedMaxKmh: typeof json.daily?.wind_speed_10m_max?.[idx] === "number" ? Math.round(json.daily.wind_speed_10m_max[idx]) : void 0
     }));
+    const hourly = (json.hourly?.time ?? []).slice(0, 24).map((time, idx) => {
+      const code = json.hourly?.weather_code?.[idx] ?? 0;
+      return {
+        time,
+        temp: Math.round(json.hourly?.temperature_2m?.[idx] ?? 0),
+        feelsLike: Math.round(json.hourly?.apparent_temperature?.[idx] ?? 0),
+        precipProb: Math.round(json.hourly?.precipitation_probability?.[idx] ?? 0),
+        windSpeedKmh: Math.round(json.hourly?.wind_speed_10m?.[idx] ?? 0),
+        code,
+        condition: WMO_CONDITIONS[code] ?? "Clear"
+      };
+    });
+    const visMeters = json.hourly?.visibility?.[0];
+    const uvNow = json.hourly?.uv_index?.[0] ?? forecast[0]?.uvMax;
+    const windDirDeg = json.current.wind_direction_10m;
+    const windSpeedKmh = Math.round(json.current.wind_speed_10m);
+    const derivedAlerts = deriveThresholdAdvisories(json.current.weather_code, windSpeedKmh, forecast);
+    const alerts = [...nwsAlerts, ...derivedAlerts];
     const data = {
-      location: resolvedName,
+      location: locationName,
       latitude,
       longitude,
       temperature: Math.round(json.current.temperature_2m),
       condition: WMO_CONDITIONS[json.current.weather_code] ?? "Clear",
+      conditionCode: json.current.weather_code,
       humidity: Math.round(json.current.relative_humidity_2m),
-      windSpeedKmh: Math.round(json.current.wind_speed_10m),
+      windSpeedKmh,
+      windDirectionDeg: typeof windDirDeg === "number" ? Math.round(windDirDeg) : void 0,
+      windDirectionLabel: degreesToCompass(windDirDeg),
+      pressureHpa: typeof json.current.pressure_msl === "number" ? Math.round(json.current.pressure_msl) : void 0,
+      visibilityKm: typeof visMeters === "number" ? Number((visMeters / 1e3).toFixed(1)) : void 0,
+      uvIndex: typeof uvNow === "number" ? Number(uvNow.toFixed(1)) : void 0,
+      precipitationMm: typeof json.current.precipitation === "number" ? Number(json.current.precipitation.toFixed(1)) : 0,
+      cloudCover: typeof json.current.cloud_cover === "number" ? Math.round(json.current.cloud_cover) : void 0,
+      sunrise: forecast[0]?.sunrise,
+      sunset: forecast[0]?.sunset,
       feelsLike: Math.round(json.current.apparent_temperature),
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       forecast,
-      source: "Open-Meteo Live API"
+      hourly,
+      alerts,
+      source: "Open-Meteo Live API",
+      isCached: false,
+      cacheAgeMinutes: 0
     };
-    cachedWeather = { key: cleanLocation, fetchedAt: now, data };
+    weatherCache.set(cacheKey, { fetchedAt: now, data });
     return data;
   } catch (err) {
-    if (cachedWeather) return cachedWeather.data;
+    if (cached) {
+      return {
+        ...cached.data,
+        isCached: true,
+        cacheAgeMinutes: Math.max(1, Math.floor((now - cached.fetchedAt) / 6e4))
+      };
+    }
+    throw err;
+  }
+}
+async function getWeatherForLocation(locationQuery, forceRefresh = false) {
+  const cleanLocation = locationQuery.trim() || "San Francisco, US";
+  const cacheKey = `loc:${cleanLocation.toLowerCase()}`;
+  const now = Date.now();
+  const cached = weatherCache.get(cacheKey);
+  if (!forceRefresh && cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+    return {
+      ...cached.data,
+      isCached: false,
+      cacheAgeMinutes: Math.floor((now - cached.fetchedAt) / 6e4)
+    };
+  }
+  try {
+    const cityOnly = cleanLocation.split(",")[0].trim();
+    const matches = await searchWeatherLocations(cityOnly);
+    const first = matches[0];
+    if (!first) {
+      throw new Error(`Location "${cleanLocation}" was not found by the weather geocoder.`);
+    }
+    const resolvedName = first.country ? `${first.name}, ${first.country}` : first.name;
+    const data = await getWeatherForCoordinates(first.latitude, first.longitude, resolvedName, forceRefresh);
+    weatherCache.set(cacheKey, { fetchedAt: now, data });
+    return data;
+  } catch (err) {
+    if (cached) {
+      return {
+        ...cached.data,
+        isCached: true,
+        cacheAgeMinutes: Math.max(1, Math.floor((now - cached.fetchedAt) / 6e4))
+      };
+    }
     throw err;
   }
 }
@@ -3808,6 +4292,7 @@ init_fileIndex();
 init_unitConverter();
 init_translator();
 init_productivityTools();
+init_weatherUtils();
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 
 // server/mediaService.ts
@@ -3882,6 +4367,77 @@ async function handleMediaVoiceCommand(userCommand, allowedFolders, pausedIndexi
   };
 }
 
+// server/mediaInspect.ts
+function inspectImageDimensions(buf, mimeType) {
+  const sizeKb = Math.max(1, Math.round(buf.length / 1024));
+  const lower = mimeType.toLowerCase();
+  if ((lower.includes("png") || buf.subarray(0, 8).toString("hex") === "89504e470d0a1a0a") && buf.length >= 24) {
+    return {
+      format: "PNG",
+      width: buf.readUInt32BE(16),
+      height: buf.readUInt32BE(20),
+      sizeKb
+    };
+  }
+  if (buf.length >= 10 && buf.subarray(0, 3).toString("ascii") === "GIF") {
+    return {
+      format: "GIF",
+      width: buf.readUInt16LE(6),
+      height: buf.readUInt16LE(8),
+      sizeKb
+    };
+  }
+  if (buf.length >= 4 && buf[0] === 255 && buf[1] === 216) {
+    let offset = 2;
+    while (offset + 9 < buf.length) {
+      if (buf[offset] !== 255) break;
+      const marker = buf[offset + 1];
+      const len = buf.readUInt16BE(offset + 2);
+      if (marker >= 192 && marker <= 195 || marker >= 197 && marker <= 199 || marker >= 201 && marker <= 203) {
+        return {
+          format: "JPEG",
+          height: buf.readUInt16BE(offset + 5),
+          width: buf.readUInt16BE(offset + 7),
+          sizeKb
+        };
+      }
+      if (len < 2) break;
+      offset += 2 + len;
+    }
+    return { format: "JPEG", sizeKb };
+  }
+  if (buf.length >= 30 && buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") {
+    const chunk = buf.subarray(12, 16).toString("ascii");
+    if (chunk === "VP8X" && buf.length >= 30) {
+      const width = 1 + buf.readUIntLE(24, 3);
+      const height = 1 + buf.readUIntLE(27, 3);
+      return { format: "WebP", width, height, sizeKb };
+    }
+    return { format: "WebP", sizeKb };
+  }
+  return { format: mimeType.replace("image/", "").toUpperCase(), sizeKb };
+}
+function inspectWavAudioBuffer(buf) {
+  const sizeKb = Math.max(1, Math.round(buf.length / 1024));
+  if (buf.length < 44 || buf.subarray(0, 4).toString("ascii") !== "RIFF" || buf.subarray(8, 12).toString("ascii") !== "WAVE") {
+    return { isRiffWave: false, sizeKb };
+  }
+  const channels = buf.readUInt16LE(22);
+  const sampleRate = buf.readUInt32LE(24);
+  const byteRate = buf.readUInt32LE(28);
+  const bitsPerSample = buf.readUInt16LE(34);
+  const dataSize = Math.max(0, buf.length - 44);
+  const durationSec = byteRate > 0 ? Number((dataSize / byteRate).toFixed(1)) : void 0;
+  return {
+    isRiffWave: true,
+    channels,
+    sampleRate,
+    bitsPerSample,
+    durationSec,
+    sizeKb
+  };
+}
+
 // server/aiService.ts
 init_internetResearchService();
 init_localAiService();
@@ -3949,7 +4505,17 @@ async function checkAiHealth(preferredPreference, ollamaModel) {
   const db = loadDb();
   const pref = preferredPreference || db.settings.aiModel || "local-auto";
   const targetOllama = ollamaModel || db.settings.ollamaModel;
-  if (pref.startsWith("gemini-") && hasValidGeminiKey()) {
+  const geminiConfigured = hasValidGeminiKey();
+  const [openaiLocal, ollama] = await Promise.all([
+    pref !== "local-core" ? checkOpenAiCompatibleStatus(targetOllama) : Promise.resolve(null),
+    pref !== "local-core" ? checkOllamaStatus(targetOllama) : Promise.resolve(null)
+  ]);
+  const optionalProviders = {
+    geminiConfigured,
+    ollamaConfigured: Boolean(ollama?.available),
+    localOpenAiConfigured: Boolean(openaiLocal?.available)
+  };
+  if (pref.startsWith("gemini-") && geminiConfigured) {
     const gem = await checkGeminiConnection();
     if (gem.connected) {
       return {
@@ -3959,37 +4525,36 @@ async function checkAiHealth(preferredPreference, ollamaModel) {
         engine: "gemini",
         freeWebReady: true,
         requiresPaidKey: false,
-        latencyMs: Date.now() - started
+        latencyMs: Date.now() - started,
+        optionalProviders
       };
     }
   }
-  if (pref !== "local-core") {
-    const openaiLocal = await checkOpenAiCompatibleStatus(targetOllama);
-    if (openaiLocal.available && openaiLocal.selectedModel) {
-      return {
-        connected: true,
-        provider: "Local OpenAI-Compatible Engine",
-        model: openaiLocal.selectedModel,
-        engine: "local-openai",
-        freeWebReady: true,
-        requiresPaidKey: false,
-        latencyMs: Date.now() - started,
-        ollamaModels: openaiLocal.models
-      };
-    }
-    const ollama = await checkOllamaStatus(targetOllama);
-    if (ollama.available && ollama.selectedModel) {
-      return {
-        connected: true,
-        provider: "Local Ollama Engine",
-        model: ollama.selectedModel,
-        engine: "ollama",
-        freeWebReady: true,
-        requiresPaidKey: false,
-        latencyMs: Date.now() - started,
-        ollamaModels: ollama.models
-      };
-    }
+  if (openaiLocal?.available && openaiLocal.selectedModel) {
+    return {
+      connected: true,
+      provider: "Local OpenAI-Compatible Engine",
+      model: openaiLocal.selectedModel,
+      engine: "local-openai",
+      freeWebReady: true,
+      requiresPaidKey: false,
+      latencyMs: Date.now() - started,
+      ollamaModels: openaiLocal.models,
+      optionalProviders
+    };
+  }
+  if (ollama?.available && ollama.selectedModel) {
+    return {
+      connected: true,
+      provider: "Local Ollama Engine",
+      model: ollama.selectedModel,
+      engine: "ollama",
+      freeWebReady: true,
+      requiresPaidKey: false,
+      latencyMs: Date.now() - started,
+      ollamaModels: ollama.models,
+      optionalProviders
+    };
   }
   return {
     connected: true,
@@ -3999,7 +4564,8 @@ async function checkAiHealth(preferredPreference, ollamaModel) {
     freeWebReady: true,
     requiresPaidKey: false,
     latencyMs: Date.now() - started,
-    ollamaModels: []
+    ollamaModels: [],
+    optionalProviders
   };
 }
 async function checkGeminiConnection() {
@@ -4206,6 +4772,7 @@ async function streamAssistantCommand(userCommand, settings, emitEvent, signal) 
   let webPage = null;
   let memorySaved = null;
   let weatherData = null;
+  let weatherError = null;
   if (parsed.category === "system_telemetry" || parsed.category === "workflow_run") {
     telemetry = await getSystemTelemetry();
     contextParts.push(
@@ -4367,13 +4934,28 @@ ${webResults.slice(0, 6).map((r, i) => `${i + 1}. ${r.title} (${r.uri}): ${r.sni
       detail: `${collectedSources.length} verified source(s)`
     });
   }
-  if (/\bweather|temperature|forecast\b/i.test(userCommand)) {
+  const parsedWeather = parseWeatherQuery(userCommand);
+  if (parsed.category === "weather_query" || parsedWeather.isWeather) {
+    const targetLocation = parsedWeather.location || settings.weatherLocation;
     try {
-      weatherData = await getWeatherForLocation(settings.weatherLocation);
-      contextParts.push(
-        `LIVE WEATHER (${weatherData.location}): ${weatherData.temperature}\xB0C, ${weatherData.condition}, Humidity ${weatherData.humidity}%, Wind ${weatherData.windSpeedKmh} km/h.`
+      weatherData = await getWeatherForLocation(targetLocation);
+      const summary = buildWeatherChatSummary(
+        weatherData,
+        parsedWeather,
+        settings.temperatureUnit || "celsius"
       );
-    } catch {
+      contextParts.push(`LIVE WEATHER TELEMETRY:
+${summary}`);
+      appendActionLog(db, {
+        agent: "browser",
+        action: "Weather Telemetry Query",
+        target: weatherData.location,
+        status: "completed",
+        detail: `${weatherData.temperature}\xB0C \xB7 ${weatherData.condition}`
+      });
+    } catch (err) {
+      weatherError = err.message;
+      contextParts.push(`WEATHER QUERY ERROR: ${weatherError}`);
     }
   }
   const prodCmd = parseProductivityCommand(userCommand);
@@ -4392,18 +4974,40 @@ ${webResults.slice(0, 6).map((r, i) => `${i + 1}. ${r.title} (${r.uri}): ${r.sni
       });
       memorySaved = `${prodCmd.title} (${date} at ${time})`;
       contextParts.push(`REMINDER SCHEDULED: ${memorySaved}`);
-    } else if (prodCmd.kind === "note_add" || prodCmd.kind === "todo_add") {
-      const val = prodCmd.detail || prodCmd.title;
-      db.memory.unshift({
-        id: `mem-${Date.now()}`,
-        category: "preference",
-        key: prodCmd.kind === "note_add" ? "Note" : "To-Do Task",
-        value: val,
-        approved: true,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    } else if (prodCmd.kind === "note_add") {
+      const nowStr = (/* @__PURE__ */ new Date()).toISOString();
+      const content = prodCmd.detail || prodCmd.title;
+      db.notes.unshift({
+        id: `note-${Date.now()}`,
+        title: prodCmd.title,
+        content,
+        pinned: false,
+        createdAt: nowStr,
+        updatedAt: nowStr
       });
-      memorySaved = val;
-      contextParts.push(`SAVED ITEM: ${val}`);
+      memorySaved = `Note "${prodCmd.title}"`;
+      contextParts.push(`SAVED NOTE: ${prodCmd.title} \u2014 ${content}`);
+    } else if (prodCmd.kind === "todo_add") {
+      db.todos.unshift({
+        id: `todo-${Date.now()}`,
+        title: prodCmd.title,
+        completed: false,
+        priority: "normal",
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      memorySaved = `Task "${prodCmd.title}"`;
+      contextParts.push(`ADDED TASK: ${prodCmd.title}`);
+    } else if (prodCmd.kind === "list_notes") {
+      contextParts.push(
+        `SAVED NOTES (${db.notes.length}):
+${db.notes.slice(0, 6).map((n, i) => `${i + 1}. ${n.title}: ${n.content}`).join("\n") || "None"}`
+      );
+    } else if (prodCmd.kind === "list_todos") {
+      const open = db.todos.filter((t) => !t.completed);
+      contextParts.push(
+        `OPEN TASKS (${open.length}):
+${open.slice(0, 6).map((t, i) => `${i + 1}. ${t.title}`).join("\n") || "None"}`
+      );
     }
   }
   const toolMs = Date.now() - tToolStart;
@@ -4456,8 +5060,12 @@ ${memorySummary || "None"}`;
       webResults,
       webPage,
       weather: weatherData,
+      weatherError,
+      temperatureUnit: settings.temperatureUnit || "celsius",
       memorySaved,
-      memoryEntries: db.memory
+      memoryEntries: db.memory,
+      notes: db.notes,
+      todos: db.todos
     });
     firstTokenMs = Date.now() - tStart;
     emitChunkedTokens(finalText, (token) => emitEvent({ type: "token", token }));
@@ -4829,25 +5437,107 @@ ${scheduleBlock}`;
 }
 async function analyzeMediaOrScreen(params) {
   const db = loadDb();
+  const isPdf = params.mimeType === "application/pdf";
   const isAudio = params.mimeType.startsWith("audio/");
   const isImage = params.mimeType.startsWith("image/");
+  const rawBuffer = Buffer.from(params.base64Data, "base64");
+  if (isPdf) {
+    try {
+      const parsed = await extractPdfTextFromBuffer(rawBuffer);
+      if (parsed.isScannedImageOnly) {
+        appendActionLog(db, {
+          agent: "media",
+          action: "PDF Inspection (Scanned)",
+          target: `${parsed.numPages} page(s)`,
+          status: "completed"
+        });
+        return {
+          analysis: `PDF detected (${parsed.numPages} page${parsed.numPages === 1 ? "" : "s"}), but no embedded text layer was found (appears to be a scanned/image-only PDF). Capture a page screenshot and run Screen Analysis, or configure an optional multimodal model to OCR scanned pages.`,
+          modelUsed: "local-pdf-parser"
+        };
+      }
+      const summarized = await summarizeLocalFile({
+        fileName: parsed.title || "Uploaded Document.pdf",
+        content: parsed.text,
+        question: params.prompt || void 0,
+        model: params.model
+      });
+      return {
+        analysis: `PDF Analysis (${parsed.numPages} page${parsed.numPages === 1 ? "" : "s"}):
+
+${summarized.summary}`,
+        modelUsed: hasValidGeminiKey() && params.model?.startsWith("gemini-") ? params.model : "local-pdf-parser"
+      };
+    } catch (err) {
+      return {
+        analysis: `Could not parse PDF payload locally: ${err.message}`,
+        modelUsed: "local-pdf-parser"
+      };
+    }
+  }
+  if (isAudio) {
+    const wavInfo = inspectWavAudioBuffer(rawBuffer);
+    if (process.platform === "win32" && wavInfo.isRiffWave) {
+      const stt = await recognizeWindowsSpeechFromWav(params.base64Data, db.settings.language || "en-US");
+      if (stt.ok && stt.text) {
+        appendActionLog(db, {
+          agent: "media",
+          action: "Local Audio Transcription",
+          target: params.mimeType,
+          status: "completed"
+        });
+        return {
+          analysis: `Transcript (${wavInfo.durationSec ?? "?"}s WAV, ${wavInfo.sampleRate} Hz):
+${stt.text}`,
+          modelUsed: stt.engine
+        };
+      }
+    }
+    if (hasValidGeminiKey()) {
+      const ai = getGeminiClient();
+      const targetModel = "gemini-3.5-transcribe";
+      const response = await ai.models.generateContent({
+        model: targetModel,
+        contents: {
+          parts: [
+            { inlineData: { mimeType: params.mimeType, data: params.base64Data } },
+            {
+              text: params.prompt || "Transcribe this audio accurately and provide a concise summary."
+            }
+          ]
+        }
+      });
+      appendActionLog(db, {
+        agent: "media",
+        action: "Audio Transcription & Summary",
+        target: params.mimeType,
+        status: "completed"
+      });
+      return { analysis: (response.text ?? "").trim(), modelUsed: targetModel };
+    }
+    const detail = wavInfo.isRiffWave ? `WAV audio (${wavInfo.durationSec ?? "?"}s, ${wavInfo.channels}ch, ${wavInfo.sampleRate} Hz, ${wavInfo.bitsPerSample}-bit, ${wavInfo.sizeKb} KB)` : `${params.mimeType} audio (${wavInfo.sizeKb} KB)`;
+    return {
+      analysis: `Inspected ${detail}. Offline speech transcription uses Windows System.Speech (for WAV audio on Windows 10/11) or optional Gemini transcription in server configuration. For voice commands in-app, click the microphone button for live speech capture.`,
+      modelUsed: "local-audio-inspector"
+    };
+  }
   if (hasValidGeminiKey()) {
     const ai = getGeminiClient();
-    const targetModel = isAudio ? "gemini-3.5-transcribe" : "gemini-3.1-flash-lite";
+    const targetModel = "gemini-3.1-flash-lite";
     const response = await ai.models.generateContent({
       model: targetModel,
       contents: {
         parts: [
           { inlineData: { mimeType: params.mimeType, data: params.base64Data } },
           {
-            text: params.prompt || (isAudio ? "Transcribe this audio accurately and provide a concise summary." : "Analyze this visual/document input clearly, extract key text/metrics, and explain any errors or insights.")
+            text: params.prompt || "Analyze this visual/screen input clearly, extract key text/metrics, and explain any errors, charts, or insights."
           }
         ]
       }
     });
     appendActionLog(db, {
-      agent: isAudio ? "media" : "vision",
-      action: isAudio ? "Audio Transcription & Summary" : "Visual / Document Analysis",
+      agent: "vision",
+      action: "Visual / Screen Analysis",
       target: params.mimeType,
       status: "completed"
     });
@@ -4869,7 +5559,7 @@ async function analyzeMediaOrScreen(params) {
           messages: [
             {
               role: "user",
-              content: params.prompt || "Analyze this image and extract key text or errors.",
+              content: params.prompt || "Analyze this image and extract key text, errors, or chart trends.",
               images: [params.base64Data]
             }
           ]
@@ -4890,10 +5580,22 @@ async function analyzeMediaOrScreen(params) {
         };
       }
     }
+    const imgMeta = inspectImageDimensions(rawBuffer, params.mimeType);
+    const dims = imgMeta.width && imgMeta.height ? `${imgMeta.width}\xD7${imgMeta.height}px` : "dimensions unknown";
+    appendActionLog(db, {
+      agent: "vision",
+      action: "Local Image Inspection",
+      target: `${imgMeta.format} (${dims})`,
+      status: "completed"
+    });
+    return {
+      analysis: `Captured ${imgMeta.format} visual payload (${dims}, ${imgMeta.sizeKb} KB). Prompt: "${params.prompt || "Inspect image"}". Local pixel/metadata inspection succeeded. For OCR text extraction and error/chart interpretation offline without cloud APIs, install an Ollama vision model (e.g., "ollama pull llava" or "ollama pull llama3.2-vision"), or optionally set GEMINI_API_KEY on the server.`,
+      modelUsed: "local-image-inspector"
+    };
   }
-  const sizeKb = Math.round(params.base64Data.length * 3 / 4 / 1024);
+  const sizeKb = Math.max(1, Math.round(rawBuffer.length / 1024));
   return {
-    analysis: `Captured ${params.mimeType} payload (${sizeKb} KB). For offline local multimodal image analysis, pull a local vision model in Ollama (e.g., "ollama pull llava" or "ollama pull llama3.2-vision"), or optionally configure GEMINI_API_KEY in .env.`,
+    analysis: `Inspected ${params.mimeType} payload (${sizeKb} KB). No external vision/transcription provider is currently configured for this binary format.`,
     modelUsed: "local-core"
   };
 }
@@ -5093,6 +5795,29 @@ function sanitizeMemoryPatch(input) {
   if (typeof raw.value === "string" && raw.value.trim()) patch.value = raw.value.trim().slice(0, 1e3);
   return patch;
 }
+function sanitizeNotePatch(input) {
+  if (!input || typeof input !== "object") return {};
+  const raw = input;
+  const patch = {};
+  if (typeof raw.title === "string" && raw.title.trim()) patch.title = raw.title.trim().slice(0, 140);
+  if (typeof raw.content === "string") patch.content = raw.content.trim().slice(0, 4e3);
+  if (typeof raw.pinned === "boolean") patch.pinned = raw.pinned;
+  return patch;
+}
+function sanitizeTodoPatch(input) {
+  if (!input || typeof input !== "object") return {};
+  const raw = input;
+  const patch = {};
+  if (typeof raw.title === "string" && raw.title.trim()) patch.title = raw.title.trim().slice(0, 200);
+  if (typeof raw.completed === "boolean") patch.completed = raw.completed;
+  if (raw.priority === "low" || raw.priority === "normal" || raw.priority === "high") {
+    patch.priority = raw.priority;
+  }
+  if (typeof raw.dueDate === "string" && (/^\d{4}-\d{2}-\d{2}$/.test(raw.dueDate) || raw.dueDate === "")) {
+    patch.dueDate = raw.dueDate || void 0;
+  }
+  return patch;
+}
 var VALID_MODELS = /* @__PURE__ */ new Set([
   "local-auto",
   "ollama",
@@ -5158,6 +5883,19 @@ function sanitizeSettingsPatch(input, current) {
   }
   if (typeof raw.weatherLocation === "string" && raw.weatherLocation.trim()) {
     next.weatherLocation = raw.weatherLocation.trim().slice(0, 80);
+  }
+  if (raw.temperatureUnit === "celsius" || raw.temperatureUnit === "fahrenheit") {
+    next.temperatureUnit = raw.temperatureUnit;
+  }
+  if (Array.isArray(raw.favoriteWeatherLocations)) {
+    next.favoriteWeatherLocations = Array.from(
+      new Set(
+        raw.favoriteWeatherLocations.filter((item) => typeof item === "string" && item.trim().length > 0).map((item) => item.trim().slice(0, 80))
+      )
+    ).slice(0, 10);
+  }
+  if (typeof raw.weatherNotificationsEnabled === "boolean") {
+    next.weatherNotificationsEnabled = raw.weatherNotificationsEnabled;
   }
   if (Array.isArray(raw.allowedFolders)) {
     const clean = raw.allowedFolders.filter((f) => typeof f === "string" && f.trim().length > 0).map((f) => f.trim()).slice(0, 20);
@@ -5561,11 +6299,11 @@ async function runSafeDiagnosticsSuite() {
           actual: `Recognizers: [${voiceCaps.recognizers.join(", ") || "None"}] \xB7 SAPI Voices: ${voiceCaps.ttsVoices.length} \xB7 Mic Privacy: ${voiceCaps.micAccessStatus}`,
           status: !denied && (voiceCaps.offlineSttReady || voiceCaps.ttsVoices.length > 0) ? "pass" : "warning",
           error: denied ? "Windows Microphone Privacy denies desktop apps." : void 0,
-          recommendation: denied ? 'Enable Settings -> Privacy & security -> Microphone -> "Let desktop apps access your microphone".' : voiceCaps.offlineSttReady ? void 0 : "Install a Windows Speech language pack or configure GEMINI_API_KEY in .env."
+          recommendation: denied ? 'Enable Settings -> Privacy & security -> Microphone -> "Let desktop apps access your microphone".' : voiceCaps.offlineSttReady ? void 0 : "Install a Windows Speech language pack in Windows Settings -> Time & language -> Speech for offline dictation."
         };
       }
       return {
-        actual: `Linux container host \u2014 Windows System.Speech & SAPI TTS unavailable (${hasValidGeminiKey() ? "Gemini cloud fallback ready" : "Browser Web Speech / Gemini optional"})`,
+        actual: "Linux container host \u2014 Browser Web Speech API & Linux mic input active; Windows System.Speech runs on Windows 10/11",
         status: "unavailable",
         recommendation: "Run on Windows 10/11 desktop for native offline System.Speech recognition & SAPI TTS."
       };
@@ -5710,11 +6448,29 @@ async function startServer() {
   app.get("/api/weather", async (req, res) => {
     try {
       const db = loadDb();
+      const forceRefresh = req.query.refresh === "1";
+      const latRaw = req.query.lat !== void 0 ? Number(req.query.lat) : NaN;
+      const lonRaw = req.query.lon !== void 0 ? Number(req.query.lon) : NaN;
+      if (Number.isFinite(latRaw) && Number.isFinite(lonRaw) && latRaw >= -90 && latRaw <= 90 && lonRaw >= -180 && lonRaw <= 180) {
+        const label = typeof req.query.label === "string" ? req.query.label : void 0;
+        const weather2 = await getWeatherForCoordinates(latRaw, lonRaw, label, forceRefresh);
+        return res.json(weather2);
+      }
       const loc = req.query.location || db.settings.weatherLocation;
-      const weather = await getWeatherForLocation(loc);
+      const weather = await getWeatherForLocation(loc, forceRefresh);
       res.json(weather);
     } catch (err) {
       res.status(502).json({ error: `Weather service unavailable: ${err.message}` });
+    }
+  });
+  app.get("/api/weather/search", async (req, res) => {
+    try {
+      const q = String(req.query.q ?? "").trim();
+      if (q.length < 2) return res.json({ results: [] });
+      const results = await searchWeatherLocations(q);
+      res.json({ results });
+    } catch (err) {
+      res.status(502).json({ error: `Location search unavailable: ${err.message}` });
     }
   });
   app.get("/api/files", (req, res) => {
@@ -5736,14 +6492,14 @@ async function startServer() {
       res.status(500).json({ error: err.message });
     }
   });
-  app.post("/api/files/read", (req, res) => {
+  app.post("/api/files/read", async (req, res) => {
     try {
       const { filePath } = req.body;
       if (!filePath) {
         return res.status(400).json({ error: "filePath is required" });
       }
       const db = loadDb();
-      const preview = readPermittedFilePreview(filePath, db.settings.allowedFolders);
+      const preview = await readPermittedFilePreview(filePath, db.settings.allowedFolders);
       appendActionLog(db, {
         agent: "file",
         action: "Preview Local File",
@@ -6001,7 +6757,7 @@ async function startServer() {
       const { filePath, question } = req.body;
       if (!filePath) return res.status(400).json({ error: "filePath is required" });
       const db = loadDb();
-      const preview = readPermittedFilePreview(filePath, db.settings.allowedFolders);
+      const preview = await readPermittedFilePreview(filePath, db.settings.allowedFolders);
       const result = await summarizeLocalFile({
         fileName: preview.name,
         content: preview.content,
@@ -6208,6 +6964,16 @@ async function startServer() {
     saveDb(db);
     res.json(target);
   });
+  app.post("/api/apps/refresh", async (_req, res) => {
+    try {
+      const db = loadDb();
+      db.apps = await detectInstalledApps(db.apps, true);
+      saveDb(db);
+      res.json({ apps: db.apps });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
   app.post("/api/calendar", (req, res) => {
     const { title, date, time, category, notes } = req.body;
     if (!title?.trim()) return res.status(400).json({ error: "Title is required" });
@@ -6339,6 +7105,103 @@ async function startServer() {
     invalidateFileIndexCache();
     saveDb(db);
     res.json(db.settings);
+  });
+  app.get("/api/notes", (_req, res) => {
+    const db = loadDb();
+    res.json({ notes: db.notes });
+  });
+  app.post("/api/notes", (req, res) => {
+    const { title, content, pinned } = req.body;
+    if (!title?.trim() && !content?.trim()) {
+      return res.status(400).json({ error: "Note title or content is required." });
+    }
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const db = loadDb();
+    const note = {
+      id: `note-${Date.now()}`,
+      title: (title?.trim() || content?.trim().slice(0, 48) || "Quick Note").slice(0, 140),
+      content: (content?.trim() || title?.trim() || "").slice(0, 4e3),
+      pinned: Boolean(pinned),
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+    db.notes.unshift(note);
+    appendActionLog(db, {
+      agent: "memory",
+      action: "Create Note",
+      target: note.title,
+      status: "completed"
+    });
+    res.json(note);
+  });
+  app.patch("/api/notes/:id", (req, res) => {
+    const db = loadDb();
+    const note = db.notes.find((n) => n.id === req.params.id);
+    if (!note) return res.status(404).json({ error: "Note not found" });
+    const patch = sanitizeNotePatch(req.body);
+    Object.assign(note, patch, { updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+    saveDb(db);
+    res.json(note);
+  });
+  app.delete("/api/notes/:id", (req, res) => {
+    const db = loadDb();
+    const before = db.notes.length;
+    db.notes = db.notes.filter((n) => n.id !== req.params.id);
+    if (db.notes.length === before) return res.status(404).json({ error: "Note not found" });
+    saveDb(db);
+    res.json({ deleted: true });
+  });
+  app.get("/api/todos", (_req, res) => {
+    const db = loadDb();
+    res.json({ todos: db.todos });
+  });
+  app.post("/api/todos", (req, res) => {
+    const { title, priority, dueDate } = req.body;
+    if (!title?.trim()) {
+      return res.status(400).json({ error: "Task title is required." });
+    }
+    const db = loadDb();
+    const todo = {
+      id: `todo-${Date.now()}`,
+      title: title.trim().slice(0, 200),
+      completed: false,
+      priority: priority === "low" || priority === "high" ? priority : "normal",
+      dueDate: typeof dueDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : void 0,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    db.todos.unshift(todo);
+    appendActionLog(db, {
+      agent: "calendar",
+      action: "Create Task",
+      target: todo.title,
+      status: "completed"
+    });
+    res.json(todo);
+  });
+  app.patch("/api/todos/:id", (req, res) => {
+    const db = loadDb();
+    const todo = db.todos.find((t) => t.id === req.params.id);
+    if (!todo) return res.status(404).json({ error: "Task not found" });
+    const patch = sanitizeTodoPatch(req.body);
+    Object.assign(todo, patch);
+    saveDb(db);
+    res.json(todo);
+  });
+  app.delete("/api/todos/:id", (req, res) => {
+    const db = loadDb();
+    const before = db.todos.length;
+    db.todos = db.todos.filter((t) => t.id !== req.params.id);
+    if (db.todos.length === before) return res.status(404).json({ error: "Task not found" });
+    saveDb(db);
+    res.json({ deleted: true });
+  });
+  app.delete("/api/chat/:id", (req, res) => {
+    const db = loadDb();
+    const before = db.chatHistory.length;
+    db.chatHistory = db.chatHistory.filter((m) => m.id !== req.params.id);
+    if (db.chatHistory.length === before) return res.status(404).json({ error: "Chat message not found" });
+    saveDb(db);
+    res.json({ deleted: true });
   });
   app.delete("/api/chat", (_req, res) => {
     const db = loadDb();

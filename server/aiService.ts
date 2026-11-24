@@ -13,12 +13,15 @@ import { searchIndexedFiles, formatBytes } from '../src/core/fileIndex.ts';
 import { tryConvertUnits } from '../src/core/unitConverter.ts';
 import { tryTranslateCommand } from '../src/core/translator.ts';
 import { parseProductivityCommand } from '../src/core/productivityTools.ts';
+import { buildWeatherChatSummary, parseWeatherQuery } from '../src/core/weatherUtils.ts';
 import { appendActionLog, loadDb, saveDb } from './store.ts';
 import { getSystemTelemetry, handleAppOrWindowCommand } from './systemService.ts';
 import { openWindowsFolder, recognizeWindowsSpeechFromWav } from '../electron/windowsAutomation.ts';
 import { getWeatherForLocation } from './weatherService.ts';
 import { getCachedFileIndex } from './fileService.ts';
 import { handleMediaVoiceCommand } from './mediaService.ts';
+import { extractPdfTextFromBuffer } from './pdfParser.ts';
+import { inspectImageDimensions, inspectWavAudioBuffer } from './mediaInspect.ts';
 import {
   buildExtractiveSummary,
   fetchPublicWebPage,
@@ -166,14 +169,31 @@ export async function checkAiHealth(
   requiresPaidKey: boolean;
   latencyMs: number;
   ollamaModels?: string[];
+  optionalProviders: {
+    geminiConfigured: boolean;
+    ollamaConfigured: boolean;
+    localOpenAiConfigured: boolean;
+  };
   error?: string;
 }> {
   const started = Date.now();
   const db = loadDb();
   const pref = preferredPreference || db.settings.aiModel || 'local-auto';
   const targetOllama = ollamaModel || db.settings.ollamaModel;
+  const geminiConfigured = hasValidGeminiKey();
 
-  if (pref.startsWith('gemini-') && hasValidGeminiKey()) {
+  const [openaiLocal, ollama] = await Promise.all([
+    pref !== 'local-core' ? checkOpenAiCompatibleStatus(targetOllama) : Promise.resolve(null),
+    pref !== 'local-core' ? checkOllamaStatus(targetOllama) : Promise.resolve(null),
+  ]);
+
+  const optionalProviders = {
+    geminiConfigured,
+    ollamaConfigured: Boolean(ollama?.available),
+    localOpenAiConfigured: Boolean(openaiLocal?.available),
+  };
+
+  if (pref.startsWith('gemini-') && geminiConfigured) {
     const gem = await checkGeminiConnection();
     if (gem.connected) {
       return {
@@ -184,38 +204,37 @@ export async function checkAiHealth(
         freeWebReady: true,
         requiresPaidKey: false,
         latencyMs: Date.now() - started,
+        optionalProviders,
       };
     }
   }
 
-  if (pref !== 'local-core') {
-    const openaiLocal = await checkOpenAiCompatibleStatus(targetOllama);
-    if (openaiLocal.available && openaiLocal.selectedModel) {
-      return {
-        connected: true,
-        provider: 'Local OpenAI-Compatible Engine',
-        model: openaiLocal.selectedModel,
-        engine: 'local-openai',
-        freeWebReady: true,
-        requiresPaidKey: false,
-        latencyMs: Date.now() - started,
-        ollamaModels: openaiLocal.models,
-      };
-    }
+  if (openaiLocal?.available && openaiLocal.selectedModel) {
+    return {
+      connected: true,
+      provider: 'Local OpenAI-Compatible Engine',
+      model: openaiLocal.selectedModel,
+      engine: 'local-openai',
+      freeWebReady: true,
+      requiresPaidKey: false,
+      latencyMs: Date.now() - started,
+      ollamaModels: openaiLocal.models,
+      optionalProviders,
+    };
+  }
 
-    const ollama = await checkOllamaStatus(targetOllama);
-    if (ollama.available && ollama.selectedModel) {
-      return {
-        connected: true,
-        provider: 'Local Ollama Engine',
-        model: ollama.selectedModel,
-        engine: 'ollama',
-        freeWebReady: true,
-        requiresPaidKey: false,
-        latencyMs: Date.now() - started,
-        ollamaModels: ollama.models,
-      };
-    }
+  if (ollama?.available && ollama.selectedModel) {
+    return {
+      connected: true,
+      provider: 'Local Ollama Engine',
+      model: ollama.selectedModel,
+      engine: 'ollama',
+      freeWebReady: true,
+      requiresPaidKey: false,
+      latencyMs: Date.now() - started,
+      ollamaModels: ollama.models,
+      optionalProviders,
+    };
   }
 
   return {
@@ -227,6 +246,7 @@ export async function checkAiHealth(
     requiresPaidKey: false,
     latencyMs: Date.now() - started,
     ollamaModels: [],
+    optionalProviders,
   };
 }
 
@@ -471,6 +491,7 @@ export async function streamAssistantCommand(
   let webPage: WebPageExtract | null = null;
   let memorySaved: string | null = null;
   let weatherData: Awaited<ReturnType<typeof getWeatherForLocation>> | null = null;
+  let weatherError: string | null = null;
 
   if (parsed.category === 'system_telemetry' || parsed.category === 'workflow_run') {
     telemetry = await getSystemTelemetry();
@@ -658,14 +679,27 @@ export async function streamAssistantCommand(
     });
   }
 
-  if (/\bweather|temperature|forecast\b/i.test(userCommand)) {
+  const parsedWeather = parseWeatherQuery(userCommand);
+  if (parsed.category === 'weather_query' || parsedWeather.isWeather) {
+    const targetLocation = parsedWeather.location || settings.weatherLocation;
     try {
-      weatherData = await getWeatherForLocation(settings.weatherLocation);
-      contextParts.push(
-        `LIVE WEATHER (${weatherData.location}): ${weatherData.temperature}°C, ${weatherData.condition}, Humidity ${weatherData.humidity}%, Wind ${weatherData.windSpeedKmh} km/h.`
+      weatherData = await getWeatherForLocation(targetLocation);
+      const summary = buildWeatherChatSummary(
+        weatherData,
+        parsedWeather,
+        settings.temperatureUnit || 'celsius'
       );
-    } catch {
-      // Ignore transient weather failure if unrelated
+      contextParts.push(`LIVE WEATHER TELEMETRY:\n${summary}`);
+      appendActionLog(db, {
+        agent: 'browser',
+        action: 'Weather Telemetry Query',
+        target: weatherData.location,
+        status: 'completed',
+        detail: `${weatherData.temperature}°C · ${weatherData.condition}`,
+      });
+    } catch (err) {
+      weatherError = (err as Error).message;
+      contextParts.push(`WEATHER QUERY ERROR: ${weatherError}`);
     }
   }
 
@@ -685,18 +719,42 @@ export async function streamAssistantCommand(
       });
       memorySaved = `${prodCmd.title} (${date} at ${time})`;
       contextParts.push(`REMINDER SCHEDULED: ${memorySaved}`);
-    } else if (prodCmd.kind === 'note_add' || prodCmd.kind === 'todo_add') {
-      const val = prodCmd.detail || prodCmd.title;
-      db.memory.unshift({
-        id: `mem-${Date.now()}`,
-        category: 'preference',
-        key: prodCmd.kind === 'note_add' ? 'Note' : 'To-Do Task',
-        value: val,
-        approved: true,
-        updatedAt: new Date().toISOString(),
+    } else if (prodCmd.kind === 'note_add') {
+      const nowStr = new Date().toISOString();
+      const content = prodCmd.detail || prodCmd.title;
+      db.notes.unshift({
+        id: `note-${Date.now()}`,
+        title: prodCmd.title,
+        content,
+        pinned: false,
+        createdAt: nowStr,
+        updatedAt: nowStr,
       });
-      memorySaved = val;
-      contextParts.push(`SAVED ITEM: ${val}`);
+      memorySaved = `Note "${prodCmd.title}"`;
+      contextParts.push(`SAVED NOTE: ${prodCmd.title} — ${content}`);
+    } else if (prodCmd.kind === 'todo_add') {
+      db.todos.unshift({
+        id: `todo-${Date.now()}`,
+        title: prodCmd.title,
+        completed: false,
+        priority: 'normal',
+        createdAt: new Date().toISOString(),
+      });
+      memorySaved = `Task "${prodCmd.title}"`;
+      contextParts.push(`ADDED TASK: ${prodCmd.title}`);
+    } else if (prodCmd.kind === 'list_notes') {
+      contextParts.push(
+        `SAVED NOTES (${db.notes.length}):\n${
+          db.notes.slice(0, 6).map((n, i) => `${i + 1}. ${n.title}: ${n.content}`).join('\n') || 'None'
+        }`
+      );
+    } else if (prodCmd.kind === 'list_todos') {
+      const open = db.todos.filter((t) => !t.completed);
+      contextParts.push(
+        `OPEN TASKS (${open.length}):\n${
+          open.slice(0, 6).map((t, i) => `${i + 1}. ${t.title}`).join('\n') || 'None'
+        }`
+      );
     }
   }
 
@@ -782,8 +840,12 @@ ${memorySummary || 'None'}`;
       webResults,
       webPage,
       weather: weatherData,
+      weatherError,
+      temperatureUnit: settings.temperatureUnit || 'celsius',
       memorySaved,
       memoryEntries: db.memory,
+      notes: db.notes,
+      todos: db.todos,
     });
     firstTokenMs = Date.now() - tStart;
     emitChunkedTokens(finalText, (token) => emitEvent({ type: 'token', token }));
@@ -1207,12 +1269,100 @@ export async function analyzeMediaOrScreen(params: {
   model?: string;
 }) {
   const db = loadDb();
+  const isPdf = params.mimeType === 'application/pdf';
   const isAudio = params.mimeType.startsWith('audio/');
   const isImage = params.mimeType.startsWith('image/');
+  const rawBuffer = Buffer.from(params.base64Data, 'base64');
 
+  // 1. Local PDF Text Extraction + Analysis (works offline without external API keys)
+  if (isPdf) {
+    try {
+      const parsed = await extractPdfTextFromBuffer(rawBuffer);
+      if (parsed.isScannedImageOnly) {
+        appendActionLog(db, {
+          agent: 'media',
+          action: 'PDF Inspection (Scanned)',
+          target: `${parsed.numPages} page(s)`,
+          status: 'completed',
+        });
+        return {
+          analysis: `PDF detected (${parsed.numPages} page${parsed.numPages === 1 ? '' : 's'}), but no embedded text layer was found (appears to be a scanned/image-only PDF). Capture a page screenshot and run Screen Analysis, or configure an optional multimodal model to OCR scanned pages.`,
+          modelUsed: 'local-pdf-parser',
+        };
+      }
+      const summarized = await summarizeLocalFile({
+        fileName: parsed.title || 'Uploaded Document.pdf',
+        content: parsed.text,
+        question: params.prompt || undefined,
+        model: params.model,
+      });
+      return {
+        analysis: `PDF Analysis (${parsed.numPages} page${parsed.numPages === 1 ? '' : 's'}):\n\n${summarized.summary}`,
+        modelUsed: hasValidGeminiKey() && params.model?.startsWith('gemini-') ? params.model : 'local-pdf-parser',
+      };
+    } catch (err) {
+      return {
+        analysis: `Could not parse PDF payload locally: ${(err as Error).message}`,
+        modelUsed: 'local-pdf-parser',
+      };
+    }
+  }
+
+  // 2. Audio Analysis / Transcription (Windows System.Speech for WAV or Optional Gemini)
+  if (isAudio) {
+    const wavInfo = inspectWavAudioBuffer(rawBuffer);
+    if (process.platform === 'win32' && wavInfo.isRiffWave) {
+      const stt = await recognizeWindowsSpeechFromWav(params.base64Data, db.settings.language || 'en-US');
+      if (stt.ok && stt.text) {
+        appendActionLog(db, {
+          agent: 'media',
+          action: 'Local Audio Transcription',
+          target: params.mimeType,
+          status: 'completed',
+        });
+        return {
+          analysis: `Transcript (${wavInfo.durationSec ?? '?'}s WAV, ${wavInfo.sampleRate} Hz):\n${stt.text}`,
+          modelUsed: stt.engine,
+        };
+      }
+    }
+
+    if (hasValidGeminiKey()) {
+      const ai = getGeminiClient();
+      const targetModel = 'gemini-3.5-transcribe';
+      const response = await ai.models.generateContent({
+        model: targetModel,
+        contents: {
+          parts: [
+            { inlineData: { mimeType: params.mimeType, data: params.base64Data } },
+            {
+              text: params.prompt || 'Transcribe this audio accurately and provide a concise summary.',
+            },
+          ],
+        },
+      });
+      appendActionLog(db, {
+        agent: 'media',
+        action: 'Audio Transcription & Summary',
+        target: params.mimeType,
+        status: 'completed',
+      });
+      return { analysis: (response.text ?? '').trim(), modelUsed: targetModel };
+    }
+
+    const detail = wavInfo.isRiffWave
+      ? `WAV audio (${wavInfo.durationSec ?? '?'}s, ${wavInfo.channels}ch, ${wavInfo.sampleRate} Hz, ${wavInfo.bitsPerSample}-bit, ${wavInfo.sizeKb} KB)`
+      : `${params.mimeType} audio (${wavInfo.sizeKb} KB)`;
+    return {
+      analysis: `Inspected ${detail}. Offline speech transcription uses Windows System.Speech (for WAV audio on Windows 10/11) or optional Gemini transcription in server configuration. For voice commands in-app, click the microphone button for live speech capture.`,
+      modelUsed: 'local-audio-inspector',
+    };
+  }
+
+  // 3. Optional Gemini Vision or Local Ollama Vision
   if (hasValidGeminiKey()) {
     const ai = getGeminiClient();
-    const targetModel = isAudio ? 'gemini-3.5-transcribe' : 'gemini-3.1-flash-lite';
+    const targetModel = 'gemini-3.1-flash-lite';
     const response = await ai.models.generateContent({
       model: targetModel,
       contents: {
@@ -1221,16 +1371,14 @@ export async function analyzeMediaOrScreen(params: {
           {
             text:
               params.prompt ||
-              (isAudio
-                ? 'Transcribe this audio accurately and provide a concise summary.'
-                : 'Analyze this visual/document input clearly, extract key text/metrics, and explain any errors or insights.'),
+              'Analyze this visual/screen input clearly, extract key text/metrics, and explain any errors, charts, or insights.',
           },
         ],
       },
     });
     appendActionLog(db, {
-      agent: isAudio ? 'media' : 'vision',
-      action: isAudio ? 'Audio Transcription & Summary' : 'Visual / Document Analysis',
+      agent: 'vision',
+      action: 'Visual / Screen Analysis',
       target: params.mimeType,
       status: 'completed',
     });
@@ -1253,7 +1401,7 @@ export async function analyzeMediaOrScreen(params: {
           messages: [
             {
               role: 'user',
-              content: params.prompt || 'Analyze this image and extract key text or errors.',
+              content: params.prompt || 'Analyze this image and extract key text, errors, or chart trends.',
               images: [params.base64Data],
             },
           ],
@@ -1274,11 +1422,26 @@ export async function analyzeMediaOrScreen(params: {
         };
       }
     }
+
+    const imgMeta = inspectImageDimensions(rawBuffer, params.mimeType);
+    const dims = imgMeta.width && imgMeta.height ? `${imgMeta.width}×${imgMeta.height}px` : 'dimensions unknown';
+    appendActionLog(db, {
+      agent: 'vision',
+      action: 'Local Image Inspection',
+      target: `${imgMeta.format} (${dims})`,
+      status: 'completed',
+    });
+    return {
+      analysis: `Captured ${imgMeta.format} visual payload (${dims}, ${imgMeta.sizeKb} KB). Prompt: "${
+        params.prompt || 'Inspect image'
+      }". Local pixel/metadata inspection succeeded. For OCR text extraction and error/chart interpretation offline without cloud APIs, install an Ollama vision model (e.g., "ollama pull llava" or "ollama pull llama3.2-vision"), or optionally set GEMINI_API_KEY on the server.`,
+      modelUsed: 'local-image-inspector',
+    };
   }
 
-  const sizeKb = Math.round((params.base64Data.length * 3) / 4 / 1024);
+  const sizeKb = Math.max(1, Math.round(rawBuffer.length / 1024));
   return {
-    analysis: `Captured ${params.mimeType} payload (${sizeKb} KB). For offline local multimodal image analysis, pull a local vision model in Ollama (e.g., "ollama pull llava" or "ollama pull llama3.2-vision"), or optionally configure GEMINI_API_KEY in .env.`,
+    analysis: `Inspected ${params.mimeType} payload (${sizeKb} KB). No external vision/transcription provider is currently configured for this binary format.`,
     modelUsed: 'local-core',
   };
 }

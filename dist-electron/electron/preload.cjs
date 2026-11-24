@@ -55,6 +55,15 @@ function registerPreloadBridge(electronOverride) {
     openWebsite: (urlOrAlias) => ipcRenderer.invoke("friday:open-website", String(urlOrAlias)),
     openFolder: (folderNameOrPath) => ipcRenderer.invoke("friday:open-folder", String(folderNameOrPath)),
     getWindowsDiagnostics: () => ipcRenderer.invoke("friday:windows-diagnostics"),
+    onStopSpeech: (callback) => {
+      if (typeof ipcRenderer.on !== "function") return () => {
+      };
+      const handler = () => callback();
+      ipcRenderer.on("friday:stop-speech", handler);
+      return () => {
+        ipcRenderer.removeListener?.("friday:stop-speech", handler);
+      };
+    },
     isDesktopShell: true
   });
   return true;
