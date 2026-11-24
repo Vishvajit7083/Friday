@@ -3,8 +3,10 @@ import type {
   DesktopAppItem,
   IndexedFileItem,
   MemoryItem,
+  NoteItem,
   RunningWindowInfo,
   SystemTelemetry,
+  TodoItem,
   WeatherData,
 } from '../src/core/types.ts';
 import type { WebPageExtract, WebSearchResultItem } from './internetResearchService.ts';
@@ -14,6 +16,7 @@ import { tryEvaluateSafeMath } from '../src/core/intentEngine.ts';
 import { tryConvertUnits } from '../src/core/unitConverter.ts';
 import { tryTranslateCommand } from '../src/core/translator.ts';
 import { parseProductivityCommand, summarizeTextExtractive } from '../src/core/productivityTools.ts';
+import { buildWeatherChatSummary, parseWeatherQuery, type TemperatureUnit } from '../src/core/weatherUtils.ts';
 
 export interface OllamaStatus {
   available: boolean;
@@ -344,8 +347,12 @@ export function buildLocalDeterministicReply(params: {
   webResults?: WebSearchResultItem[];
   webPage?: WebPageExtract | null;
   weather?: WeatherData | null;
+  weatherError?: string | null;
+  temperatureUnit?: TemperatureUnit;
   memorySaved?: string | null;
   memoryEntries?: MemoryItem[];
+  notes?: NoteItem[];
+  todos?: TodoItem[];
 }): string {
   const lower = params.userCommand.trim().toLowerCase();
 
@@ -440,8 +447,16 @@ export function buildLocalDeterministicReply(params: {
   }
 
   if (params.weather) {
-    const w = params.weather;
-    return `Live weather in ${w.location}: ${w.temperature}°C (${w.condition}), feels like ${w.feelsLike}°C, humidity ${w.humidity}%, wind ${w.windSpeedKmh} km/h.`;
+    const parsedWeather = parseWeatherQuery(params.userCommand);
+    return buildWeatherChatSummary(
+      params.weather,
+      parsedWeather.isWeather ? parsedWeather : { isWeather: true, timeframe: 'current' },
+      params.temperatureUnit || 'celsius'
+    );
+  }
+
+  if (params.weatherError) {
+    return `Unable to retrieve live weather right now: ${params.weatherError}`;
   }
 
   const unitResult = tryConvertUnits(params.userCommand);
@@ -455,6 +470,16 @@ export function buildLocalDeterministicReply(params: {
   }
 
   const prod = parseProductivityCommand(params.userCommand);
+  if (prod?.kind === 'list_notes') {
+    const notes = params.notes ?? [];
+    if (notes.length === 0) return 'You have no saved notes yet. Say "take a note: ..." to add one.';
+    return `Saved Notes (${notes.length}):\n${notes.slice(0, 6).map((n, i) => `${i + 1}. ${n.title}: ${n.content}`).join('\n')}`;
+  }
+  if (prod?.kind === 'list_todos') {
+    const todos = (params.todos ?? []).filter((t) => !t.completed);
+    if (todos.length === 0) return 'All tasks are completed, or no open tasks are saved.';
+    return `Open Tasks (${todos.length}):\n${todos.slice(0, 6).map((t, i) => `${i + 1}. ${t.title}`).join('\n')}`;
+  }
   if (prod?.kind === 'summarize' && prod.detail) {
     return `Summary:\n${summarizeTextExtractive(prod.detail, 3)}`;
   }

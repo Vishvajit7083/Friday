@@ -3,9 +3,11 @@ import type { AgentId, ExecutionStep } from './types';
 import { tryConvertUnits } from './unitConverter';
 import { tryTranslateCommand } from './translator';
 import { parseProductivityCommand } from './productivityTools';
+import { parseWeatherQuery } from './weatherUtils';
 
 export type IntentCategory =
   | 'system_telemetry'
+  | 'weather_query'
   | 'file_search'
   | 'web_search'
   | 'app_control'
@@ -106,8 +108,9 @@ export function isInterruptionCommand(rawTranscript: string): boolean {
     .trim()
     .toLowerCase()
     .replace(/[.,!?]+$/g, '')
+    .replace(/\s+/g, ' ')
     .trim();
-  return /^(friday[,\s]+)?(stop|stop\s+(speaking|talking|reading|now)|quiet|be\s+quiet|shut\s+up|hush|cancel|abort)(\s+please)?$/.test(
+  return /^(?:(?:hey|ok)\s+)?(?:friday[,\s]+)?(?:stop(?:\s+(?:it|now|speaking|talking|reading|voice|audio|playback))?|quiet|be\s+quiet|shut\s+up|hush|mute(?:\s+(?:yourself|voice|audio))?|silence|cancel(?:\s+(?:that|it|speech|voice))?|abort|enough|never\s*mind|pause\s+voice)(?:\s+(?:please|friday))?$/.test(
     clean
   );
 }
@@ -258,6 +261,20 @@ export function analyzeUserCommand(command: string): ParsedIntent {
       steps: [
         { id: 'step-1', agent: 'core', title: 'Classify hardware diagnostics request', status: 'completed' },
         { id: 'step-2', agent: 'system', title: 'Query live CPU, memory, storage & network sensors', status: 'running' },
+      ],
+    };
+  }
+
+  const parsedWeather = parseWeatherQuery(trimmed);
+  if (parsedWeather.isWeather) {
+    return {
+      category: 'weather_query',
+      agents: ['core', 'browser'],
+      requiresConfirmation: false,
+      extractedTarget: parsedWeather.location || trimmed,
+      steps: [
+        { id: 'step-1', agent: 'core', title: 'Parse weather location, timeframe & metric', status: 'completed' },
+        { id: 'step-2', agent: 'browser', title: 'Fetch live Open-Meteo conditions & forecast', status: 'running' },
       ],
     };
   }

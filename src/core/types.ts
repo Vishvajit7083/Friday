@@ -5,6 +5,7 @@ export type VoiceState =
   | 'searching'
   | 'executing'
   | 'speaking'
+  | 'interrupted'
   | 'completed'
   | 'error';
 
@@ -79,6 +80,40 @@ export interface WeatherForecastDay {
   tempMin: number;
   condition: string;
   code: number;
+  precipProbMax?: number;
+  uvMax?: number;
+  sunrise?: string;
+  sunset?: string;
+  windSpeedMaxKmh?: number;
+}
+
+export interface WeatherHourlyPoint {
+  time: string;
+  temp: number;
+  feelsLike: number;
+  precipProb: number;
+  windSpeedKmh: number;
+  code: number;
+  condition: string;
+}
+
+export interface WeatherAlertItem {
+  id: string;
+  title: string;
+  severity: 'advisory' | 'watch' | 'warning';
+  description: string;
+  source: string;
+  effective?: string;
+  expires?: string;
+}
+
+export interface WeatherLocationMatch {
+  name: string;
+  region?: string;
+  country?: string;
+  latitude: number;
+  longitude: number;
+  label: string;
 }
 
 export interface WeatherData {
@@ -87,12 +122,27 @@ export interface WeatherData {
   longitude: number;
   temperature: number;
   condition: string;
+  conditionCode?: number;
   humidity: number;
   windSpeedKmh: number;
+  windDirectionDeg?: number;
+  windDirectionLabel?: string;
+  pressureHpa?: number;
+  visibilityKm?: number;
+  uvIndex?: number;
+  precipitationMm?: number;
+  cloudCover?: number;
+  sunrise?: string;
+  sunset?: string;
   feelsLike: number;
   updatedAt: string;
   forecast: WeatherForecastDay[];
+  hourly?: WeatherHourlyPoint[];
+  alerts?: WeatherAlertItem[];
   source: string;
+  isCached?: boolean;
+  cacheAgeMinutes?: number;
+  unit?: 'celsius' | 'fahrenheit';
 }
 
 export interface CalendarEvent {
@@ -306,6 +356,9 @@ export interface AssistantSettings {
   themeAccent: 'cyan' | 'cobalt' | 'violet';
   animationQuality: 'high' | 'balanced' | 'low';
   weatherLocation: string;
+  temperatureUnit?: 'celsius' | 'fahrenheit';
+  favoriteWeatherLocations?: string[];
+  weatherNotificationsEnabled?: boolean;
   allowedFolders: string[];
   pausedIndexing: boolean;
   screenCaptureConsent: boolean;
@@ -348,6 +401,11 @@ export interface ApiConnectionStatus {
   requiresPaidKey?: boolean;
   latencyMs?: number;
   error?: string;
+  optionalProviders?: {
+    geminiConfigured: boolean;
+    ollamaConfigured: boolean;
+    localOpenAiConfigured: boolean;
+  };
 }
 
 export type DiagnosticStatus = 'pass' | 'fail' | 'warning' | 'unavailable';
@@ -473,6 +531,7 @@ export interface FridayDesktopBridge {
   openWebsite?: (urlOrAlias: string) => Promise<{ opened: boolean; url?: string; message: string }>;
   openFolder?: (folderNameOrPath: string) => Promise<{ opened: boolean; path?: string; message: string }>;
   getWindowsDiagnostics?: () => Promise<Record<string, unknown>>;
+  onStopSpeech?: (callback: () => void) => () => void;
   isDesktopShell: boolean;
 }
 

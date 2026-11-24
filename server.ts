@@ -10,7 +10,11 @@ import {
   getTopProcesses,
   launchApplication,
 } from './server/systemService.ts';
-import { getWeatherForLocation } from './server/weatherService.ts';
+import {
+  getWeatherForCoordinates,
+  getWeatherForLocation,
+  searchWeatherLocations,
+} from './server/weatherService.ts';
 import {
   getCachedFileIndex,
   invalidateFileIndexCache,
@@ -50,10 +54,12 @@ import {
   formatTestReportMarkdown,
   sanitizeCalendarPatch,
   sanitizeMemoryPatch,
+  sanitizeNotePatch,
   sanitizeSettingsPatch,
+  sanitizeTodoPatch,
 } from './src/core/diagnostics.ts';
 import { findDuplicateGroups, searchIndexedFiles } from './src/core/fileIndex.ts';
-import type { CalendarEvent, MediaControlAction, MemoryItem } from './src/core/types.ts';
+import type { CalendarEvent, MediaControlAction, MemoryItem, NoteItem, TodoItem } from './src/core/types.ts';
 
 async function startServer() {
   const app = express();
@@ -194,11 +200,37 @@ async function startServer() {
   app.get('/api/weather', async (req, res) => {
     try {
       const db = loadDb();
+      const forceRefresh = req.query.refresh === '1';
+      const latRaw = req.query.lat !== undefined ? Number(req.query.lat) : NaN;
+      const lonRaw = req.query.lon !== undefined ? Number(req.query.lon) : NaN;
+      if (
+        Number.isFinite(latRaw) &&
+        Number.isFinite(lonRaw) &&
+        latRaw >= -90 &&
+        latRaw <= 90 &&
+        lonRaw >= -180 &&
+        lonRaw <= 180
+      ) {
+        const label = typeof req.query.label === 'string' ? req.query.label : undefined;
+        const weather = await getWeatherForCoordinates(latRaw, lonRaw, label, forceRefresh);
+        return res.json(weather);
+      }
       const loc = (req.query.location as string) || db.settings.weatherLocation;
-      const weather = await getWeatherForLocation(loc);
+      const weather = await getWeatherForLocation(loc, forceRefresh);
       res.json(weather);
     } catch (err) {
       res.status(502).json({ error: `Weather service unavailable: ${(err as Error).message}` });
+    }
+  });
+
+  app.get('/api/weather/search', async (req, res) => {
+    try {
+      const q = String(req.query.q ?? '').trim();
+      if (q.length < 2) return res.json({ results: [] });
+      const results = await searchWeatherLocations(q);
+      res.json({ results });
+    } catch (err) {
+      res.status(502).json({ error: `Location search unavailable: ${(err as Error).message}` });
     }
   });
 
@@ -231,14 +263,14 @@ async function startServer() {
     }
   });
 
-  app.post('/api/files/read', (req, res) => {
+  app.post('/api/files/read', async (req, res) => {
     try {
       const { filePath } = req.body as { filePath?: string };
       if (!filePath) {
         return res.status(400).json({ error: 'filePath is required' });
       }
       const db = loadDb();
-      const preview = readPermittedFilePreview(filePath, db.settings.allowedFolders);
+      const preview = await readPermittedFilePreview(filePath, db.settings.allowedFolders);
       appendActionLog(db, {
         agent: 'file',
         action: 'Preview Local File',
@@ -510,7 +542,7 @@ async function startServer() {
       const { filePath, question } = req.body as { filePath?: string; question?: string };
       if (!filePath) return res.status(400).json({ error: 'filePath is required' });
       const db = loadDb();
-      const preview = readPermittedFilePreview(filePath, db.settings.allowedFolders);
+      const preview = await readPermittedFilePreview(filePath, db.settings.allowedFolders);
       const result = await summarizeLocalFile({
         fileName: preview.name,
         content: preview.content,
@@ -747,6 +779,17 @@ async function startServer() {
     res.json(target);
   });
 
+  app.post('/api/apps/refresh', async (_req, res) => {
+    try {
+      const db = loadDb();
+      db.apps = await detectInstalledApps(db.apps, true);
+      saveDb(db);
+      res.json({ apps: db.apps });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.post('/api/calendar', (req, res) => {
     const { title, date, time, category, notes } = req.body as Partial<CalendarEvent>;
     if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
@@ -890,6 +933,112 @@ async function startServer() {
     invalidateFileIndexCache();
     saveDb(db);
     res.json(db.settings);
+  });
+
+  app.get('/api/notes', (_req, res) => {
+    const db = loadDb();
+    res.json({ notes: db.notes });
+  });
+
+  app.post('/api/notes', (req, res) => {
+    const { title, content, pinned } = req.body as Partial<NoteItem>;
+    if (!title?.trim() && !content?.trim()) {
+      return res.status(400).json({ error: 'Note title or content is required.' });
+    }
+    const nowIso = new Date().toISOString();
+    const db = loadDb();
+    const note: NoteItem = {
+      id: `note-${Date.now()}`,
+      title: (title?.trim() || content?.trim().slice(0, 48) || 'Quick Note').slice(0, 140),
+      content: (content?.trim() || title?.trim() || '').slice(0, 4000),
+      pinned: Boolean(pinned),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    db.notes.unshift(note);
+    appendActionLog(db, {
+      agent: 'memory',
+      action: 'Create Note',
+      target: note.title,
+      status: 'completed',
+    });
+    res.json(note);
+  });
+
+  app.patch('/api/notes/:id', (req, res) => {
+    const db = loadDb();
+    const note = db.notes.find((n) => n.id === req.params.id);
+    if (!note) return res.status(404).json({ error: 'Note not found' });
+    const patch = sanitizeNotePatch(req.body);
+    Object.assign(note, patch, { updatedAt: new Date().toISOString() });
+    saveDb(db);
+    res.json(note);
+  });
+
+  app.delete('/api/notes/:id', (req, res) => {
+    const db = loadDb();
+    const before = db.notes.length;
+    db.notes = db.notes.filter((n) => n.id !== req.params.id);
+    if (db.notes.length === before) return res.status(404).json({ error: 'Note not found' });
+    saveDb(db);
+    res.json({ deleted: true });
+  });
+
+  app.get('/api/todos', (_req, res) => {
+    const db = loadDb();
+    res.json({ todos: db.todos });
+  });
+
+  app.post('/api/todos', (req, res) => {
+    const { title, priority, dueDate } = req.body as Partial<TodoItem>;
+    if (!title?.trim()) {
+      return res.status(400).json({ error: 'Task title is required.' });
+    }
+    const db = loadDb();
+    const todo: TodoItem = {
+      id: `todo-${Date.now()}`,
+      title: title.trim().slice(0, 200),
+      completed: false,
+      priority: priority === 'low' || priority === 'high' ? priority : 'normal',
+      dueDate: typeof dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : undefined,
+      createdAt: new Date().toISOString(),
+    };
+    db.todos.unshift(todo);
+    appendActionLog(db, {
+      agent: 'calendar',
+      action: 'Create Task',
+      target: todo.title,
+      status: 'completed',
+    });
+    res.json(todo);
+  });
+
+  app.patch('/api/todos/:id', (req, res) => {
+    const db = loadDb();
+    const todo = db.todos.find((t) => t.id === req.params.id);
+    if (!todo) return res.status(404).json({ error: 'Task not found' });
+    const patch = sanitizeTodoPatch(req.body);
+    Object.assign(todo, patch);
+    saveDb(db);
+    res.json(todo);
+  });
+
+  app.delete('/api/todos/:id', (req, res) => {
+    const db = loadDb();
+    const before = db.todos.length;
+    db.todos = db.todos.filter((t) => t.id !== req.params.id);
+    if (db.todos.length === before) return res.status(404).json({ error: 'Task not found' });
+    saveDb(db);
+    res.json({ deleted: true });
+  });
+
+  app.delete('/api/chat/:id', (req, res) => {
+    const db = loadDb();
+    const before = db.chatHistory.length;
+    db.chatHistory = db.chatHistory.filter((m) => m.id !== req.params.id);
+    if (db.chatHistory.length === before) return res.status(404).json({ error: 'Chat message not found' });
+    saveDb(db);
+    res.json({ deleted: true });
   });
 
   app.delete('/api/chat', (_req, res) => {

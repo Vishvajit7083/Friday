@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { categorizeExtension } from '../src/core/fileIndex.ts';
 import type { IndexedFileItem } from '../src/core/types.ts';
+import { extractPdfTextFromBuffer } from './pdfParser.ts';
 
 const IGNORED_DIRS = new Set(['node_modules', '.git', 'dist', 'dist-electron', '.playwright-cli', '.friday-data']);
 const TEXT_PREVIEW_EXTS = new Set(['ts', 'tsx', 'js', 'jsx', 'json', 'md', 'txt', 'css', 'html', 'csv', 'py', 'sql']);
@@ -120,10 +121,10 @@ export function getCachedFileIndex(
   return files;
 }
 
-export function readPermittedFilePreview(
+export async function readPermittedFilePreview(
   filePath: string,
   allowedFolders: string[]
-): { name: string; content: string; sizeBytes: number; extension: string; category: IndexedFileItem['category'] } {
+): Promise<{ name: string; content: string; sizeBytes: number; extension: string; category: IndexedFileItem['category'] }> {
   const resolved = path.resolve(filePath);
   if (!isPathPermitted(resolved, allowedFolders)) {
     throw new Error('Access denied: file is outside user-permitted folders.');
@@ -137,6 +138,36 @@ export function readPermittedFilePreview(
   }
   const ext = path.extname(resolved).replace(/^\./, '').toLowerCase();
   const category = categorizeExtension(ext);
+  if (ext === 'pdf') {
+    const buffer = fs.readFileSync(resolved);
+    const parsed = await extractPdfTextFromBuffer(buffer);
+    if (parsed.isScannedImageOnly) {
+      return {
+        name: path.basename(resolved),
+        content: `[PDF Document: ${path.basename(resolved)} · ${parsed.numPages} page(s)]\nThis PDF appears to contain scanned images without an embedded text layer. Capture a page screenshot or upload it in Media & Screen Intelligence to inspect visual contents.`,
+        sizeBytes: stat.size,
+        extension: ext,
+        category,
+      };
+    }
+    const headerMeta = [
+      `PDF Pages: ${parsed.numPages}`,
+      parsed.title ? `Title: ${parsed.title}` : null,
+      parsed.author ? `Author: ${parsed.author}` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const body = parsed.text.slice(0, 24000);
+    return {
+      name: path.basename(resolved),
+      content: `${headerMeta ? `[${headerMeta}]\n\n` : ''}${body}${
+        parsed.text.length > 24000 ? '\n\n... [PDF preview truncated at 24 KB]' : ''
+      }`,
+      sizeBytes: stat.size,
+      extension: ext,
+      category,
+    };
+  }
   if (category === 'image' || category === 'video' || category === 'audio') {
     return {
       name: path.basename(resolved),

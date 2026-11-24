@@ -147,7 +147,11 @@ export async function bootstrapElectronShell() {
             mainWindow.focus();
         }
         else {
-            // Hiding preserves background server, wake-word, and telemetry
+            // Stop any active speech output cleanly when hiding, while preserving background services
+            void stopWindowsSapiTts();
+            if (!mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('friday:stop-speech');
+            }
             mainWindow.hide();
         }
     }
@@ -219,7 +223,11 @@ export async function bootstrapElectronShell() {
         mainWindow.on('close', (event) => {
             if (!isQuitting) {
                 event.preventDefault();
-                mainWindow?.hide();
+                void stopWindowsSapiTts();
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('friday:stop-speech');
+                    mainWindow.hide();
+                }
             }
         });
     }
