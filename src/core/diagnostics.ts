@@ -141,12 +141,10 @@ export function sanitizeTodoPatch(input: unknown): Partial<TodoItem> {
 }
 
 const VALID_MODELS = new Set<AssistantSettings['aiModel']>([
+  'friday-cognitive',
+  'friday-language-core',
   'local-auto',
-  'ollama',
   'local-core',
-  'gemini-4-hydrogen',
-  'gemini-4-neon',
-  'gemini-3.1-flash-lite',
 ]);
 
 const VALID_VOICES = new Set<AssistantSettings['voiceName']>([
@@ -179,6 +177,17 @@ export function sanitizeSettingsPatch(
     if (trimmed === '' || /^[a-zA-Z0-9._:/-]{1,64}$/.test(trimmed)) {
       next.ollamaModel = trimmed;
     }
+  }
+  if (
+    raw.responseLanguagePreference === 'auto' ||
+    raw.responseLanguagePreference === 'english' ||
+    raw.responseLanguagePreference === 'hinglish' ||
+    raw.responseLanguagePreference === 'hindi_simple'
+  ) {
+    next.responseLanguagePreference = raw.responseLanguagePreference;
+  }
+  if (typeof raw.optInDatasetCollection === 'boolean') {
+    next.optInDatasetCollection = raw.optInDatasetCollection;
   }
   if (typeof raw.voiceName === 'string' && VALID_VOICES.has(raw.voiceName as AssistantSettings['voiceName'])) {
     next.voiceName = raw.voiceName as AssistantSettings['voiceName'];

@@ -63,7 +63,12 @@ export function AIChatFullView({
   isRecordingAudio: boolean;
   isSpeaking: boolean;
   onSubmitCommand: (command: string) => Promise<boolean | void>;
-  onConfirmAction: (actionType: string, summary: string, approved: boolean) => Promise<void>;
+  onConfirmAction: (
+    actionType: string,
+    summary: string,
+    approved: boolean,
+    payload?: Record<string, unknown>
+  ) => Promise<void>;
   onToggleListening: () => void;
   onToggleRecordAudio: () => void;
   onToggleWakeWord: () => void;
@@ -246,7 +251,8 @@ export function AIChatFullView({
                       onConfirmAction(
                         msg.pendingConfirmation!.actionType,
                         msg.pendingConfirmation!.summary,
-                        true
+                        true,
+                        msg.pendingConfirmation!.payload
                       )
                     }
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"
@@ -260,7 +266,8 @@ export function AIChatFullView({
                       onConfirmAction(
                         msg.pendingConfirmation!.actionType,
                         msg.pendingConfirmation!.summary,
-                        false
+                        false,
+                        msg.pendingConfirmation!.payload
                       )
                     }
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700"

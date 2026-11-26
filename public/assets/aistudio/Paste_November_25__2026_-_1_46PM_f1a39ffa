@@ -1,0 +1,1533 @@
+# PROJECT: F.R.I.D.A.Y. FULL AUTONOMOUS DESKTOP AUTOMATION AGENT
+
+Act as a senior Windows automation engineer, AI agent architect, Electron developer, workflow automation engineer, computer vision engineer, accessibility automation specialist, browser automation developer and software engineer.
+
+I want you to upgrade my existing F.R.I.D.A.Y. desktop AI assistant into a fully capable desktop automation assistant.
+
+F.R.I.D.A.Y. must be able to understand my voice or text instructions, plan complex workflows, execute tasks across Windows applications, operate browsers, create and edit files, write code, save files in user-specified folders, run applications, verify results and report completion.
+
+I want to interact with F.R.I.D.A.Y. like a human assistant.
+
+For example:
+
+"Friday, open YouTube and play Arijit Singh songs."
+
+"Friday, open Visual Studio Code and create a website login page. Save it on my D drive in a folder called WebProjects. Create a new folder if required, write the code, run the website and check whether it is working."
+
+"Friday, open Chrome, search for the best free Python course, open the website and summarize it."
+
+"Friday, open Excel and create an expense tracking sheet."
+
+"Friday, open PowerPoint and create a presentation."
+
+"Friday, open Notepad and write my application letter."
+
+I want F.R.I.D.A.Y. to automatically execute workflows instead of only telling me how to do them.
+
+---
+
+# 1. PRIMARY OBJECTIVE
+
+Build:
+
+F.R.I.D.A.Y. AUTONOMOUS DESKTOP AGENT
+
+The assistant must be able to:
+
+- Understand natural language.
+- Understand Hinglish.
+- Understand multi-step tasks.
+- Break tasks into workflows.
+- Plan execution.
+- Open applications.
+- Interact with applications.
+- Navigate windows.
+- Click buttons.
+- Type text.
+- Read visible content.
+- Use keyboard shortcuts.
+- Create files.
+- Edit files.
+- Save files.
+- Move files.
+- Organize folders.
+- Execute supported programs.
+- Run code.
+- Read terminal output.
+- Detect errors.
+- Correct safe errors.
+- Verify task completion.
+- Report results.
+
+The assistant should be able to operate multiple applications within a single task.
+
+Do not limit the system to a fixed list of hardcoded actions.
+
+Build an extensible automation framework.
+
+---
+
+# 2. STRICT REQUIREMENTS
+
+Do not use:
+
+- Ollama.
+- OpenAI API.
+- Gemini API in the final application.
+- Claude API.
+- Paid AI APIs.
+- Mandatory AI API keys.
+- Paid inference services.
+
+Do not redesign my existing F.R.I.D.A.Y. interface.
+
+Do not remove existing functionality.
+
+Do not replace my application with a new starter project.
+
+Inspect the existing project first.
+
+Preserve my existing Electron, React, TypeScript, UI, animations, AI orb, dashboard and features.
+
+---
+
+# 3. CREATE AN AUTONOMOUS WORKFLOW ENGINE
+
+Create a system named:
+
+F.R.I.D.A.Y. WORKFLOW ORCHESTRATOR
+
+It must transform natural-language requests into executable workflows.
+
+Architecture:
+
+User Input
+↓
+Speech/Text Input
+↓
+Natural Language Understanding
+↓
+Intent Detection
+↓
+Task Understanding
+↓
+Workflow Planner
+↓
+Application Detection
+↓
+Automation Strategy Selection
+↓
+Task Execution
+↓
+Execution Monitoring
+↓
+Error Detection
+↓
+Recovery
+↓
+Verification
+↓
+Final Response
+
+Create the following modules:
+
+- AutomationBrain
+- WorkflowPlanner
+- WorkflowExecutor
+- TaskManager
+- ApplicationManager
+- WindowManager
+- ComputerInteractionEngine
+- MouseController
+- KeyboardController
+- ScreenReader
+- ScreenAnalyzer
+- OCRManager
+- AccessibilityManager
+- BrowserAutomation
+- FileManager
+- CodeExecutionManager
+- AutomationRegistry
+- WorkflowMemory
+- TaskVerificationEngine
+- ErrorRecoveryEngine
+- PermissionManager
+- SafetyManager
+
+All modules must be modular.
+
+---
+
+# 4. UNDERSTAND COMPLETE WORKFLOWS
+
+F.R.I.D.A.Y. must understand tasks as goals, not just individual commands.
+
+Example:
+
+User:
+
+"Friday, create a login page."
+
+The system should understand that a login page might require:
+
+1. A project folder.
+2. HTML.
+3. CSS.
+4. JavaScript.
+5. Code generation.
+6. File creation.
+7. Saving files.
+8. Running a preview.
+9. Testing the result.
+
+If the user specifies a particular application, use that application where feasible.
+
+If the user says:
+
+"Open Visual Studio Code and create a login page."
+
+F.R.I.D.A.Y. should:
+
+1. Identify VS Code.
+2. Open VS Code.
+3. Determine the requested project location.
+4. Ask for the location if it is not known and not safely inferable.
+5. Create a project folder if required and authorized.
+6. Create the necessary files.
+7. Write the code.
+8. Save the files.
+9. Run the project.
+10. Inspect the result.
+11. Report the result.
+
+Do not stop at opening the application.
+
+Complete the entire requested workflow.
+
+---
+
+# 5. WORKFLOW PLANNER
+
+Build an intelligent task planner.
+
+Every complex task should be converted into structured steps.
+
+Example workflow:
+
+Task:
+
+"Create a website login page in VS Code and save it on D drive."
+
+Plan:
+
+STEP 1: Understand the requirements.
+
+STEP 2: Check whether VS Code is installed.
+
+STEP 3: Determine the destination directory.
+
+STEP 4: Check whether the directory exists.
+
+STEP 5: Create the required directory if authorized.
+
+STEP 6: Create project files.
+
+STEP 7: Write the source code.
+
+STEP 8: Save files.
+
+STEP 9: Launch or run the project.
+
+STEP 10: Check the output.
+
+STEP 11: Fix safe errors if detected.
+
+STEP 12: Verify the project.
+
+STEP 13: Report the result.
+
+The planner must support:
+
+- Sequential tasks.
+- Parallel tasks where safe.
+- Conditional steps.
+- Dependencies.
+- Retries.
+- Error handling.
+- User approval.
+- Verification.
+- Task cancellation.
+- Task resumption.
+
+Create workflow states:
+
+- Pending.
+- Planning.
+- Waiting for user.
+- Running.
+- Paused.
+- Failed.
+- Retrying.
+- Verifying.
+- Completed.
+- Cancelled.
+
+---
+
+# 6. APPLICATION AUTOMATION
+
+F.R.I.D.A.Y. must be capable of operating supported Windows applications.
+
+Build an extensible application registry.
+
+The registry should contain:
+
+- Application name.
+- Application identifier.
+- Executable path.
+- Supported automation methods.
+- Supported actions.
+- Application capabilities.
+- Window detection information.
+- Application launch handler.
+- Application interaction handler.
+- Application-specific workflow templates.
+
+Support applications such as:
+
+- Google Chrome.
+- Microsoft Edge.
+- Visual Studio Code.
+- Visual Studio.
+- Notepad.
+- Notepad++.
+- Windows File Explorer.
+- Windows Settings.
+- Calculator.
+- Microsoft Word.
+- Microsoft Excel.
+- Microsoft PowerPoint.
+- Paint.
+- Terminal.
+- Command Prompt.
+- PowerShell.
+- Spotify.
+- VLC.
+- Discord.
+- Other applications installed on the user's computer.
+
+Do not assume every application is installed.
+
+Detect applications where feasible.
+
+If an application is unavailable, report it and offer a suitable alternative.
+
+Create a system for adding additional applications without rewriting the entire automation engine.
+
+---
+
+# 7. WINDOWS COMPUTER CONTROL ENGINE
+
+Build an actual Windows computer automation system.
+
+The assistant should be capable of interacting with the Windows desktop through suitable automation mechanisms.
+
+Use a layered automation strategy.
+
+PREFERRED METHOD 1:
+
+Application-specific APIs or supported automation interfaces.
+
+PREFERRED METHOD 2:
+
+Browser automation using appropriate browser automation technologies.
+
+PREFERRED METHOD 3:
+
+Windows accessibility automation.
+
+PREFERRED METHOD 4:
+
+Window detection and UI automation.
+
+PREFERRED METHOD 5:
+
+Screenshot analysis and OCR.
+
+PREFERRED METHOD 6:
+
+Mouse and keyboard automation.
+
+Do not rely exclusively on mouse coordinates.
+
+Build a system capable of:
+
+- Detecting active windows.
+- Detecting application windows.
+- Reading accessible UI labels.
+- Identifying buttons.
+- Identifying input fields.
+- Identifying menus.
+- Reading visible text.
+- Clicking controls.
+- Typing text.
+- Selecting items.
+- Scrolling.
+- Using keyboard shortcuts.
+- Navigating dialogs.
+- Handling application windows.
+- Detecting task completion.
+
+The system should prefer accessibility selectors and reliable application interfaces over coordinate-based clicking.
+
+Coordinate-based automation should be a fallback only.
+
+---
+
+# 8. SCREEN ANALYSIS ENGINE
+
+Create a screen-analysis subsystem.
+
+Capabilities:
+
+- Capture screenshots when permitted.
+- Detect active application.
+- Identify UI elements.
+- Extract text.
+- Use OCR.
+- Recognize buttons and input fields where feasible.
+- Detect dialogs.
+- Detect errors.
+- Detect progress indicators.
+- Detect whether the expected application is visible.
+
+The screen analyzer should work with the automation engine.
+
+Example:
+
+F.R.I.D.A.Y. opens VS Code.
+
+The system should check whether the VS Code window actually opened.
+
+F.R.I.D.A.Y. creates a file.
+
+The system should check whether the file is visible or exists.
+
+F.R.I.D.A.Y. runs a project.
+
+The system should check whether the application started or whether an error occurred.
+
+Do not assume that an action succeeded merely because a click or command was issued.
+
+---
+
+# 9. BROWSER AUTOMATION
+
+Build a dedicated browser automation subsystem.
+
+Support:
+
+- Open Chrome.
+- Open Edge.
+- Navigate to websites.
+- Search the web.
+- Open links.
+- Read accessible webpages.
+- Scroll.
+- Click.
+- Type.
+- Fill forms.
+- Download files where appropriate.
+- Interact with supported website elements.
+- Read visible page content.
+- Detect browser errors.
+- Verify page loading.
+- Handle tabs.
+- Handle windows.
+- Navigate back and forward.
+
+Use browser automation techniques such as:
+
+- Playwright when appropriate.
+- Browser accessibility trees.
+- DOM interaction.
+- Browser-specific automation.
+- UI automation when browser automation is unavailable.
+
+Do not assume that a website is compatible with automation.
+
+Do not bypass CAPTCHAs, authentication security, paywalls or website protections.
+
+If a website requires manual intervention, ask the user to complete the required step.
+
+Do not enter passwords, payment details or sensitive information without explicit authorization.
+
+---
+
+# 10. YOUTUBE AUTOMATION
+
+F.R.I.D.A.Y. should support natural YouTube workflows.
+
+Examples:
+
+"Friday, open YouTube."
+
+"Friday, play Arijit Singh."
+
+"Friday, play Kesariya."
+
+"Friday, play relaxing music."
+
+"Friday, search for C programming tutorials on YouTube."
+
+"Friday, play the first result."
+
+"Friday, pause."
+
+"Friday, skip."
+
+"Friday, play the next song."
+
+"Friday, search for cricket highlights."
+
+"Friday, open a video about Python."
+
+"Friday, increase the volume."
+
+"Friday, stop the music."
+
+Implement:
+
+- YouTube navigation.
+- Search.
+- Result selection.
+- Playback control.
+- Pause.
+- Resume.
+- Next.
+- Previous where supported.
+- Volume control where supported.
+- Fullscreen where supported.
+- Search refinement.
+- Playlist navigation where supported.
+
+If the user says:
+
+"Play any song."
+
+F.R.I.D.A.Y. should use the user's configured music preferences if available.
+
+If no preference exists, select a reasonable search query and explain what it selected.
+
+Do not falsely claim that playback started.
+
+Verify the page and playback state where feasible.
+
+---
+
+# 11. VISUAL STUDIO CODE AUTOMATION
+
+Create a specialized VS Code automation module.
+
+Capabilities:
+
+- Open VS Code.
+- Open a folder.
+- Create a folder.
+- Create a file.
+- Write code.
+- Edit code.
+- Save code.
+- Open terminal.
+- Execute supported commands.
+- Run applications.
+- Read terminal output.
+- Detect errors.
+- Fix safe errors.
+- Run build commands.
+- Run lint commands.
+- Run supported tests.
+- Verify files.
+
+Example:
+
+User:
+
+"Friday, open VS Code and create a login website."
+
+F.R.I.D.A.Y. should:
+
+1. Identify the project requirements.
+2. Plan the project.
+3. Ask for the save location if necessary.
+4. Create the project directory.
+5. Create the required files.
+6. Write the code.
+7. Save the files.
+8. Open the project in VS Code.
+9. Run the project.
+10. Inspect the output.
+11. Fix safe errors.
+12. Report completion.
+
+Example:
+
+User:
+
+"Save it on D drive."
+
+F.R.I.D.A.Y. should:
+
+1. Identify D:\ as the requested destination.
+2. Determine the project folder name.
+3. Create the project folder if required and authorized.
+4. Create the files inside the folder.
+5. Verify the files exist.
+6. Report the exact destination.
+
+Example:
+
+User:
+
+"Create a file named login.html."
+
+F.R.I.D.A.Y. should create:
+
+D:\WebProjects\LoginPage\login.html
+
+Only when this location has been agreed upon or the user has explicitly requested it.
+
+Do not overwrite existing files without confirmation unless the user has clearly authorized that behavior.
+
+---
+
+# 12. CODE WRITING AUTOMATION
+
+F.R.I.D.A.Y. should be able to create and edit projects.
+
+Support where feasible:
+
+- HTML.
+- CSS.
+- JavaScript.
+- TypeScript.
+- React.
+- Node.js.
+- Python.
+- C.
+- C++.
+- Java.
+- SQL.
+- Other supported programming languages.
+
+When a user asks for a project:
+
+1. Understand the project.
+2. Select an appropriate technology.
+3. Create the project structure.
+4. Generate the files.
+5. Write the code.
+6. Save the code.
+7. Install dependencies only when needed and authorized.
+8. Run the project.
+9. Detect errors.
+10. Fix errors where safe.
+11. Validate output.
+12. Report the project location.
+
+Do not create unnecessary files.
+
+Do not overwrite user files without appropriate confirmation.
+
+Do not execute unknown downloaded scripts automatically.
+
+---
+
+# 13. FILE MANAGER AUTOMATION
+
+Build a file-management automation system.
+
+Capabilities:
+
+- Search files.
+- Open files.
+- Read supported files.
+- Create files.
+- Create folders.
+- Rename files.
+- Copy files.
+- Move files.
+- Organize files.
+- Save generated files.
+- Search by file name.
+- Search by extension.
+- Search by location.
+- Check file existence.
+- Check file size.
+- Check modified date.
+
+Examples:
+
+"Friday, create a folder named Projects on D drive."
+
+"Friday, save this code to D drive."
+
+"Friday, find my Python file."
+
+"Friday, open the Downloads folder."
+
+"Friday, create a text file."
+
+"Friday, organize my desktop."
+
+"Friday, move these files into a new folder."
+
+"Friday, find all PDF files."
+
+For destructive actions:
+
+- Delete.
+- Overwrite.
+- Bulk move.
+- Bulk rename.
+- Permanent removal.
+
+Require confirmation unless explicit authorization and an appropriate safety mechanism are in place.
+
+Use the recycle bin or reversible operations whenever possible.
+
+---
+
+# 14. MICROSOFT WORD AUTOMATION
+
+Create Word automation where feasible.
+
+Capabilities:
+
+- Open Word.
+- Create documents.
+- Write text.
+- Format text.
+- Add headings.
+- Add paragraphs.
+- Create tables.
+- Save documents.
+- Export to PDF where supported.
+- Read documents.
+- Edit documents.
+
+Examples:
+
+"Friday, create a job application letter."
+
+"Friday, create my resume."
+
+"Friday, write a report and save it in Documents."
+
+"Friday, open my document and correct grammar."
+
+The system should verify the saved document.
+
+---
+
+# 15. MICROSOFT EXCEL AUTOMATION
+
+Create Excel automation.
+
+Capabilities:
+
+- Open Excel.
+- Create spreadsheets.
+- Write data.
+- Create tables.
+- Format cells.
+- Create formulas.
+- Create charts.
+- Create sheets.
+- Rename sheets.
+- Save spreadsheets.
+- Read spreadsheet contents.
+- Modify spreadsheet contents.
+- Validate calculations.
+
+Examples:
+
+"Friday, create an expense sheet."
+
+"Friday, calculate my monthly expenses."
+
+"Friday, create a student marksheet."
+
+"Friday, create a salary calculation Excel file."
+
+"Friday, create a chart."
+
+Use appropriate spreadsheet automation mechanisms rather than blindly typing coordinates.
+
+Verify the workbook where feasible.
+
+---
+
+# 16. MICROSOFT POWERPOINT AUTOMATION
+
+Create PowerPoint automation.
+
+Capabilities:
+
+- Create presentations.
+- Create slides.
+- Add titles.
+- Add content.
+- Add tables.
+- Add images from approved sources.
+- Add charts.
+- Apply layouts.
+- Save presentations.
+- Export presentations where supported.
+
+Example:
+
+"Friday, create a presentation about artificial intelligence."
+
+The system should:
+
+1. Understand the topic.
+2. Plan the slides.
+3. Create the presentation.
+4. Add content.
+5. Save it.
+6. Verify the file.
+
+---
+
+# 17. NOTEPAD AND TEXT EDITOR AUTOMATION
+
+Support:
+
+- Open Notepad.
+- Create text.
+- Edit text.
+- Save text.
+- Save as.
+- Open text files.
+- Create code files where appropriate.
+
+Example:
+
+"Friday, write an email for an internship."
+
+"Friday, save it as internship.txt."
+
+"Friday, open Notepad and write a C program."
+
+---
+
+# 18. TERMINAL AUTOMATION
+
+Build a controlled terminal automation subsystem.
+
+Support:
+
+- PowerShell.
+- Command Prompt.
+- Windows Terminal.
+- Integrated terminals in supported applications.
+
+Capabilities:
+
+- Run approved commands.
+- Capture output.
+- Capture errors.
+- Track execution.
+- Stop processes.
+- Handle timeouts.
+- Validate commands.
+- Detect successful execution.
+
+Never allow the natural-language brain to directly execute arbitrary commands without a controlled execution layer.
+
+Use command classification.
+
+Classify commands:
+
+SAFE:
+
+Generally read-only or non-destructive commands.
+
+MODERATE:
+
+Commands that modify project files or install dependencies.
+
+HIGH RISK:
+
+Commands that can delete files, modify system settings, affect security, change permissions or impact large parts of the system.
+
+Require appropriate confirmation for high-risk commands.
+
+Do not disable Windows security.
+
+Do not execute commands intended to steal credentials, compromise accounts or destroy data.
+
+---
+
+# 19. MULTI-APPLICATION WORKFLOWS
+
+F.R.I.D.A.Y. must be able to use multiple applications in one workflow.
+
+Example:
+
+User:
+
+"Friday, research a topic, create a Word report and save it in my Documents folder."
+
+Workflow:
+
+1. Understand the topic.
+2. Research using the browser.
+3. Collect accessible information.
+4. Organize the information.
+5. Create the report.
+6. Open Word or use an appropriate document-generation method.
+7. Write the report.
+8. Save the document.
+9. Verify the file.
+10. Report completion.
+
+Example:
+
+User:
+
+"Friday, create a presentation using information from a website."
+
+Workflow:
+
+1. Open browser.
+2. Search.
+3. Research.
+4. Collect information.
+5. Plan presentation.
+6. Open PowerPoint.
+7. Create slides.
+8. Save.
+9. Verify.
+
+Example:
+
+User:
+
+"Friday, create an Excel sheet from this document."
+
+Workflow:
+
+1. Read the document.
+2. Extract data.
+3. Structure data.
+4. Create spreadsheet.
+5. Populate cells.
+6. Validate data.
+7. Save.
+8. Report.
+
+---
+
+# 20. BACKGROUND EXECUTION
+
+F.R.I.D.A.Y. must be capable of executing longer tasks in the background without requiring the chat window to remain continuously active.
+
+Build:
+
+- Background task manager.
+- Task status.
+- Progress tracking.
+- Task cancellation.
+- Task pause.
+- Task resume.
+- Task logs.
+- Task notifications.
+- Task completion notifications.
+- Error notifications.
+
+The assistant should not freeze the UI.
+
+Use appropriate worker processes, Electron background processes, IPC and task execution architecture.
+
+Do not block the renderer thread.
+
+The UI must remain responsive.
+
+The assistant should display task progress using the existing UI components wherever possible.
+
+Example:
+
+TASK: Website Creation
+
+Status: Running
+
+Progress:
+
+- Planning: Completed.
+- Creating folder: Completed.
+- Writing HTML: Completed.
+- Writing CSS: Completed.
+- Writing JavaScript: Completed.
+- Running website: In progress.
+- Verification: Pending.
+
+When the user starts another task, the system must correctly manage task concurrency.
+
+Do not run conflicting tasks simultaneously.
+
+---
+
+# 21. TASK MEMORY AND WORKFLOW REUSE
+
+Create workflow memory.
+
+F.R.I.D.A.Y. should remember successful user-approved workflows.
+
+Examples:
+
+- Preferred project directory.
+- Preferred application.
+- Preferred coding environment.
+- Preferred website preview method.
+- Preferred document location.
+- Preferred language.
+- Preferred workflow patterns.
+
+Example:
+
+User:
+
+"Whenever I ask for a website, create the project in D:\WebProjects unless I specify another location."
+
+Store this as an editable preference.
+
+When the user says:
+
+"Create another website."
+
+The system should use the preference where appropriate.
+
+Do not silently assume an outdated or ambiguous location.
+
+Allow the user to modify or delete workflow preferences.
+
+---
+
+# 22. TASK VERIFICATION ENGINE
+
+Create a dedicated verification system.
+
+The assistant must not report success merely because it attempted an action.
+
+For every task, define expected outcomes.
+
+Examples:
+
+OPEN APPLICATION:
+
+Verify the application window exists or is active.
+
+CREATE FILE:
+
+Verify the file exists.
+
+SAVE FILE:
+
+Verify the file exists at the specified path.
+
+WRITE CODE:
+
+Verify file contents.
+
+RUN CODE:
+
+Verify the process result or output.
+
+OPEN WEBSITE:
+
+Verify the browser navigated to the requested page where feasible.
+
+PLAY MUSIC:
+
+Verify playback state where feasible.
+
+CREATE DOCUMENT:
+
+Verify the document file.
+
+CREATE SPREADSHEET:
+
+Verify the workbook.
+
+CREATE PRESENTATION:
+
+Verify the presentation file.
+
+When verification fails:
+
+1. Identify the failure.
+2. Attempt a safe recovery.
+3. Retry where appropriate.
+4. Report the actual result.
+
+Never falsely report completion.
+
+---
+
+# 23. ERROR RECOVERY
+
+Create an error recovery engine.
+
+Detect:
+
+- Application not installed.
+- Application failed to open.
+- Missing file.
+- Missing folder.
+- Permission error.
+- File access error.
+- Code compilation error.
+- Build error.
+- Browser error.
+- Website loading error.
+- UI element not found.
+- Automation timeout.
+- Process failure.
+- Unexpected dialog.
+
+Recovery strategy:
+
+1. Detect.
+2. Analyze.
+3. Determine whether recovery is safe.
+4. Retry if appropriate.
+5. Attempt an alternative automation method.
+6. Ask for user help when necessary.
+7. Report the result.
+
+Do not endlessly retry.
+
+Set retry limits.
+
+---
+
+# 24. HUMAN-LIKE HINGLISH WORKFLOW UNDERSTANDING
+
+Support natural language such as:
+
+"Friday YouTube kholo aur Arijit Singh ka song laga."
+
+"VS Code open kar aur ek login page bana."
+
+"Isko D drive mein save kar."
+
+"Folder nahi hai to bana de."
+
+"Ab website run kar."
+
+"Error aa raha hai to fix kar."
+
+"Ab Chrome mein preview dikha."
+
+"Is project ka naam Friday Login rakh."
+
+"Saare files ek folder mein save kar."
+
+"Jo abhi banaya hai usko delete mat kar, bas update kar."
+
+"Kal wala project continue kar."
+
+"Ek Excel sheet bana."
+
+"Is document ko PDF bana."
+
+"Presentation bana aur desktop par save kar."
+
+"Browser kholo aur research karke report bana."
+
+"Jaldi kar."
+
+"Ruk ja."
+
+"Cancel task."
+
+"Task continue kar."
+
+The NLP engine must recognize variations in English, Hindi and Hinglish.
+
+---
+
+# 25. AUTOMATION PERMISSION SYSTEM
+
+Build an intelligent permission system.
+
+The assistant should distinguish between:
+
+LOW RISK:
+
+- Opening applications.
+- Searching the web.
+- Reading user-selected files.
+- Creating new files in an agreed folder.
+- Writing code in a new project.
+
+MEDIUM RISK:
+
+- Installing software.
+- Modifying existing project files.
+- Moving large numbers of files.
+- Changing application settings.
+- Running unknown code.
+
+HIGH RISK:
+
+- Permanent deletion.
+- System-wide modifications.
+- Security changes.
+- Credential operations.
+- Financial transactions.
+- Sensitive account operations.
+- Destructive commands.
+
+For high-risk tasks, require confirmation.
+
+Do not interpret "automate everything" as unlimited authorization to perform destructive or sensitive actions.
+
+---
+
+# 26. CREATE AN EXTENSIBLE AUTOMATION PLUGIN ARCHITECTURE
+
+Create an automation registry.
+
+Each automation module should register:
+
+- ID.
+- Name.
+- Description.
+- Supported application.
+- Supported workflows.
+- Trigger phrases.
+- Required permissions.
+- Handler.
+- Validation.
+- Recovery.
+- Verification.
+
+Example modules:
+
+YouTubeAutomation.
+
+VSCodeAutomation.
+
+BrowserAutomation.
+
+FileAutomation.
+
+WindowsAutomation.
+
+WordAutomation.
+
+ExcelAutomation.
+
+PowerPointAutomation.
+
+TerminalAutomation.
+
+NotepadAutomation.
+
+MediaAutomation.
+
+Create a system that can add future applications without redesigning the core.
+
+---
+
+# 27. SECURITY AND PRIVACY
+
+The assistant must operate locally whenever feasible.
+
+Do not expose user files.
+
+Do not secretly upload user data.
+
+Do not send file contents to external services without explicit authorization.
+
+Do not automatically submit passwords or financial information.
+
+Do not automatically approve security prompts.
+
+Do not bypass CAPTCHA.
+
+Do not bypass authentication.
+
+Do not perform financial transactions without explicit user confirmation.
+
+Do not execute destructive operations without appropriate safeguards.
+
+Do not execute downloaded code automatically.
+
+Use secure IPC between Electron processes.
+
+Validate all automation requests.
+
+---
+
+# 28. EXISTING UI PRESERVATION
+
+This is an existing F.R.I.D.A.Y. application.
+
+STRICT RULES:
+
+- Do not redesign the interface.
+- Do not change the UI theme.
+- Do not remove the AI orb.
+- Do not remove the dashboard.
+- Do not remove animations.
+- Do not remove existing components.
+- Do not remove existing functionality.
+- Do not create a replacement application.
+- Do not change the overall layout.
+- Do not break Electron.
+- Do not break React.
+- Do not break TypeScript.
+
+Add the automation functionality to the existing application.
+
+Use existing interface components wherever possible.
+
+Add task progress and status only in a way that fits the existing design.
+
+---
+
+# 29. IMPLEMENTATION PROCESS
+
+STEP 1:
+
+Inspect the entire existing project.
+
+STEP 2:
+
+Inspect Electron architecture.
+
+STEP 3:
+
+Inspect current AI architecture.
+
+STEP 4:
+
+Inspect voice functionality.
+
+STEP 5:
+
+Inspect existing application launching.
+
+STEP 6:
+
+Inspect existing file operations.
+
+STEP 7:
+
+Identify available dependencies and Windows automation possibilities.
+
+STEP 8:
+
+Create the automation architecture.
+
+STEP 9:
+
+Create the Workflow Orchestrator.
+
+STEP 10:
+
+Create the Task Manager.
+
+STEP 11:
+
+Create the Application Registry.
+
+STEP 12:
+
+Create the Windows Automation Engine.
+
+STEP 13:
+
+Create Browser Automation.
+
+STEP 14:
+
+Create File Automation.
+
+STEP 15:
+
+Create VS Code Automation.
+
+STEP 16:
+
+Create Code Execution and Verification.
+
+STEP 17:
+
+Create Document, Excel and PowerPoint automation.
+
+STEP 18:
+
+Create background task execution.
+
+STEP 19:
+
+Create error recovery.
+
+STEP 20:
+
+Create permissions.
+
+STEP 21:
+
+Integrate with the existing voice and chat system.
+
+STEP 22:
+
+Test workflows.
+
+STEP 23:
+
+Fix errors.
+
+STEP 24:
+
+Run lint.
+
+STEP 25:
+
+Run production build.
+
+STEP 26:
+
+Report completed functionality and limitations.
+
+Do not stop after writing an architecture plan.
+
+Implement working functionality in stages.
+
+---
+
+# 30. TEST WORKFLOWS
+
+Test the following real workflows.
+
+WORKFLOW A:
+
+"Open YouTube and play relaxing music."
+
+WORKFLOW B:
+
+"Open Chrome and search for C programming tutorials."
+
+WORKFLOW C:
+
+"Open VS Code and create a login page."
+
+WORKFLOW D:
+
+"Save the login page in D:\WebProjects."
+
+WORKFLOW E:
+
+"Create the folder if it doesn't exist."
+
+WORKFLOW F:
+
+"Run the login page."
+
+WORKFLOW G:
+
+"Check whether the page is working."
+
+WORKFLOW H:
+
+"Fix the code if there are safe errors."
+
+WORKFLOW I:
+
+"Create a text file in Documents."
+
+WORKFLOW J:
+
+"Create an Excel expense sheet."
+
+WORKFLOW K:
+
+"Create a PowerPoint presentation."
+
+WORKFLOW L:
+
+"Research a topic and create a Word report."
+
+WORKFLOW M:
+
+"Open Notepad and write a C program."
+
+WORKFLOW N:
+
+"Stop the current task."
+
+WORKFLOW O:
+
+"Cancel the current task."
+
+WORKFLOW P:
+
+"Continue the previous task."
+
+WORKFLOW Q:
+
+"Create a folder, create files and run the project."
+
+WORKFLOW R:
+
+"Open my existing project and modify a specific feature."
+
+WORKFLOW S:
+
+"Search for a file and open it."
+
+WORKFLOW T:
+
+"Create a project, save it and verify the result."
+
+---
+
+# FINAL MISSION
+
+Transform F.R.I.D.A.Y. into a full autonomous Windows desktop workflow assistant.
+
+I want to speak naturally.
+
+I want to tell it what I want.
+
+I want F.R.I.D.A.Y. to plan the task, open applications, interact with them, write code, create files, save files, run programs, research information, manage supported applications, verify results and report back.
+
+It should be able to work across applications instead of being restricted to a single application.
+
+It should understand English, Hindi and Hinglish.
+
+It should execute long tasks in the background.
+
+It should use a modular automation architecture.
+
+It should not depend on Ollama or paid AI APIs.
+
+It must preserve my existing F.R.I.D.A.Y. interface.
+
+It must verify its actions instead of pretending.
+
+Build the actual implementation inside my existing project.
+
+Start by inspecting my existing files and architecture.
+
+Do not redesign the UI.
+
+Do not delete existing functionality.
+
+Implement the automation engine step by step and test it thoroughly.

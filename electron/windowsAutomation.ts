@@ -222,12 +222,87 @@ const WINDOWS_APP_CATALOG: Record<string, WindowsCatalogEntry> = {
     },
     appIdHints: ['vlc'],
   },
+  winword: {
+    displayName: 'Microsoft Word',
+    exeNames: ['WINWORD.EXE'],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path.join(d.programFiles, 'Microsoft Office', 'root', 'Office16', 'WINWORD.EXE'),
+        path.join(d.programFilesX86, 'Microsoft Office', 'root', 'Office16', 'WINWORD.EXE'),
+      ];
+    },
+    appIdHints: ['word', 'microsoft word'],
+  },
+  excel: {
+    displayName: 'Microsoft Excel',
+    exeNames: ['EXCEL.EXE'],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path.join(d.programFiles, 'Microsoft Office', 'root', 'Office16', 'EXCEL.EXE'),
+        path.join(d.programFilesX86, 'Microsoft Office', 'root', 'Office16', 'EXCEL.EXE'),
+      ];
+    },
+    appIdHints: ['excel', 'microsoft excel'],
+  },
+  powerpnt: {
+    displayName: 'Microsoft PowerPoint',
+    exeNames: ['POWERPNT.EXE'],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path.join(d.programFiles, 'Microsoft Office', 'root', 'Office16', 'POWERPNT.EXE'),
+        path.join(d.programFilesX86, 'Microsoft Office', 'root', 'Office16', 'POWERPNT.EXE'),
+      ];
+    },
+    appIdHints: ['powerpoint', 'microsoft powerpoint'],
+  },
+  'notepad++': {
+    displayName: 'Notepad++',
+    exeNames: ['notepad++.exe'],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path.join(d.programFiles, 'Notepad++', 'notepad++.exe'),
+        path.join(d.programFilesX86, 'Notepad++', 'notepad++.exe'),
+      ];
+    },
+    appIdHints: ['notepad++'],
+  },
+  devenv: {
+    displayName: 'Visual Studio',
+    exeNames: ['devenv.exe'],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [
+        path.join(d.programFiles, 'Microsoft Visual Studio', '2022', 'Community', 'Common7', 'IDE', 'devenv.exe'),
+        path.join(d.programFiles, 'Microsoft Visual Studio', '2022', 'Professional', 'Common7', 'IDE', 'devenv.exe'),
+      ];
+    },
+    appIdHints: ['visual studio 2022', 'visual studio'],
+  },
+  discord: {
+    displayName: 'Discord',
+    exeNames: ['Discord.exe'],
+    candidatePaths: () => {
+      const d = getEnvDirs();
+      return [path.join(d.localAppData, 'Discord', 'Update.exe')];
+    },
+    appIdHints: ['discord'],
+    fallbackWebsite: 'https://discord.com/app',
+  },
 };
 
 const ALIAS_TO_CATALOG_KEY: Array<{ rx: RegExp; key: string }> = [
   { rx: /\b(google\s*chrome|google-chrome|chrome)\b/i, key: 'chrome' },
   { rx: /\b(microsoft\s*edge|msedge|edge)\b/i, key: 'edge' },
   { rx: /\b(vs\s*code|vscode|visual\s*studio\s*code|code)\b/i, key: 'code' },
+  { rx: /\b(visual\s*studio|devenv)\b/i, key: 'devenv' },
+  { rx: /\b(notepad\+\+|notepad\s*plus\s*plus)\b/i, key: 'notepad++' },
+  { rx: /\b(microsoft\s*word|ms\s*word|winword|word)\b/i, key: 'winword' },
+  { rx: /\b(microsoft\s*excel|ms\s*excel|excel)\b/i, key: 'excel' },
+  { rx: /\b(microsoft\s*powerpoint|ms\s*powerpoint|powerpoint|powerpnt)\b/i, key: 'powerpnt' },
   { rx: /\b(android\s*studio|studio64)\b/i, key: 'studio64' },
   { rx: /\b(file\s*explorer|explorer)\b/i, key: 'explorer' },
   { rx: /\b(command\s*prompt|cmd)\b/i, key: 'cmd' },
@@ -242,6 +317,7 @@ const ALIAS_TO_CATALOG_KEY: Array<{ rx: RegExp; key: string }> = [
   { rx: /\b(telegram)\b/i, key: 'telegram' },
   { rx: /\b(spotify)\b/i, key: 'spotify' },
   { rx: /\b(vlc)\b/i, key: 'vlc' },
+  { rx: /\b(discord)\b/i, key: 'discord' },
 ];
 
 const WEBSITE_ALIASES: Record<string, { label: string; url: string }> = {
@@ -1142,3 +1218,187 @@ export async function speakWindowsSapiTts(params: {
     }
   });
 }
+
+// ---------- WindowManager, AccessibilityManager, ComputerInteractionEngine & OCRManager ----------
+
+export async function detectActiveWindow(): Promise<{
+  ok: boolean;
+  pid?: number;
+  processName?: string;
+  title?: string;
+  detail: string;
+}> {
+  if (process.platform !== 'win32') {
+    return {
+      ok: false,
+      detail: 'Active foreground window inspection requires a Windows desktop session.',
+    };
+  }
+  const script = `
+    Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);' -Name Win32Fg -Namespace Win32FgNs -ErrorAction SilentlyContinue;
+    $hwnd = [Win32FgNs.Win32Fg]::GetForegroundWindow();
+    [uint32]$wpid = 0;
+    [void][Win32FgNs.Win32Fg]::GetWindowThreadProcessId($hwnd, [ref]$wpid);
+    $p = Get-Process -Id $wpid -ErrorAction SilentlyContinue;
+    @{ pid = [int]$wpid; name = if ($p) { $p.ProcessName } else { '' }; title = if ($p) { $p.MainWindowTitle } else { '' } } | ConvertTo-Json -Compress
+  `;
+  try {
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], { timeout: 3500 });
+    const parsed = JSON.parse(stdout.trim() || '{}') as { pid?: number; name?: string; title?: string };
+    return {
+      ok: Boolean(parsed.pid),
+      pid: parsed.pid,
+      processName: parsed.name,
+      title: parsed.title,
+      detail: parsed.title ? `${parsed.name}: ${parsed.title}` : `Foreground PID ${parsed.pid ?? 'unknown'}`,
+    };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
+}
+
+export async function listUiElementsWindows(processFilter?: string): Promise<{
+  ok: boolean;
+  elements: Array<{ name: string; automationId: string; controlType: string }>;
+  detail: string;
+}> {
+  if (process.platform !== 'win32') {
+    return {
+      ok: false,
+      elements: [],
+      detail: 'Windows UI Automation accessibility inspection requires a live Windows 10/11 desktop.',
+    };
+  }
+  const safeFilter = (processFilter || '').replace(/[^a-zA-Z0-9._ -]/g, '');
+  const script = `
+    Add-Type -AssemblyName UIAutomationClient;
+    Add-Type -AssemblyName UIAutomationTypes;
+    $root = [System.Windows.Automation.AutomationElement]::RootElement;
+    $target = $null;
+    if ('${safeFilter}' -ne '') {
+      $proc = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and ($_.ProcessName -like '*${safeFilter}*' -or $_.MainWindowTitle -like '*${safeFilter}*') } | Select-Object -First 1;
+      if ($proc) { $target = [System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle) }
+    }
+    if (-not $target) {
+      Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();' -Name Win32Fg2 -Namespace Win32FgNs2 -ErrorAction SilentlyContinue;
+      $fg = [Win32FgNs2.Win32Fg2]::GetForegroundWindow();
+      if ($fg -ne [IntPtr]::Zero) { $target = [System.Windows.Automation.AutomationElement]::FromHandle($fg) }
+    }
+    if (-not $target) { $target = $root }
+    $items = $target.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Select-Object -First 45;
+    $out = @();
+    foreach ($el in $items) {
+      $n = $el.Current.Name;
+      if ($n) {
+        $out += @{ name = $n; automationId = [string]$el.Current.AutomationId; controlType = [string]$el.Current.ControlType.ProgrammaticName }
+      }
+    }
+    $out | ConvertTo-Json -Compress
+  `;
+  try {
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], { timeout: 6500 });
+    const parsed = JSON.parse(stdout.trim() || '[]');
+    const arr = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+    const elements = arr.map((e) => ({
+      name: String(e.name || ''),
+      automationId: String(e.automationId || ''),
+      controlType: String(e.controlType || ''),
+    }));
+    return {
+      ok: true,
+      elements,
+      detail: `Inspected ${elements.length} Windows UI Automation element(s).`,
+    };
+  } catch (err) {
+    return { ok: false, elements: [], detail: (err as Error).message };
+  }
+}
+
+export async function typeTextWindows(text: string): Promise<{ ok: boolean; detail: string }> {
+  if (process.platform !== 'win32') {
+    return { ok: false, detail: 'Keyboard automation requires a Windows desktop session.' };
+  }
+  const safeB64 = Buffer.from(text.slice(0, 1000), 'utf-8').toString('base64');
+  const script = `
+    Add-Type -AssemblyName System.Windows.Forms;
+    $raw = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${safeB64}'));
+    $escaped = $raw -replace '([+^%~(){}\\[\\]])', '{$1}';
+    [System.Windows.Forms.SendKeys]::SendWait($escaped);
+    'SENT'
+  `;
+  try {
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], { timeout: 4000 });
+    return { ok: stdout.includes('SENT'), detail: 'Sent text input via KeyboardController.' };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
+}
+
+export async function sendShortcutWindows(keys: string): Promise<{ ok: boolean; detail: string }> {
+  if (process.platform !== 'win32') {
+    return { ok: false, detail: 'Shortcut automation requires a Windows desktop session.' };
+  }
+  // Allow only validated SendKeys format characters (e.g. ^s, ^c, %{F4}, {ENTER})
+  if (!/^[a-zA-Z0-9^+%~{}\s]{1,24}$/.test(keys)) {
+    return { ok: false, detail: 'Disallowed shortcut sequence.' };
+  }
+  const script = `
+    Add-Type -AssemblyName System.Windows.Forms;
+    [System.Windows.Forms.SendKeys]::SendWait('${keys}');
+    'SENT'
+  `;
+  try {
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], { timeout: 3500 });
+    return { ok: stdout.includes('SENT'), detail: `Dispatched shortcut "${keys}".` };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
+}
+
+export async function moveAndClickWindows(x: number, y: number, doubleClick = false): Promise<{ ok: boolean; detail: string }> {
+  if (process.platform !== 'win32') {
+    return { ok: false, detail: 'Mouse automation requires a Windows desktop session.' };
+  }
+  const ix = Math.max(0, Math.round(x));
+  const iy = Math.max(0, Math.round(y));
+  const script = `
+    Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y); [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint cButtons, UIntPtr dwExtraInfo);' -Name Win32Mouse -Namespace Win32MouseNs -ErrorAction SilentlyContinue;
+    [Win32MouseNs.Win32Mouse]::SetCursorPos(${ix}, ${iy}) | Out-Null;
+    [Win32MouseNs.Win32Mouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
+    [Win32MouseNs.Win32Mouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
+    ${doubleClick ? '[Win32MouseNs.Win32Mouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); [Win32MouseNs.Win32Mouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);' : ''}
+    'CLICKED'
+  `;
+  try {
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], { timeout: 3500 });
+    return { ok: stdout.includes('CLICKED'), detail: `Clicked coordinate (${ix}, ${iy}).` };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
+}
+
+export async function captureAndOcrScreenWindows(): Promise<{
+  ok: boolean;
+  text: string;
+  activeWindow?: string;
+  elementsCount: number;
+  detail: string;
+}> {
+  if (process.platform !== 'win32') {
+    const activeNote = 'Running in non-Windows host; desktop screen OCR & UIA require a live Windows 10/11 session (or use Screen Capture inside the File Explorer view).';
+    return { ok: false, text: activeNote, elementsCount: 0, detail: activeNote };
+  }
+
+  const fg = await detectActiveWindow();
+  const uia = await listUiElementsWindows(fg.processName);
+  const uiaLines = uia.elements.map((e) => e.name).filter(Boolean).slice(0, 30);
+
+  return {
+    ok: uiaLines.length > 0 || fg.ok,
+    text: uiaLines.join('\n'),
+    activeWindow: fg.detail,
+    elementsCount: uia.elements.length,
+    detail: `Extracted ${uiaLines.length} accessibility text items from active Windows desktop (${fg.detail}).`,
+  };
+}
+

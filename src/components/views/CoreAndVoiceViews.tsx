@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Activity,
+  BookOpen,
+  Brain,
   Check,
   CheckCircle2,
   Circle,
@@ -15,6 +17,7 @@ import {
   Plus,
   Radio,
   RefreshCw,
+  Sparkles,
   Trash2,
   Volume2,
   VolumeX,
@@ -37,6 +40,7 @@ import type {
 } from '../../core/types';
 import { VOICE_STATE_META } from '../../core/agentRegistry';
 import { FridayCore3D } from '../FridayCore3D';
+import { AutonomousWorkflowsPanel } from './AutonomousWorkflowsPanel';
 
 export function AICoreView({
   voiceState,
@@ -63,7 +67,9 @@ export function AICoreView({
 }) {
   const states: VoiceState[] = [
     'standby',
+    'wake_word_detected',
     'listening',
+    'transcribing',
     'processing',
     'searching',
     'executing',
@@ -236,6 +242,399 @@ export function AICoreView({
       </div>
 
       {!focusAgents && agentMatrixSection}
+
+      {/* Self-Owned F.R.I.D.A.Y. Cognitive Brain Studio */}
+      <CognitiveBrainStudio />
+    </div>
+  );
+}
+
+interface CustomIntentViewRow {
+  id: string;
+  name: string;
+  description: string;
+  exampleSentences: string[];
+  handlerAction: string;
+  handlerPayload?: Record<string, unknown>;
+  userDefined?: boolean;
+}
+
+interface PatternSuggestionRow {
+  id: string;
+  sequenceKey: string;
+  occurrences: number;
+  suggestedTrigger: string;
+  steps: string[];
+  status: 'suggested' | 'accepted' | 'dismissed';
+}
+
+interface KnowledgeSearchHitRow {
+  chunk: {
+    id: string;
+    title: string;
+    content: string;
+    provenance: string;
+    sourcePath?: string;
+  };
+  score: number;
+}
+
+interface TokenizerMetricsRow {
+  vocabSize: number;
+  mergePairs: Array<[string, string]>;
+  sampleCount: number;
+  evalMetrics: {
+    trainCount: number;
+    evalCount: number;
+    unkRate: number;
+    avgTokensPerSample: number;
+  };
+  createdAt: string;
+}
+
+function CognitiveBrainStudio() {
+  const [intents, setIntents] = useState<CustomIntentViewRow[]>([]);
+  const [patterns, setPatterns] = useState<PatternSuggestionRow[]>([]);
+  const [tokenizer, setTokenizer] = useState<TokenizerMetricsRow | null>(null);
+  const [datasetCount, setDatasetCount] = useState(0);
+  const [lexiconCount, setLexiconCount] = useState(0);
+  const [phrase, setPhrase] = useState('');
+  const [actionsText, setActionsText] = useState('');
+  const [kbQuery, setKbQuery] = useState('');
+  const [kbHits, setKbHits] = useState<KnowledgeSearchHitRow[]>([]);
+  const [factTitle, setFactTitle] = useState('');
+  const [factContent, setFactContent] = useState('');
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const [trainingBusy, setTrainingBusy] = useState(false);
+
+  const loadCognitiveState = async () => {
+    try {
+      const [intRes, learnRes] = await Promise.all([
+        fetch('/api/cognitive/intents'),
+        fetch('/api/cognitive/learning'),
+      ]);
+      if (intRes.ok) {
+        const d = await intRes.json();
+        setIntents(Array.isArray(d.intents) ? d.intents : []);
+      }
+      if (learnRes.ok) {
+        const l = await learnRes.json();
+        setPatterns(Array.isArray(l.patterns) ? l.patterns : []);
+        setTokenizer(l.tokenizer || null);
+        setDatasetCount(Number(l.datasetCount ?? 0));
+        setLexiconCount(Array.isArray(l.lexicon) ? l.lexicon.length : 0);
+      }
+    } catch {
+      // Ignore standalone fallback
+    }
+  };
+
+  useEffect(() => {
+    void loadCognitiveState();
+  }, []);
+
+  const handleTeachIntent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!phrase.trim() || !actionsText.trim()) return;
+    const res = await fetch('/api/cognitive/intents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phrase: phrase.trim(), actionsText: actionsText.trim() }),
+    });
+    if (res.ok) {
+      setPhrase('');
+      setActionsText('');
+      setStatusNotice(`Taught custom command "${phrase.trim()}".`);
+      await loadCognitiveState();
+    }
+  };
+
+  const handleDeleteIntent = async (id: string) => {
+    const res = await fetch(`/api/cognitive/intents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (res.ok) {
+      setIntents((prev) => prev.filter((i) => i.id !== id));
+    }
+  };
+
+  const handlePatternAction = async (patternId: string, action: 'accept_pattern' | 'dismiss_pattern') => {
+    const res = await fetch('/api/cognitive/learning', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, patternId }),
+    });
+    if (res.ok) {
+      await loadCognitiveState();
+    }
+  };
+
+  const handleTrainTokenizer = async () => {
+    setTrainingBusy(true);
+    try {
+      const res = await fetch('/api/cognitive/learning', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'train_tokenizer' }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setTokenizer(d.artifact || null);
+        setStatusNotice('Level 6 BPE Tokenizer & train/eval evaluation updated locally.');
+      }
+    } finally {
+      setTrainingBusy(false);
+    }
+  };
+
+  const handleSearchKb = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!kbQuery.trim()) return;
+    const res = await fetch(`/api/cognitive/knowledge?q=${encodeURIComponent(kbQuery.trim())}`);
+    if (res.ok) {
+      const d = await res.json();
+      setKbHits(Array.isArray(d.results) ? d.results : []);
+    }
+  };
+
+  const handleReindexKb = async () => {
+    const res = await fetch('/api/cognitive/knowledge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'reindex' }),
+    });
+    if (res.ok) {
+      const d = await res.json();
+      setStatusNotice(`Knowledge Engine re-indexed ${d.indexedCount ?? 0} local chunks.`);
+    }
+  };
+
+  const handleAddFact = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!factTitle.trim() || !factContent.trim()) return;
+    const res = await fetch('/api/cognitive/knowledge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'add_fact', title: factTitle.trim(), content: factContent.trim() }),
+    });
+    if (res.ok) {
+      setFactTitle('');
+      setFactContent('');
+      setStatusNotice('Added user-provided fact to local Knowledge Base.');
+    }
+  };
+
+  const customIntents = intents.filter((i) => Boolean(i.userDefined));
+
+  return (
+    <div className="space-y-5">
+      <div className="p-5 rounded-xl border border-cyan-500/20 bg-[#070c1a]/90 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+              <Brain className="w-4 h-4 text-cyan-400" aria-hidden="true" />
+              <span>F.R.I.D.A.Y. Cognitive Engine · Teachable Intents &amp; Level 1–6 Self-Learning</span>
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Custom Hinglish/English rules, repeated workflow detection, grounded Knowledge Engine, and Level 6 BPE tokenizer trainer.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-[11px] font-mono-tabular text-cyan-200">
+            <span>Custom Rules: {customIntents.length}</span>
+            <span>·</span>
+            <span>Lexicon: {lexiconCount}</span>
+            <span>·</span>
+            <span>Dataset: {datasetCount}</span>
+          </div>
+        </div>
+
+        {statusNotice && <p className="text-xs text-cyan-300">{statusNotice}</p>}
+
+        {/* Teach Custom Intent */}
+        <form onSubmit={handleTeachIntent} className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <input
+            type="text"
+            value={phrase}
+            onChange={(e) => setPhrase(e.target.value)}
+            placeholder='Trigger phrase (e.g. "coding mode")'
+            aria-label="Custom trigger phrase"
+            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+          />
+          <input
+            type="text"
+            value={actionsText}
+            onChange={(e) => setActionsText(e.target.value)}
+            placeholder='Actions (e.g. "open vscode and my project folder")'
+            aria-label="Custom intent actions"
+            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+          />
+          <button
+            type="submit"
+            className="px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+          >
+            Teach Custom Command
+          </button>
+        </form>
+
+        {customIntents.length > 0 && (
+          <div className="space-y-1.5">
+            {customIntents.map((ci) => (
+              <div
+                key={ci.id}
+                className="px-3 py-2 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center justify-between gap-2 text-xs"
+              >
+                <div className="min-w-0">
+                  <span className="font-semibold text-cyan-200">{ci.exampleSentences.join(', ')}</span>
+                  <span className="text-slate-400"> → {ci.description || ci.handlerAction}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteIntent(ci.id)}
+                  aria-label={`Delete custom intent ${ci.name}`}
+                  className="text-slate-400 hover:text-rose-300"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Level 4 Pattern Suggestions */}
+        {patterns.filter((p) => p.status === 'suggested').length > 0 && (
+          <div className="pt-2 border-t border-slate-800 space-y-2">
+            <div className="text-xs font-semibold text-slate-300">
+              Level 4 Detected Routine Suggestions
+            </div>
+            {patterns
+              .filter((p) => p.status === 'suggested')
+              .map((pat) => (
+                <div
+                  key={pat.id}
+                  className="p-2.5 rounded-lg bg-slate-900/80 border border-cyan-500/25 flex flex-wrap items-center justify-between gap-2 text-xs"
+                >
+                  <div>
+                    <span className="font-semibold text-slate-100">{pat.suggestedTrigger}</span>
+                    <span className="text-slate-400"> · seen {pat.occurrences}x ({pat.steps.join(' → ')})</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void handlePatternAction(pat.id, 'accept_pattern')}
+                      className="px-2.5 py-1 rounded bg-cyan-500 text-slate-950 font-semibold"
+                    >
+                      Save Macro
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handlePatternAction(pat.id, 'dismiss_pattern')}
+                      className="px-2.5 py-1 rounded bg-slate-800 text-slate-300"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+
+        {/* Level 6 Language Core & Tokenizer Trainer */}
+        <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div>
+            <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
+              <span>Level 6 Language Core Scaffold &amp; BPE Tokenizer Trainer</span>
+            </div>
+            <div className="text-slate-400 mt-0.5">
+              {tokenizer
+                ? `Vocab ${tokenizer.vocabSize} · ${tokenizer.mergePairs.length} merges · Split ${tokenizer.evalMetrics.trainCount}/${tokenizer.evalMetrics.evalCount} · UNK ${(tokenizer.evalMetrics.unkRate * 100).toFixed(1)}%`
+                : 'Not trained yet — runs locally over collected + seed prompts with train/eval split metrics.'}
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={trainingBusy}
+            onClick={() => void handleTrainTokenizer()}
+            className="px-3 py-1.5 rounded-lg font-semibold bg-slate-800 border border-cyan-500/40 text-cyan-200 hover:bg-cyan-500/15 disabled:opacity-50"
+          >
+            {trainingBusy ? 'Training...' : 'Train Tokenizer & Evaluate Split'}
+          </button>
+        </div>
+      </div>
+
+      {/* Knowledge Engine Grounding Inspector */}
+      <div className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            <BookOpen className="w-4 h-4 text-cyan-400" aria-hidden="true" />
+            <span>Local Grounded Knowledge Engine</span>
+          </h3>
+          <button
+            type="button"
+            onClick={() => void handleReindexKb()}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-cyan-200 hover:border-cyan-400/50"
+          >
+            <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>Re-Index Workspace Knowledge</span>
+          </button>
+        </div>
+
+        <form onSubmit={handleSearchKb} className="flex gap-2">
+          <input
+            type="text"
+            value={kbQuery}
+            onChange={(e) => setKbQuery(e.target.value)}
+            placeholder="Query local Knowledge Engine (notes, docs, FAQs)..."
+            aria-label="Query knowledge base"
+            className="flex-1 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
+          />
+          <button
+            type="submit"
+            className="px-4 py-2 rounded-lg font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+          >
+            Query KB
+          </button>
+        </form>
+
+        {kbHits.length > 0 && (
+          <div className="space-y-1.5 max-h-48 overflow-y-auto">
+            {kbHits.map((hit) => (
+              <div key={hit.chunk.id} className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 space-y-0.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-100">{hit.chunk.title}</span>
+                  <span className="font-mono-tabular text-[11px] text-cyan-300">
+                    {hit.chunk.provenance} · score {hit.score}
+                  </span>
+                </div>
+                <p className="text-slate-300 line-clamp-2">{hit.chunk.content}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <form onSubmit={handleAddFact} className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-2 border-t border-slate-800">
+          <input
+            type="text"
+            value={factTitle}
+            onChange={(e) => setFactTitle(e.target.value)}
+            placeholder="Fact title (e.g., My Stack)"
+            aria-label="Knowledge fact title"
+            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
+          />
+          <input
+            type="text"
+            value={factContent}
+            onChange={(e) => setFactContent(e.target.value)}
+            placeholder="Verified local fact detail..."
+            aria-label="Knowledge fact content"
+            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
+          />
+          <button
+            type="submit"
+            className="px-3 py-2 rounded-lg font-semibold bg-slate-800 border border-cyan-500/35 text-cyan-200 hover:bg-cyan-500/15"
+          >
+            Add Grounded Fact
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -365,14 +764,12 @@ export function VoiceAssistantView({
         ? `Windows System.Speech ready (${(voiceCaps.recognizers || []).join(', ')})`
         : speechRecSupported
           ? 'Browser Web SpeechRecognition active (Windows System.Speech ready inside Desktop App)'
-          : voiceCaps?.geminiSpeechAvailable
-            ? 'Optional cloud speech transcription active'
-            : 'Ready inside Electron on Windows (System.Speech) or Web Speech browsers';
+          : 'Ready inside Electron on Windows (System.Speech) or Web Speech browsers';
 
       items.push({
         id: 'stt',
         label: 'Speech Recognition (STT) Engine',
-        status: voiceCaps?.offlineSttReady || voiceCaps?.geminiSpeechAvailable || speechRecSupported ? 'pass' : 'warning',
+        status: voiceCaps?.offlineSttReady || speechRecSupported ? 'pass' : 'warning',
         detail: sttDetail,
       });
 
@@ -681,6 +1078,53 @@ export function VoiceAssistantView({
           </div>
         )}
       </div>
+
+      {/* Hinglish Voice Interruption & Windows Speech Capabilities */}
+      <WindowsSpeechCapabilitiesCard />
+    </div>
+  );
+}
+
+function WindowsSpeechCapabilitiesCard() {
+  const [limitations, setLimitations] = useState<string[]>([
+    'Windows System.Speech offline accuracy depends on installed Windows Speech Recognizer language packs; Hindi/Hinglish code-switching uses phonetics + Hinglish NLP repair.',
+    'Pluggable local neural speech adapters (whisper.cpp, Vosk, Piper) can be attached without external APIs.',
+  ]);
+  const [adapters, setAdapters] = useState<string[]>(['windows-sapi-system-speech', 'web-speech-fallback']);
+
+  useEffect(() => {
+    fetch('/api/diagnostics/voice')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.cognitiveSpeech?.limitations?.length) {
+          setLimitations(data.cognitiveSpeech.limitations);
+        }
+        if (data?.cognitiveSpeech?.pluggableAdapters?.length) {
+          setAdapters(data.cognitiveSpeech.pluggableAdapters);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  return (
+    <div className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3 text-xs">
+      <h3 className="text-sm font-semibold text-slate-200">
+        Hinglish Voice Interruption &amp; Windows Speech Engine Notes
+      </h3>
+      <div className="text-slate-300">
+        Active voice interruption phrases:{' '}
+        <span className="font-mono-tabular text-cyan-300">
+          &ldquo;Ruk ja&rdquo;, &ldquo;Chup&rdquo;, &ldquo;Bas&rdquo;, &ldquo;Bas kar&rdquo;, &ldquo;Shant&rdquo;, &ldquo;Stop&rdquo;, &ldquo;Cancel&rdquo;
+        </span>
+      </div>
+      <div className="text-slate-400">
+        Registered SpeechProvider adapters: <span className="text-slate-200">{adapters.join(', ')}</span>
+      </div>
+      <ul className="list-disc pl-4 space-y-1 text-slate-400">
+        {limitations.map((lim, i) => (
+          <li key={i}>{lim}</li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -1119,9 +1563,12 @@ export function TasksWorkflowsView({
           Tasks, Notes &amp; Automation Workflows
         </h2>
         <p className="text-sm text-slate-400">
-          Manage your personal to-do tasks, pinned notes, and repeatable desktop workflows with persistent storage.
+          Manage your personal to-do tasks, pinned notes, autonomous desktop goals, and repeatable multi-agent workflows.
         </p>
       </div>
+
+      {/* Autonomous Desktop Workflow Orchestrator, Live Queue, Memory & Plugins */}
+      <AutonomousWorkflowsPanel />
 
       {/* Tasks & Notes Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">

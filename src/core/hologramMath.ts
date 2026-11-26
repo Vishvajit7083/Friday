@@ -23,11 +23,23 @@ export function computeHologramProfile(
   let beamOpacity = 0.24;
 
   switch (state) {
+    case 'wake_word_detected':
+      baseSpeed = 1.25;
+      pulseAmplitude = 0.12 + clampedAudio * 0.16;
+      scanlineSpeed = 3.1;
+      beamOpacity = 0.42;
+      break;
     case 'listening':
       baseSpeed = 0.95;
       pulseAmplitude = 0.09 + clampedAudio * 0.18;
       scanlineSpeed = 2.6;
       beamOpacity = 0.36;
+      break;
+    case 'transcribing':
+      baseSpeed = 1.55;
+      pulseAmplitude = 0.07;
+      scanlineSpeed = 3.6;
+      beamOpacity = 0.38;
       break;
     case 'processing':
     case 'executing':

@@ -10,8 +10,8 @@ export const SPECIALIST_AGENTS: Omit<AgentDescriptor, 'enabled' | 'status'>[] = 
   {
     id: 'voice',
     name: 'Voice Agent',
-    role: 'Wake-word detection, speech recognition & neural TTS synthesis',
-    capabilities: ['Hey Friday trigger', 'Live transcription', 'Gemini TTS', 'Interruption handling'],
+    role: 'Wake-word detection, Windows/Web speech recognition & local voice synthesis',
+    capabilities: ['Hey Friday trigger', 'Live transcription', 'Local Cognitive Voice', 'Hinglish interruption'],
   },
   {
     id: 'system',
@@ -28,8 +28,8 @@ export const SPECIALIST_AGENTS: Omit<AgentDescriptor, 'enabled' | 'status'>[] = 
   {
     id: 'browser',
     name: 'Browser Agent',
-    role: 'Grounded web research, URL summarization & media discovery',
-    capabilities: ['Google Search grounding', 'Source citations', 'Page synthesis', 'Tech docs lookup'],
+    role: 'Optional online public web research, URL summarization & media discovery',
+    capabilities: ['Live Public Web Research', 'Source citations', 'Page synthesis', 'Offline honesty check'],
   },
   {
     id: 'application',
@@ -79,11 +79,23 @@ export const VOICE_STATE_META: Record<
     accentHex: '#38bdf8',
     description: 'Awaiting voice wake word or command input',
   },
+  wake_word_detected: {
+    label: 'Wake Word',
+    color: 'text-fuchsia-300',
+    accentHex: '#e879f9',
+    description: 'Wake word recognized — listening for your spoken command',
+  },
   listening: {
     label: 'Listening',
     color: 'text-cyan-300',
     accentHex: '#22d3ee',
     description: 'Capturing live microphone audio stream',
+  },
+  transcribing: {
+    label: 'Transcribing',
+    color: 'text-violet-300',
+    accentHex: '#a78bfa',
+    description: 'Converting captured voice audio into text',
   },
   processing: {
     label: 'Processing',

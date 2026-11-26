@@ -15,7 +15,7 @@ test('summarizes diagnostic check statuses accurately', () => {
     {
       id: '1',
       category: 'AI',
-      name: 'Gemini',
+      name: 'Cognitive Engine',
       expected: 'Connected',
       actual: 'Connected',
       status: 'pass',
@@ -138,7 +138,7 @@ test('sanitizes calendar, memory, and settings patches against unauthorized keys
     assistantName: 'F.R.I.D.A.Y.',
     userName: 'Vishvajit',
     wakeWord: 'Hey Friday',
-    aiModel: 'gemini-4-hydrogen',
+    aiModel: 'friday-cognitive',
     voiceName: 'Kore',
     voiceGender: 'female',
     speakingSpeed: 1,
@@ -187,13 +187,13 @@ test('sanitizes calendar, memory, and settings patches against unauthorized keys
 
   const patched = sanitizeSettingsPatch(
     {
-      aiModel: 'gemini-bad-model',
+      aiModel: 'invalid-external-model',
       speakingSpeed: 99,
       wallpaper: { customVideoUrl: 'javascript:alert(1)', blurPx: -5 },
     },
     baseSettings
   );
-  assert.equal(patched.aiModel, 'gemini-4-hydrogen');
+  assert.equal(patched.aiModel, 'friday-cognitive');
   assert.equal(patched.speakingSpeed, 1.6);
   assert.equal(patched.wallpaper.customVideoUrl, undefined);
   assert.equal(patched.wallpaper.blurPx, 0);

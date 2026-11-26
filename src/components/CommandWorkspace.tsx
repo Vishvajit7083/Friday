@@ -69,7 +69,12 @@ interface CommandWorkspaceProps {
   temperatureUnit?: TemperatureUnit;
   onSelectSection: (section: NavSection) => void;
   onSubmitCommand: (command: string) => Promise<boolean | void>;
-  onConfirmAction: (actionType: string, summary: string, approved: boolean) => Promise<void>;
+  onConfirmAction: (
+    actionType: string,
+    summary: string,
+    approved: boolean,
+    payload?: Record<string, unknown>
+  ) => Promise<void>;
   onToggleListening: () => void;
   onToggleRecordAudio: () => void;
   onToggleWakeWord: () => void;
@@ -890,7 +895,8 @@ export function CommandWorkspace({
                         onConfirmAction(
                           latestAssistant.pendingConfirmation!.actionType,
                           latestAssistant.pendingConfirmation!.summary,
-                          true
+                          true,
+                          latestAssistant.pendingConfirmation!.payload
                         )
                       }
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-500/20 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/30"
@@ -904,7 +910,8 @@ export function CommandWorkspace({
                         onConfirmAction(
                           latestAssistant.pendingConfirmation!.actionType,
                           latestAssistant.pendingConfirmation!.summary,
-                          false
+                          false,
+                          latestAssistant.pendingConfirmation!.payload
                         )
                       }
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs bg-purple-950 text-purple-200 border border-purple-700"

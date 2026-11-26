@@ -1,0 +1,472 @@
+✔ anti-echo suppression rejects self-heard TTS while allowing unrelated commands or idle input (0.2553ms)
+✔ post-interrupt state returns to listening only when continuous mode is enabled (5.232ms)
+✔ temperature conversion and formatting handle Celsius and Fahrenheit cleanly (1.3701ms)
+✔ compass bearing and UV index helpers produce accurate labels (0.4159ms)
+✔ parseWeatherQuery extracts city, timeframe, and weather metric accurately (4.8739ms)
+✔ buildWeatherChatSummary renders current, tomorrow, 7-day, and alert views in requested unit (0.8984ms)
+ℹ tests 49
+ℹ suites 0
+ℹ pass 49
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 747.6215
+PS D:\Friday-main> npm.cmd run lint
+
+> friday-command-center@1.1.0 lint
+> tsc --noEmit
+
+PS D:\Friday-main> npm.cmd run build
+
+> friday-command-center@1.1.0 build
+> vite build
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vite.config.ts:22:40). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+vite v8.3.8 building client environment for production...
+✓ 1685 modules transformed.
+computing gzip size...
+dist/index.html                     1.52 kB │ gzip:   0.69 kB
+dist/assets/index-TIfIDMm5.css     82.36 kB │ gzip:  13.01 kB
+dist/assets/index-OoVtaFyz.js   1,142.19 kB │ gzip: 299.77 kB
+
+✓ built in 1.09s
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+PS D:\Friday-main> npm.cmd run electron:compile
+
+> friday-command-center@1.1.0 electron:compile
+> tsc -p tsconfig.electron.json && esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/electron/preload.cjs && esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist-electron/server.mjs
+
+
+  dist-electron\electron\preload.cjs  3.5kb
+
+Done in 20ms
+
+  dist-electron\server.mjs  270.3kb
+
+Done in 22ms
+PS D:\Friday-main> npx.cmd electron-builder --win
+  • electron-builder  version=26.18.0 os=10.0.26300
+  • loaded configuration  file=D:\Friday-main\electron-builder.yml
+  • description is missed in the package.json  appPackageFile=D:\Friday-main\package.json
+  • author is missed in the package.json  appPackageFile=D:\Friday-main\package.json
+  • packageManager not detected by file, falling back to environment detection  resolvedPackageManager=npm detected=D:\Friday-main
+  • writing effective config  file=release\builder-effective-config.yaml
+  • executing @electron/rebuild  electronVersion=45.4.1 arch=x64 buildFromSource=false workspaceRoot=D:\Friday-main projectDir=./ appDir=./
+  • installing native dependencies  arch=x64
+  • completed installing native dependencies
+  • packaging       platform=win32 arch=x64 electron=45.4.1 appOutDir=release\win-unpacked
+  • downloading     label=electron
+    [==========================================================================================] 100% | electron
+  • downloaded electron zip extracted successfully  output=D:\Friday-main\release\win-unpacked
+  • searching for node modules  pm=npm searchDir=D:\Friday-main
+  • duplicate dependency references  dependencies=["fetch-blob@3.2.0","gaxios@7.3.1","ecdsa-sig-formatter@1.0.11","@types/node@22.20.5","@jridgewell/trace-mapping@0.3.31","lightningcss@1.33.0","@emnapi/wasi-threads@1.2.3","@emnapi/core@1.11.3","@emnapi/runtime@1.11.3","@tybys/wasm-util@0.10.3","vite@8.3.8","vite@8.3.8","debug@2.6.9","http-errors@2.0.1","on-finished@2.4.2","qs@6.16.2","http-errors@2.0.1","iconv-lite@0.4.24","type-is@1.6.18","debug@2.6.9","on-finished@2.4.2","get-intrinsic@1.3.0","call-bind-apply-helpers@1.0.2","call-bind-apply-helpers@1.0.2","es-object-atoms@1.1.2","call-bound@1.0.4","get-intrinsic@1.3.0","side-channel-map@1.0.1","debug@2.6.9","http-errors@2.0.1","on-finished@2.4.2","send@0.19.2","mime-types@2.1.35","react-dom@19.3.1","react-dom@19.3.1","@napi-rs/canvas@0.1.80","@types/node@22.20.5","esbuild@0.28.2"]
+  • updating asar integrity executable resource  executablePath=release\win-unpacked\F.R.I.D.A.Y. Command Center.exe
+  • default Electron icon is used  reason=application icon is not set
+  • no code signing certificate configured, signing is skipped  path=release\win-unpacked\F.R.I.D.A.Y. Command Center.exe
+  • building        target=nsis file=release\FRIDAY-Setup-1.1.0.exe archs=x64 oneClick=false perMachine=false
+  • no code signing certificate configured, signing is skipped  path=C:\Users\vishv\AppData\Local\Temp\t-c5Uw59\elevate-staging-1\resources\elevate.exe
+  • no code signing certificate configured, signing is skipped  path=release\FRIDAY-Setup-1.1.0.__uninstaller.exe
+  • no code signing certificate configured, signing is skipped  path=release\FRIDAY-Setup-1.1.0.exe
+  • building block map  blockMapFile=release\FRIDAY-Setup-1.1.0.exe.blockmap
+PS D:\Friday-main> npx electron .
+Downloading Electron binary...
+
+F.R.I.D.A.Y. Command Server active at http://localhost:3000
+Both GOOGLE_API_KEY and GEMINI_API_KEY are set. Using GOOGLE_API_KEY.
+
+ *  History restored 
+
+PS D:\Friday-main> npx electron .
+
+F.R.I.D.A.Y. Command Server active at http://localhost:3000
+Both GOOGLE_API_KEY and GEMINI_API_KEY are set. Using GOOGLE_API_KEY.
+PS D:\Friday-main> npm.cmd run build
+
+> friday-command-center@1.1.0 build
+> vite build
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vite.config.ts:22:40). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+vite v8.3.8 building client environment for production...
+✓ 1685 modules transformed.
+computing gzip size...
+dist/index.html                     1.52 kB │ gzip:   0.69 kB
+dist/assets/index-TIfIDMm5.css     82.36 kB │ gzip:  13.01 kB
+dist/assets/index-OoVtaFyz.js   1,142.19 kB │ gzip: 299.77 kB
+
+✓ built in 789ms
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+PS D:\Friday-main> npx.cmd electron-builder --win
+  • electron-builder  version=26.18.0 os=10.0.26300
+  • loaded configuration  file=D:\Friday-main\electron-builder.yml
+  • description is missed in the package.json  appPackageFile=D:\Friday-main\package.json
+  • author is missed in the package.json  appPackageFile=D:\Friday-main\package.json
+  • packageManager not detected by file, falling back to environment detection  resolvedPackageManager=npm detected=D:\Friday-main
+  • writing effective config  file=release\builder-effective-config.yaml
+  • executing @electron/rebuild  electronVersion=45.4.1 arch=x64 buildFromSource=false workspaceRoot=D:\Friday-main projectDir=./ appDir=./
+  • installing native dependencies  arch=x64
+  • completed installing native dependencies
+  • packaging       platform=win32 arch=x64 electron=45.4.1 appOutDir=release\win-unpacked
+  • downloading     label=electron
+    [====================================================================================================] 100% | electron
+  • downloaded electron zip extracted successfully  output=D:\Friday-main\release\win-unpacked
+  • searching for node modules  pm=npm searchDir=D:\Friday-main
+  • duplicate dependency references  dependencies=["fetch-blob@3.2.0","gaxios@7.3.1","ecdsa-sig-formatter@1.0.11","@types/node@22.20.5","@jridgewell/trace-mapping@0.3.31","lightningcss@1.33.0","@emnapi/wasi-threads@1.2.3","@emnapi/core@1.11.3","@emnapi/runtime@1.11.3","@tybys/wasm-util@0.10.3","vite@8.3.8","vite@8.3.8","debug@2.6.9","http-errors@2.0.1","on-finished@2.4.2","qs@6.16.2","http-errors@2.0.1","iconv-lite@0.4.24","type-is@1.6.18","debug@2.6.9","on-finished@2.4.2","get-intrinsic@1.3.0","call-bind-apply-helpers@1.0.2","call-bind-apply-helpers@1.0.2","es-object-atoms@1.1.2","call-bound@1.0.4","get-intrinsic@1.3.0","side-channel-map@1.0.1","debug@2.6.9","http-errors@2.0.1","on-finished@2.4.2","send@0.19.2","mime-types@2.1.35","react-dom@19.3.1","react-dom@19.3.1","@napi-rs/canvas@0.1.80","@types/node@22.20.5","esbuild@0.28.2"]
+  • updating asar integrity executable resource  executablePath=release\win-unpacked\F.R.I.D.A.Y. Command Center.exe
+  • default Electron icon is used  reason=application icon is not set
+  • no code signing certificate configured, signing is skipped  path=release\win-unpacked\F.R.I.D.A.Y. Command Center.exe
+  • building        target=nsis file=release\FRIDAY-Setup-1.1.0.exe archs=x64 oneClick=false perMachine=false
+  • no code signing certificate configured, signing is skipped  path=C:\Users\vishv\AppData\Local\Temp\t-UVJOo6\elevate-staging-1\resources\elevate.exe
+  • output file is locked for writing (maybe by virus scanner) => waiting for unlock...  
+  ⨯ C:\Users\vishv\AppData\Local\electron-builder\Cache\nsis-3.0.4.1\nsis-3.0.4.1-1mx3n\Bin\makensis.exe process failed ERR_ELECTRON_BUILDER_CANNOT_EXECUTE
+Exit code:
+1
+Output:
+Command line defined: "APP_ID=com.friday.desktop.assistant"
+Command line defined: "APP_GUID=2f1f5fa3-b5c8-5bd8-aaa3-7497473194e5"
+Command line defined: "UNINSTALL_APP_KEY=2f1f5fa3-b5c8-5bd8-aaa3-7497473194e5"
+Command line defined: "PRODUCT_NAME=F.R.I.D.A.Y. Command Center"
+Command line defined: "PRODUCT_FILENAME=F.R.I.D.A.Y. Command Center"
+Command line defined: "APP_FILENAME=F.R.I.D.A.Y. Command Center"
+Command line defined: "APP_DESCRIPTION="
+Command line defined: "VERSION=1.1.0"
+Command line defined: "PROJECT_DIR=D:\Friday-main"
+Command line defined: "BUILD_RESOURCES_DIR=D:\Friday-main\electron"
+Command line defined: "APP_PACKAGE_NAME=friday-command-center"
+Command line defined: "APP_64=D:\Friday-main\release\friday-command-center-1.1.0-x64.nsis.7z"
+Command line defined: "APP_64_NAME=friday-command-center-1.1.0-x64.nsis.7z"
+Command line defined: "APP_64_HASH=A08290AAEC49FFC419B37C0BD61283AF389585A6CF8EB845F394AB24D4F50DCC2A7D029595430EABBEC2F2EA1053C99D6BDE30418328741FA71B40A18F74F8F7"
+Command line defined: "APP_64_UNPACKED_SIZE=609490"
+Command line defined: "APP_INSTALLER_STORE_FILE=friday-command-center-updater\installer.exe"
+Command line defined: "COMPRESSION_METHOD=7z"
+Command line defined: "MULTIUSER_INSTALLMODE_ALLOW_ELEVATION"
+Command line defined: "INSTALL_MODE_PER_ALL_USERS_REQUIRED"
+Command line defined: "allowToChangeInstallationDirectory"
+Command line defined: "SHORTCUT_NAME=F.R.I.D.A.Y."
+Command line defined: "UNINSTALL_DISPLAY_NAME=F.R.I.D.A.Y. Command Center 1.1.0"
+Command line defined: "MUI_WELCOMEFINISHPAGE_BITMAP=${NSISDIR}\Contrib\Graphics\Wizard\nsis3-metro.bmp"
+Command line defined: "MUI_UNWELCOMEFINISHPAGE_BITMAP=${NSISDIR}\Contrib\Graphics\Wizard\nsis3-metro.bmp"
+Command line defined: "ESTIMATED_SIZE=609489"
+Command line defined: "COMPRESS=auto"
+Command line defined: "BUILD_UNINSTALLER"
+Command line defined: "UNINSTALLER_OUT_FILE=D:\Friday-main\release\FRIDAY-Setup-1.1.0.__uninstaller.exe"
+Processing config: C:\Users\vishv\AppData\Local\electron-builder\Cache\nsis-3.0.4.1\nsis-3.0.4.1-1mx3n\nsisconf.nsh
+Processing script file: "<stdin>" (UTF8)
+
+Processed 1 file, 9 command line commands, writing output (x86-unicode):
+
+Output: "D:\Friday-main\release\FRIDAY-Setup-1.1.0.exe"
+
+Error output:
+Can't open output file
+Error - aborting creation process
+  failedTask=build stackTrace=Error: C:\Users\vishv\AppData\Local\electron-builder\Cache\nsis-3.0.4.1\nsis-3.0.4.1-1mx3n\Bin\makensis.exe process failed ERR_ELECTRON_BUILDER_CANNOT_EXECUTE
+Exit code:
+1
+Output:
+Command line defined: "APP_ID=com.friday.desktop.assistant"
+Command line defined: "APP_GUID=2f1f5fa3-b5c8-5bd8-aaa3-7497473194e5"
+Command line defined: "UNINSTALL_APP_KEY=2f1f5fa3-b5c8-5bd8-aaa3-7497473194e5"
+Command line defined: "PRODUCT_NAME=F.R.I.D.A.Y. Command Center"
+Command line defined: "PRODUCT_FILENAME=F.R.I.D.A.Y. Command Center"
+Command line defined: "APP_FILENAME=F.R.I.D.A.Y. Command Center"
+Command line defined: "APP_DESCRIPTION="
+Command line defined: "VERSION=1.1.0"
+Command line defined: "PROJECT_DIR=D:\Friday-main"
+Command line defined: "BUILD_RESOURCES_DIR=D:\Friday-main\electron"
+Command line defined: "APP_PACKAGE_NAME=friday-command-center"
+Command line defined: "APP_64=D:\Friday-main\release\friday-command-center-1.1.0-x64.nsis.7z"
+Command line defined: "APP_64_NAME=friday-command-center-1.1.0-x64.nsis.7z"
+Command line defined: "APP_64_HASH=A08290AAEC49FFC419B37C0BD61283AF389585A6CF8EB845F394AB24D4F50DCC2A7D029595430EABBEC2F2EA1053C99D6BDE30418328741FA71B40A18F74F8F7"
+Command line defined: "APP_64_UNPACKED_SIZE=609490"
+Command line defined: "APP_INSTALLER_STORE_FILE=friday-command-center-updater\installer.exe"
+Command line defined: "COMPRESSION_METHOD=7z"
+Command line defined: "MULTIUSER_INSTALLMODE_ALLOW_ELEVATION"
+Command line defined: "INSTALL_MODE_PER_ALL_USERS_REQUIRED"
+Command line defined: "allowToChangeInstallationDirectory"
+Command line defined: "SHORTCUT_NAME=F.R.I.D.A.Y."
+Command line defined: "UNINSTALL_DISPLAY_NAME=F.R.I.D.A.Y. Command Center 1.1.0"
+Command line defined: "MUI_WELCOMEFINISHPAGE_BITMAP=${NSISDIR}\Contrib\Graphics\Wizard\nsis3-metro.bmp"
+Command line defined: "MUI_UNWELCOMEFINISHPAGE_BITMAP=${NSISDIR}\Contrib\Graphics\Wizard\nsis3-metro.bmp"
+Command line defined: "ESTIMATED_SIZE=609489"
+Command line defined: "COMPRESS=auto"
+Command line defined: "BUILD_UNINSTALLER"
+Command line defined: "UNINSTALLER_OUT_FILE=D:\Friday-main\release\FRIDAY-Setup-1.1.0.__uninstaller.exe"
+Processing config: C:\Users\vishv\AppData\Local\electron-builder\Cache\nsis-3.0.4.1\nsis-3.0.4.1-1mx3n\nsisconf.nsh
+Processing script file: "<stdin>" (UTF8)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              Processed 1 file, 9 command line commands, writing output (x86-unicode):
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              Output: "D:\Friday-main\release\FRIDAY-Setup-1.1.0.exe"
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              Error output:
+Can't open output file
+Error - aborting creation process
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  at ChildProcess.<anonymous> (D:\Friday-main\node_modules\builder-util\src\util.ts:313:16)
+    at ChildProcess.wrapper (node:events:639:12)
+    at ChildProcess.emit (node:events:514:20)
+    at ChildProcess.cp.emit (D:\Friday-main\node_modules\cross-spawn\lib\enoent.js:34:29)
+    at maybeClose (node:internal/child_process:1156:16)
+    at Process.ChildProcess._handle.onexit (node:internal/child_process:334:5)
+PS D:\Friday-main> Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+PS D:\Friday-main> cd D:\Friday-main
+PS D:\Friday-main> git status
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+        .vscode/
+
+nothing added to commit but untracked files present (use "git add" to track)
+PS D:\Friday-main> git add .
+PS D:\Friday-main> git commit -m "feat: add autonomous desktop workflow orchestrator"
+[main c8d5a9f] feat: add autonomous desktop workflow orchestrator
+ 1 file changed, 3 insertions(+)
+ create mode 100644 .vscode/settings.json
+PS D:\Friday-main> git push origin main
+Enumerating objects: 5, done.
+Counting objects: 100% (5/5), done.
+Delta compression using up to 16 threads
+Compressing objects: 100% (2/2), done.
+Writing objects: 100% (4/4), 399 bytes | 399.00 KiB/s, done.
+Total 4 (delta 1), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Resolving deltas: 100% (1/1), completed with 1 local object.
+To https://github.com/Vishvajit7083/Friday.git
+   3eafcf2..c8d5a9f  main -> main
+PS D:\Friday-main> # 1. Install dependencies (including Electron if not already installed)
+PS D:\Friday-main> npm.cmd install
+
+up to date, audited 485 packages in 5s
+
+80 packages are looking for funding
+  run `npm fund` for details
+
+6 moderate severity vulnerabilities
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+npm warn install-scripts 3 packages have install scripts not yet covered by allowScripts:
+npm warn install-scripts   electron-winstaller@5.4.0 (install: node ./script/select-7z-arch.js)
+npm warn install-scripts   esbuild@0.28.2 (postinstall: node install.js)
+npm warn install-scripts   protobufjs@7.6.6 (postinstall: node scripts/postinstall)
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+PS D:\Friday-main> 
+PS D:\Friday-main> # 2. Create .env once if you don't have one yet
+PS D:\Friday-main> if (!(Test-Path .env)) { Copy-Item .env.example .env }
+PS D:\Friday-main> 
+PS D:\Friday-main> # 3. Verify tests, types, and builds
+PS D:\Friday-main> npx.cmd tsx --test src/core/*.test.ts src/core/cognitive/*.test.ts src/core/automation/*.test.ts
+(node:36496) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ evaluates spoken math operators including multiplied by and divided by (2.1992ms)
+✔ converts units offline across length, temperature, weight, and data (0.9663ms)
+✔ translates offline between English, Hindi, and Marathi (0.8727ms)
+✔ parses notes, todos, reminders, alarms, and summarizes text extractively (2.6831ms)
+✔ routes Android phone control commands and enforces confirmation on call requests (5.2986ms)
+✔ sanitizes speakingPitch and Marathi/Hindi language settings (0.644ms)
+✔ executes standalone offline client engine commands including notes, math, translation, and call confirmation (4.3964ms)
+✔ unwraps JSON payloads from Android JavascriptInterface bridge into readable messages (2.6156ms)
+✔ routes exact and misspelled Android app launch commands without breaking file search (0.2623ms)
+✔ summarizes diagnostic check statuses accurately (1.2776ms)
+✔ selects optimization profile based on real hardware thresholds (0.2532ms)
+✔ formats valid TEST_REPORT.md markdown table without breaking pipes (0.5007ms)
+✔ sanitizes calendar, memory, and settings patches against unauthorized keys (0.8374ms)
+✔ categorizes extensions accurately (0.7901ms)
+✔ formats byte sizes cleanly (0.2423ms)
+✔ searches files using natural language category cues (1.3355ms)
+✔ detects duplicate files by normalized name and byte size (0.2392ms)
+✔ computes higher ring and scanline speeds during processing (0.8198ms)
+✔ amplifies pulse with live audio during speaking state (0.1641ms)
+✔ expands layer spread in exploded hologram mode (0.1223ms)
+✔ computes bounded 3D orbital coordinates for agent nodes (0.2637ms)
+✔ routes hardware performance queries to system agent (4.4674ms)
+✔ routes natural file searches to file agent (3.4917ms)
+✔ routes Google search requests to browser agent (1.2698ms)
+✔ routes media playback and volume commands to media_control (0.3706ms)
+✔ enforces confirmation gate on destructive file commands and closing apps (0.1578ms)
+✔ requires confirmation before scheduling new calendar meetings (0.6279ms)
+✔ extracts command cleanly with punctuated wake word or direct mic mode (0.6076ms)
+✔ detects voice barge-in interruption phrases without false positives (0.7303ms)
+✔ parses natural file search intent with folder, category, and relative date hints (1.8882ms)
+✔ sanitizes local-first AI model settings and rejects unsafe ollamaModel characters (0.8955ms)
+✔ evaluates safe math and percentage expressions without eval (1.2593ms)
+✔ identifies knowledge questions for keyless live web lookup while skipping greetings (0.6046ms)
+✔ downsampleTo16kPcm & encodeMonoWav16kBase64 produce valid 16kHz PCM16 RIFF WAV (3.8453ms)
+✔ mergeFloat32Chunks & computeRmsLevel compute accurate audio levels (0.2994ms)
+✔ selectPreferredSpeechVoice matches language and gender preferences (0.3868ms)
+✔ classifyMicrophoneError maps DOMException errors to actionable guidance (0.3045ms)
+✔ intentEngine routes Windows apps & websites accurately while keeping mobile commands intact (5.9085ms)
+✔ sanitizeSettingsPatch preserves and clamps audioInputDeviceId safely (0.7395ms)
+✔ registerPreloadBridge exposes complete FridayDesktopBridge channels synchronously (0.8749ms)
+✔ speech epoch cancellation invalidates stale playback callbacks immediately (0.8023ms)
+✔ interruption commands cover stop, cancel, quiet, mute, and polite variants (0.8754ms)
+✔ submission deduplication suppresses rapid double-submit and allows distinct commands (0.1935ms)
+✔ anti-echo suppression rejects self-heard TTS while allowing unrelated commands or idle input (0.2369ms)
+✔ post-interrupt state returns to listening only when continuous mode is enabled (4.5518ms)
+✔ temperature conversion and formatting handle Celsius and Fahrenheit cleanly (0.7033ms)
+✔ compass bearing and UV index helpers produce accurate labels (0.2388ms)
+✔ parseWeatherQuery extracts city, timeframe, and weather metric accurately (1.7426ms)
+✔ buildWeatherChatSummary renders current, tomorrow, 7-day, and alert views in requested unit (0.7228ms)
+ℹ tests 49
+ℹ suites 0
+ℹ pass 49
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 265.3492
+PS D:\Friday-main> npm.cmd run lint
+
+> friday-command-center@1.1.0 lint
+> tsc --noEmit
+
+PS D:\Friday-main> npm.cmd run build
+
+> friday-command-center@1.1.0 build
+> vite build
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vite.config.ts:22:40). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+vite v8.3.8 building client environment for production...
+✓ 1685 modules transformed.
+computing gzip size...
+dist/index.html                     1.52 kB │ gzip:   0.69 kB
+dist/assets/index-TIfIDMm5.css     82.36 kB │ gzip:  13.01 kB
+dist/assets/index-OoVtaFyz.js   1,142.19 kB │ gzip: 299.77 kB
+
+✓ built in 804ms
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+PS D:\Friday-main> npm.cmd run electron:compile
+
+> friday-command-center@1.1.0 electron:compile
+> tsc -p tsconfig.electron.json && esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/electron/preload.cjs && esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist-electron/server.mjs
+
+
+  dist-electron\electron\preload.cjs  3.5kb
+
+Done in 3ms
+
+  dist-electron\server.mjs  270.3kb
+
+Done in 12ms
+PS D:\Friday-main> cd D:\Friday-main
+PS D:\Friday-main> git add .
+warning: in the working copy of 'dist-electron/electron/main.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'dist-electron/electron/preload.cjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'dist-electron/electron/preload.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'dist-electron/electron/windowsAutomation.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'dist-electron/server.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'dist-electron/src/core/types.js', LF will be replaced by CRLF the next time Git touches it
+PS D:\Friday-main> git commit -m "feat: sync Friday Cognitive Engine and Workflow Orchestrator"
+On branch main
+Your branch is up to date with 'origin/main'.
+
+nothing to commit, working tree clean
+PS D:\Friday-main> git push origin main
+Everything up-to-date
+PS D:\Friday-main> cd D:\Friday-main
+PS D:\Friday-main> npm.cmd install
+
+up to date, audited 485 packages in 5s
+
+80 packages are looking for funding
+  run `npm fund` for details
+
+6 moderate severity vulnerabilities
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+npm warn install-scripts 3 packages have install scripts not yet covered by allowScripts:
+npm warn install-scripts   electron-winstaller@5.4.0 (install: node ./script/select-7z-arch.js)
+npm warn install-scripts   esbuild@0.28.2 (postinstall: node install.js)
+npm warn install-scripts   protobufjs@7.6.6 (postinstall: node scripts/postinstall)
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+PS D:\Friday-main> npm.cmd run build
+
+> friday-command-center@1.1.0 build
+> vite build
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vite.config.ts:22:40). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+vite v8.3.8 building client environment for production...
+✓ 1685 modules transformed.
+computing gzip size...
+dist/index.html                     1.52 kB │ gzip:   0.69 kB
+dist/assets/index-TIfIDMm5.css     82.36 kB │ gzip:  13.01 kB
+dist/assets/index-OoVtaFyz.js   1,142.19 kB │ gzip: 299.77 kB
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 659ms
+PS D:\Friday-main> npm.cmd run electron:compile
+
+> friday-command-center@1.1.0 electron:compile
+> tsc -p tsconfig.electron.json && esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/electron/preload.cjs && esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist-electron/server.mjs
+
+
+  dist-electron\electron\preload.cjs  3.5kb
+
+Done in 3ms
+
+  dist-electron\server.mjs  270.3kb
+
+Done in 13ms
+PS D:\Friday-main> npx.cmd electron .
+
+[24872:1125/161931.558:ERROR:net\disk_cache\cache_util_win.cc:25] Unable to move the cache: Access is denied. (0x5)
+[24872:1125/161931.563:ERROR:net\disk_cache\disk_cache.cc:293] Unable to create cache
+[24872:1125/161931.564:ERROR:gpu\ipc\host\gpu_disk_cache.cc:737] Gpu Cache Creation failed: -2
+PS D:\Friday-main> npm.cmd run dev
+
+> friday-command-center@1.1.0 dev
+> tsx server.ts
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vite.config.ts:22:40). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+node:events:505
+    throw er; // Unhandled 'error' event
+    ^
+
+Error: listen EADDRINUSE: address already in use 0.0.0.0:3000
+    at Server.setupListenHandle [as _listen2] (node:net:2390:16)
+    at listenInCluster (node:net:2499:12)
+    at node:net:2728:7
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:2478:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '0.0.0.0',
+  port: 3000
+}
+
+Node.js v26.13.1
+PS D:\Friday-main> 

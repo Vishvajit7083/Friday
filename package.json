@@ -16,7 +16,6 @@
     "android:sync": "node scripts/sync-android-assets.mjs"
   },
   "dependencies": {
-    "@google/genai": "^3.6.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/pdf-parse": "^1.1.5",
     "@types/three": "^0.187.0",

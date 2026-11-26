@@ -1,69 +1,48 @@
 # F.R.I.D.A.Y. — System Architecture (`ARCHITECTURE.md`)
 
 ## 1. Design Philosophy
-F.R.I.D.A.Y. (**Fully Responsive Intelligent Digital Assistant for You**) runs as a **local-first, paid-API-free** Windows desktop companion built with Electron, React 19, TypeScript, Express, and Three.js.
+F.R.I.D.A.Y. (**Fully Responsive Intelligent Digital Assistant for You**) runs as a **self-owned, offline-first, zero-external-API** Windows desktop companion built with Electron, React 19, TypeScript, Express, built-in SQLite (`node:sqlite`), and Three.js.
 
-- **UI Design Lock**: All desktop/web upgrades bind exclusively to the approved Command Center HUD (`CommandWorkspace`, `TopHudBar`, `LeftSidebar`, `FridayCore3D`, `LiveWallpaper`, `BottomQuickActions`).
-- **Zero Mandatory Cloud API Key**: Every core workflow—conversation, system telemetry, file intelligence, app launching, media playback, calendar/memory, voice I/O, and live web research—operates without `GEMINI_API_KEY`.
-
----
-
-## 2. AI & Execution Pipeline
-
-### Inference Routing (`server/aiService.ts` + `server/localAiService.ts`)
-1. **`local-auto` (Default — Zero External Installs Required)**:
-   - Runs F.R.I.D.A.Y.'s **Built-In Local Core + Live Web Knowledge** engine: executes hardware/app/file/media/calendar/memory tools locally, evaluates safe arithmetic offline, and automatically answers factual/general questions via free DuckDuckGo + Wikipedia summary lookup (`searchFreeWeb`).
-   - Also auto-detects optional external local LLM servers if running: any OpenAI-compatible runtime (`LOCAL_AI_BASE_URL` for LM Studio / `llama.cpp` / Jan) or Ollama (`127.0.0.1:11434`).
-2. **`local-core`**: Strictly built-in Local Core + Live Web (zero external LLM calls).
-3. **`ollama`**: External local LLM mode (OpenAI-compatible `LOCAL_AI_BASE_URL` or Ollama).
-4. **Optional Gemini (`gemini-*`)**: Used *only* if `GEMINI_API_KEY` is explicitly configured in `.env`.
-
-### Streaming & Latency Telemetry (`POST /api/assistant/stream`)
-- Uses Server-Sent Events (`text/event-stream`):
-  - `event: meta` -> route intent, active agents, latency breakdown so far
-  - `event: delta` -> token-by-token text chunks
-  - `event: done` -> final structured `AssistantCommandResponse` + `PipelineTimings`
-- Supports abort cancellation (`AbortController` wired to `req.on('close')`).
-- Per-request timings recorded in `GET /api/diagnostics/latency`:
-  - `intentMs`: intent classification & routing
-  - `toolMs`: local tool execution / OS query
-  - `firstTokenMs`: time to first streamed response byte
-  - `modelMs`: total LLM streaming time
-  - `totalMs`: end-to-end server duration
+- **UI Design Lock**: All desktop/web upgrades preserve the Command Center HUD (`CommandWorkspace`, `TopHudBar`, `LeftSidebar`, `FridayCore3D`, `LiveWallpaper`, `BottomQuickActions`).
+- **Zero External AI APIs & Zero Mandatory Keys**: Conversation, Hinglish NLP, contextual memory, intent teaching, hardware telemetry, file intelligence, app launching, media playback, calendar/reminders, and live public web lookup run without Ollama, OpenAI, Gemini, Claude, Groq, or paid API keys.
 
 ---
 
-## 3. Voice & Barge-In Loop (`src/App.tsx`, `src/core/intentEngine.ts`)
-- **Speech Input**:
-  - Live Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`) with `interimResults` + wake-word filtering (`extractVoiceCommand`).
-  - Audio recorder fallback (`/api/voice/transcribe`) returns `{ localFallback: true }` gracefully if no cloud key is present so UI remains error-free.
-- **Barge-In Interruption**:
-  - `isInterruptionCommand()` intercepts `"stop"`, `"Friday, stop talking"`, `"quiet"`, `"cancel"`, and `"shut up"` while speaking or streaming, immediately cancelling `window.speechSynthesis` and aborting active SSE streams.
-- **Sentence-Chunked Speech Output**:
-  - During SSE `delta` streaming, completed sentences are pushed into `localSpeechQueue` and spoken immediately via `window.speechSynthesis` without waiting for full generation or cloud TTS round-trips.
+## 2. F.R.I.D.A.Y. Cognitive Engine (`src/core/cognitive/` + `server/cognitiveRuntime.ts`)
+
+Every user turn executes through a 15-module coordinated brain:
+1. **Language Understanding Engine** (`languageUnderstanding.ts`) — Levenshtein typo repair, Hinglish ASR repair, date/app/folder/teach-rule entity extraction.
+2. **Hinglish NLP Engine** (`hinglishNlp.ts` + `vocabularyData.ts`) — English / Hindi Devanagari / Hinglish detection, lexicon canonicalization, and Hinglish interruption detection.
+3. **Contextual Conversation Engine** (`contextEngine.ts`) — multi-turn topic tracking, demonstrative resolution (`"isko"`, `"is folder"`, `"doosra wala"`, `"last mein"`), and pause/resume task state.
+4. **6-Layer Memory Engine** (`server/cognitiveDb.ts` + `server/schema.sql`) — SQLite persistence for `working`, `short_term`, `long_term`, `episodic`, `semantic`, and `procedural` layers, plus JSON export/import and automatic one-time migration from `.friday-data/friday-db.json`.
+5. **Knowledge Engine** (`server/knowledgeEngine.ts`) — indexes permitted workspace files, user notes, user-added facts, and FAQs with explicit provenance (`retrieved | user_provided | inferred | unknown`).
+6. **Learning Engine (Levels 1–6)** (`learningPipeline.ts`) — Level 1 vocabulary learning, Level 2 correction mapping, Level 3 preference adaptation, Level 4 repeated command suggestions, Level 5 opt-in JSONL dataset export, and Level 6 local BPE tokenizer trainer + train/eval split + pluggable `FutureLanguageCoreProvider`.
+7. **Dynamic Intent Engine** (`intentRegistry.ts`) — teaches custom rules (`"when I say X, do Y"` / `"jab main X bolu, toh Y kar"`).
+8. **Task Planning Engine** (`taskPlanner.ts`) — structured multi-step `StructuredTaskPlan` with dependencies and confirmation gating on destructive/system-modifying actions.
+9. **Decision Engine** (`taskPlanner.ts`) — deterministic routing between local tools, structured task plans, knowledge answers, live online research, and honest offline fallbacks.
+10. **Response Generation Engine** (`responseGenerator.ts`) — `LocalCognitiveModelProvider` + simple-Hindi explanation translator + `FutureLanguageCoreProvider` adapter.
+11. **Voice Interaction Engine** (`server/speechProvider.ts` + `src/App.tsx`) — Windows `System.Speech`, browser `SpeechSynthesis`/`SpeechRecognition`, honest Windows Hindi/Hinglish Speech limitations reporting, and English/Hinglish barge-in interruption (`"ruk ja"`, `"chup"`, `"bas"`, `"stop"`).
+12. **Tool Execution Engine** (`server/cognitiveRuntime.ts`) — OS apps, permitted folders/files, weather, reminders, media keys.
+13. **Web Research Engine** (`server/internetResearchService.ts`) — SSRF-hardened DuckDuckGo & Wikipedia public search when online.
+14. **Personality Engine** (`personalityEngine.ts`) — natural, varied phrasing without robotic filler.
+15. **Cognitive Orchestrator** (`cognitiveOrchestrator.ts`) — coordinates all modules and logs structured execution steps & latency timings.
+
+See `COGNITIVE_ARCHITECTURE_AND_ROADMAP.md` for full architecture diagrams and the 5-phase `F.R.I.D.A.Y. LANGUAGE CORE` roadmap.
 
 ---
 
-## 4. Internet Research & SSRF Protection (`server/internetResearchService.ts`)
-- **Free Search (`searchFreeWeb`)**: Queries DuckDuckGo HTML endpoint and Wikipedia OpenSearch API directly with clean result parsing (`VerifiedSource[]`).
-- **Safe Page Extraction (`fetchPublicWebPage`)**:
-  - Enforces `http:`/`https:` scheme only.
-  - Blocks `localhost`, `.local`, private IPv4/IPv6 ranges (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `fc00::/7`, `fe80::/10`), and resolves hostnames via `dns.lookup` before fetching.
-  - Extracts clean text paragraphs + extractive summary (`buildExtractiveSummary`).
+## 3. REST & SSE Endpoints (`server.ts`)
+- `POST /api/assistant/stream` & `POST /api/assistant/command` — executes fast local deterministic tools + `runCognitiveTurn` via SSE or JSON.
+- `POST /api/assistant/confirm` — completes gated confirmations including Cognitive `StructuredTaskPlan` steps (`confirmedAction: true`).
+- `GET /api/cognitive/status` & `POST /api/cognitive/turn` — inspect orchestrator status/context/plans or invoke turns directly.
+- `GET/POST/PATCH/DELETE /api/cognitive/memory`, `/api/cognitive/memory/export`, `/api/cognitive/memory/import` — manage 6-layer SQLite memory.
+- `GET/POST/DELETE /api/cognitive/intents` — inspect/teach/remove dynamic commands.
+- `GET/POST /api/cognitive/knowledge` — search, re-index, or add grounded facts.
+- `GET/POST /api/cognitive/learning`, `GET /api/cognitive/learning/dataset.jsonl` — manage L1–L6 learning, Level 4 suggestions, opt-in dataset JSONL export, and Level 6 tokenizer training.
 
 ---
 
-## 5. Desktop, File & Media Architecture
-- **Permitted File Intelligence (`server/fileService.ts`, `src/core/fileIndex.ts`)**:
-  - Auto-seeds `Downloads`, `Desktop`, `Documents`, `Pictures`, `Videos`, and `Music` (filtered to existing directories, plus workspace fallback).
-  - 30-second in-memory file index cache invalidated on folder changes (`invalidateFileIndexCache`).
-  - Natural-language parser handles categories (`photo`, `video`, `music`, `excel`, `pdf`), folders, and relative dates (`today`, `yesterday`, `last week`), returning `matchReason`.
-  - Streams media/audio previews safely via `GET /api/files/stream` and opens files natively via `POST /api/files/open`.
-- **Windows Automation (`electron/windowsAutomation.ts`, `server/systemService.ts`)**:
-  - 60-second StartApp/executable cache (`discoverWindowsStartApps` + `where`/`which`).
-  - Running window enumeration (`GET /api/apps/windows`) + safe actions (`focus`, `minimize`, `maximize`, `close` via confirmation gate).
-  - Win32 media/volume key synthesis (`sendWindowsMediaKey`) + local music/video matching (`server/mediaService.ts`).
-- **Electron Desktop Shell (`electron/main.ts`, `electron/preload.ts`)**:
-  - Compiles cleanly to `dist-electron/` via `tsconfig.electron.json`.
-  - Auto-spawns embedded Node server in packaged builds when `localhost:3000` is not yet listening and terminates it on quit.
-  - Registers `session.defaultSession.setDisplayMediaRequestHandler` with `desktopCapturer`, `ESC` hide-to-desktop, floating assistant mode, tray icon/menu, `will-navigate` security guard, and `render-process-gone` auto-reload recovery.
+## 4. Internet Research, Security & Electron Desktop Shell
+- **SSRF Protection** (`server/internetResearchService.ts`): Enforces `http:`/`https:`, blocks private/loopback IPv4/IPv6 ranges, resolves hostnames via `dns.lookup` before fetching.
+- **Permitted File Sandboxing** (`server/fileService.ts`, `electron/windowsAutomation.ts`): Zero arbitrary shell execution (`shell: false`), strict `isPathPermitted` checks, and explicit confirmation gates before destructive operations or window closing.
+- **Electron Desktop Shell** (`electron/main.ts`, `electron/preload.ts`): Compiles to `dist-electron/`, bundles `node:sqlite`, manages embedded server lifecycle, screen capture consent, tray icon, and global shortcuts.

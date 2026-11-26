@@ -1,6 +1,8 @@
 export type VoiceState =
   | 'standby'
+  | 'wake_word_detected'
   | 'listening'
+  | 'transcribing'
   | 'processing'
   | 'searching'
   | 'executing'
@@ -300,12 +302,10 @@ export interface WallpaperSettings {
 }
 
 export type AIModelPreference =
+  | 'friday-cognitive'
+  | 'friday-language-core'
   | 'local-auto'
-  | 'ollama'
-  | 'local-core'
-  | 'gemini-4-hydrogen'
-  | 'gemini-4-neon'
-  | 'gemini-3.1-flash-lite';
+  | 'local-core';
 
 export interface NoteItem {
   id: string;
@@ -340,6 +340,8 @@ export interface AssistantSettings {
   wakeWord: string;
   aiModel: AIModelPreference;
   ollamaModel?: string;
+  responseLanguagePreference?: 'auto' | 'english' | 'hinglish' | 'hindi_simple';
+  optInDatasetCollection?: boolean;
   voiceName: 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
   voiceGender: 'female' | 'male';
   speakingSpeed: number;
@@ -396,15 +398,18 @@ export interface ApiConnectionStatus {
   checking: boolean;
   provider: string;
   model: string;
-  engine?: 'ollama' | 'local-openai' | 'local-core' | 'gemini';
+  engine?: 'friday-cognitive' | 'friday-language-core' | 'local-core';
   freeWebReady?: boolean;
   requiresPaidKey?: boolean;
   latencyMs?: number;
   error?: string;
-  optionalProviders?: {
-    geminiConfigured: boolean;
-    ollamaConfigured: boolean;
-    localOpenAiConfigured: boolean;
+  cognitiveStats?: {
+    memoryCount: number;
+    customIntentCount: number;
+    lexiconCount: number;
+    knowledgeChunks: number;
+    datasetSamples: number;
+    languageCoreReady: boolean;
   };
 }
 
@@ -530,6 +535,8 @@ export interface FridayDesktopBridge {
   launchApp?: (target: string) => Promise<DesktopAppLaunchResult>;
   openWebsite?: (urlOrAlias: string) => Promise<{ opened: boolean; url?: string; message: string }>;
   openFolder?: (folderNameOrPath: string) => Promise<{ opened: boolean; path?: string; message: string }>;
+  getActiveWindow?: () => Promise<{ ok: boolean; pid?: number; processName?: string; title?: string; detail: string }>;
+  inspectScreenUi?: (processFilter?: string) => Promise<{ ok: boolean; text?: string; detail: string }>;
   getWindowsDiagnostics?: () => Promise<Record<string, unknown>>;
   onStopSpeech?: (callback: () => void) => () => void;
   isDesktopShell: boolean;

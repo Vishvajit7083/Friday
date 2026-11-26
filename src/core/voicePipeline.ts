@@ -210,3 +210,122 @@ export function classifyMicrophoneError(err: unknown): {
     message: `Microphone capture failed: ${msg}`,
   };
 }
+
+export function cleanVoiceTranscript(raw: string): string {
+  if (!raw) return '';
+  let cleaned = raw
+    .replace(/\[(?:blank_audio|silence|noise|inaudible|music|applause)[^\]]*\]/gi, ' ')
+    .replace(/\((?:inaudible|silence|noise|background\s+noise)\)/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Strip common ASR hesitation fillers only at utterance boundaries
+  cleaned = cleaned
+    .replace(/^(?:uh+|um+|erm+|hmm+|ah+|oh+)\b[\s,.:;-]*/i, '')
+    .replace(/[\s,.:;-]*\b(?:uh+|um+|erm+|hmm+)$/i, '')
+    .trim();
+
+  // Collapse accidental immediate duplicate words (e.g. "open open chrome" -> "open chrome")
+  cleaned = cleaned.replace(/\b([a-z]{2,})\s+\1\b/gi, '$1');
+
+  // Trim stray edge punctuation while preserving trailing question mark
+  cleaned = cleaned
+    .replace(/^[\s,.:;!?-]+/, '')
+    .replace(/[\s,.;:-]+$/, '')
+    .trim();
+
+  return cleaned;
+}
+
+export function isNoiseOrEmptyTranscript(cleaned: string): boolean {
+  const trimmed = cleaned.trim();
+  if (!trimmed) return true;
+  if (/^[\W_]+$/.test(trimmed)) return true;
+  if (trimmed.length <= 1) return true;
+
+  const lower = trimmed.toLowerCase();
+  if (
+    /^(?:uh+|um+|hm+|hmm+|er+|erm+|ah+|oh+|mhm|uh-huh|noise|silence|blank\s+audio|thank\s+you\s+for\s+watching|thanks\s+for\s+watching)$/i.test(
+      lower
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function evaluateAudioCaptureSpeech(
+  samples: Float32Array,
+  sampleRate: number
+): { hasSpeech: boolean; durationMs: number; rms: number; peak: number; reason?: string } {
+  const safeRate = Number.isFinite(sampleRate) && sampleRate > 0 ? sampleRate : 16000;
+  const durationMs = Math.round((samples.length / safeRate) * 1000);
+  if (!samples.length || samples.length < Math.floor(safeRate * 0.22)) {
+    return {
+      hasSpeech: false,
+      durationMs,
+      rms: 0,
+      peak: 0,
+      reason: 'No audio captured — speak clearly for 1–2 seconds and try again.',
+    };
+  }
+
+  let sumSq = 0;
+  let peak = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    const val = samples[i];
+    const abs = val < 0 ? -val : val;
+    if (abs > peak) peak = abs;
+    sumSq += val * val;
+  }
+  const rms = Math.sqrt(sumSq / samples.length);
+
+  if (rms < 0.0055 && peak < 0.028) {
+    return {
+      hasSpeech: false,
+      durationMs,
+      rms,
+      peak,
+      reason: 'Microphone captured only silence or very faint ambient noise — speak closer to the mic or verify input device.',
+    };
+  }
+
+  return { hasSpeech: true, durationMs, rms, peak };
+}
+
+export function evaluateWavPcm16Speech(wavBytes: Uint8Array): {
+  hasSpeech: boolean;
+  rms: number;
+  peak: number;
+  durationMs: number;
+} {
+  if (!wavBytes || wavBytes.length < 48) {
+    return { hasSpeech: false, rms: 0, peak: 0, durationMs: 0 };
+  }
+  const view = new DataView(wavBytes.buffer, wavBytes.byteOffset, wavBytes.byteLength);
+  const sampleRate = view.getUint32(24, true) || 16000;
+  const dataOffset = 44;
+  const sampleCount = Math.floor((wavBytes.length - dataOffset) / 2);
+  if (sampleCount < Math.floor(sampleRate * 0.22)) {
+    return { hasSpeech: false, rms: 0, peak: 0, durationMs: Math.round((sampleCount / sampleRate) * 1000) };
+  }
+
+  let sumSq = 0;
+  let peak = 0;
+  for (let i = 0; i < sampleCount; i += 1) {
+    const sample = view.getInt16(dataOffset + i * 2, true) / 32768;
+    const abs = sample < 0 ? -sample : sample;
+    if (abs > peak) peak = abs;
+    sumSq += sample * sample;
+  }
+  const rms = Math.sqrt(sumSq / sampleCount);
+  const durationMs = Math.round((sampleCount / sampleRate) * 1000);
+  return {
+    hasSpeech: rms >= 0.0055 || peak >= 0.028,
+    rms,
+    peak,
+    durationMs,
+  };
+}
+

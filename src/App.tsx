@@ -119,8 +119,9 @@ const DEFAULT_SETTINGS: AssistantSettings = {
   assistantName: 'F.R.I.D.A.Y.',
   userName: 'Siddesh',
   wakeWord: 'Hey Friday',
-  aiModel: 'local-auto',
-  ollamaModel: '',
+  aiModel: 'friday-cognitive',
+  responseLanguagePreference: 'auto',
+  optInDatasetCollection: false,
   voiceName: 'Kore',
   voiceGender: 'female',
   speakingSpeed: 1.0,
@@ -203,9 +204,9 @@ export default function App() {
   const [apiStatus, setApiStatus] = useState<ApiConnectionStatus>({
     connected: true,
     checking: true,
-    provider: 'F.R.I.D.A.Y. Local Core + Free Web',
-    model: 'local-auto',
-    engine: 'local-core',
+    provider: 'F.R.I.D.A.Y. Cognitive Engine',
+    model: 'cognitive-v1',
+    engine: 'friday-cognitive',
     freeWebReady: true,
     requiresPaidKey: false,
   });
@@ -318,22 +319,22 @@ export default function App() {
       setApiStatus({
         connected: Boolean(data.connected),
         checking: false,
-        provider: data.provider || 'F.R.I.D.A.Y. Local Core + Free Web',
-        model: data.model || 'local-core-v2',
-        engine: data.engine || 'local-core',
+        provider: data.provider || 'F.R.I.D.A.Y. Cognitive Engine',
+        model: data.model || 'cognitive-v1',
+        engine: data.engine || 'friday-cognitive',
         freeWebReady: data.freeWebReady ?? true,
-        requiresPaidKey: data.requiresPaidKey ?? false,
+        requiresPaidKey: false,
         latencyMs: data.latencyMs,
         error: data.error,
-        optionalProviders: data.optionalProviders,
+        cognitiveStats: data.cognitiveStats,
       });
     } catch {
       backendAvailableRef.current = false;
       setApiStatus({
         connected: true,
         checking: false,
-        provider: 'F.R.I.D.A.Y. Standalone Local Core',
-        model: 'offline-local-v2',
+        provider: 'F.R.I.D.A.Y. Standalone Cognitive Core',
+        model: 'cognitive-offline',
         engine: 'local-core',
         freeWebReady: typeof navigator !== 'undefined' ? navigator.onLine : false,
         requiresPaidKey: false,
@@ -731,11 +732,8 @@ export default function App() {
         return;
       }
 
-      // Fast path: instant local Device/Browser SpeechSynthesis or Windows SAPI unless Gemini TTS is active
-      if (
-        apiStatus.engine !== 'gemini' &&
-        (typeof window.speechSynthesis !== 'undefined' || Boolean(window.fridayDesktop?.speakWindowsTts))
-      ) {
+      // Fast path: instant local Device/Browser SpeechSynthesis or Windows SAPI
+      if (typeof window.speechSynthesis !== 'undefined' || Boolean(window.fridayDesktop?.speakWindowsTts)) {
         const sentences = cleanText.match(/[^.!?\n]+[.!?\n]*/g) ?? [cleanText];
         for (const s of sentences) {
           if (s.trim()) speechQueueRef.current.push(s.trim());
@@ -1040,7 +1038,7 @@ export default function App() {
   );
 
   const handleConfirmAction = useCallback(
-    async (actionType: string, summary: string, approved: boolean) => {
+    async (actionType: string, summary: string, approved: boolean, payload?: Record<string, unknown>) => {
       setVoiceState('executing');
       if (isAndroidHost() || !backendAvailableRef.current) {
         const res = executeClientConfirmAction(actionType, summary, approved, snapshotLocalState());
@@ -1054,7 +1052,7 @@ export default function App() {
         const res = await fetch('/api/assistant/confirm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ actionType, summary, approved }),
+          body: JSON.stringify({ actionType, summary, approved, payload }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Confirmation failed');
@@ -1631,7 +1629,7 @@ export default function App() {
         if (res.ok) {
           const updated = await res.json();
           setSettings({ speakingPitch: 1.0, ...updated });
-          if (patch.aiModel !== undefined || patch.ollamaModel !== undefined) {
+          if (patch.aiModel !== undefined || patch.responseLanguagePreference !== undefined) {
             void checkApiConnection(true);
           }
         }

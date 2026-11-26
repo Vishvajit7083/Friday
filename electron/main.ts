@@ -6,8 +6,11 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { spawn, type ChildProcess } from 'child_process';
 import {
+  captureAndOcrScreenWindows,
+  detectActiveWindow,
   getWindowsSpeechCapabilities,
   launchWindowsAppVerified,
+  listUiElementsWindows,
   openWindowsFolder,
   openWindowsWebsite,
   recognizeWindowsSpeechFromWav,
@@ -480,6 +483,17 @@ export async function bootstrapElectronShell() {
 
     ipcMain.handle('friday:open-folder', async (_evt: unknown, folderNameOrPath: unknown) => {
       return openWindowsFolder(String(folderNameOrPath || ''));
+    });
+
+    ipcMain.handle('friday:active-window', async () => {
+      return detectActiveWindow();
+    });
+
+    ipcMain.handle('friday:inspect-screen-ui', async (_evt: unknown, processFilter: unknown) => {
+      if (processFilter) {
+        return listUiElementsWindows(String(processFilter));
+      }
+      return captureAndOcrScreenWindows();
     });
 
     ipcMain.handle('friday:windows-diagnostics', async () => {

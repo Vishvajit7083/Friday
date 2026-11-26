@@ -9,6 +9,7 @@ import {
 import { tryTranslateCommand } from './translator';
 import { tryConvertUnits } from './unitConverter';
 import { buildWeatherChatSummary, degreesToCompass, parseWeatherQuery } from './weatherUtils';
+import { lookupBuiltinKnowledge } from './cognitive/builtinKnowledge';
 import type {
   ActionLogEntry,
   AgentId,
@@ -23,6 +24,24 @@ import type {
   SystemTelemetry,
   WeatherData,
 } from './types';
+import { CognitiveOrchestrator, InMemoryCognitivePorts } from './cognitive';
+
+const clientCognitivePorts = new InMemoryCognitivePorts();
+let clientOrchestrator: CognitiveOrchestrator | null = null;
+function getClientOrchestrator(): CognitiveOrchestrator {
+  if (!clientOrchestrator) {
+    clientOrchestrator = new CognitiveOrchestrator({
+      memoryStore: clientCognitivePorts,
+      knowledgeEngine: clientCognitivePorts,
+      learningStore: clientCognitivePorts,
+      toolAdapter: {
+        isOnline: () => (typeof navigator !== 'undefined' ? navigator.onLine : false),
+      },
+      sessionId: 'client-offline',
+    });
+  }
+  return clientOrchestrator;
+}
 
 export interface LocalClientState {
   settings: AssistantSettings;
@@ -587,12 +606,14 @@ function handleAndroidPhoneControl(
     }
   }
 
-  // Direct App Launch (YouTube, Chrome, Instagram, Contacts, Dialer, etc.)
-  const appMatch = command.match(/(?:open|launch|start)\s+([a-zA-Z0-9 ._-]+)/i);
+  // Direct App Launch (YouTube, Chrome, Instagram, Contacts, Dialer, Hinglish "<app> kholo", etc.)
+  const appMatch =
+    command.match(/(?:open|launch|start)\s+([a-zA-Z0-9 ._-]+)/i) ||
+    command.match(/\b([a-zA-Z0-9 ._-]+?)\s+(?:ko\s+)?(?:open\s+karo?|kholo|khol\s+do|chalu\s+karo?|start\s+karo?)\b/i);
   if (appMatch) {
     const appTarget = appMatch[1]
       .trim()
-      .replace(/^(?:the|my)\s+/i, '')
+      .replace(/^(?:the|my|hey\s+friday|friday)\s+/i, '')
       .replace(/\s+(?:app|application)$/i, '')
       .trim();
     if (bridge?.openApp && appTarget) {
@@ -603,7 +624,7 @@ function handleAndroidPhoneControl(
     }
     return {
       handled: true,
-      reply: `Prepared launch request for "${appTarget}". When running inside the Android APK, F.R.I.D.A.Y. opens "${appTarget}" natively via Android Intent.`,
+      reply: `Prepared launch request for "${appTarget}". When running inside the desktop or Android host, F.R.I.D.A.Y. launches "${appTarget}" natively.`,
     };
   }
 
@@ -855,14 +876,14 @@ export async function executeClientOfflineCommand(
     const now = new Date();
     reply = `It is ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} on ${now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}.`;
   }
-  if (!reply && /^(hi|hello|hey|good morning|good afternoon|good evening|namaste|namaskar)\b/i.test(lower)) {
-    reply = `Hello ${draftState.settings.userName}. F.R.I.D.A.Y. is ready offline and on Android—ask me to calculate, convert units, translate English/Hindi/Marathi, save notes or reminders, open apps, or check battery status.`;
+  if (!reply && /^(h+i+|h+e+l+o+|h+e+y+|hlo+|good\s+(?:morning|afternoon|evening)|namaste|namaskar)\b/i.test(lower)) {
+    reply = `Hello ${draftState.settings.userName}. I'm ready — ask me to calculate, convert units, translate English/Hindi/Marathi, save notes or reminders, open apps, or explain a topic.`;
   }
   if (!reply && /\b(who are you|what can you do|help)\b/i.test(lower)) {
     reply = `I am F.R.I.D.A.Y., your offline-capable personal AI assistant. I support math calculations, unit conversions, English/Hindi/Marathi translation, notes, to-do lists, reminders, alarms, device controls (YouTube, Camera, Wi-Fi, Bluetooth, Flashlight, Battery), and live public Wikipedia search when online.`;
   }
 
-  // 10. Weather or Live Public Knowledge Search (only if online)
+  // 10. Weather, Curated Offline Knowledge, or Live Public Knowledge Search
   const parsedWeather = parseWeatherQuery(command);
   if (!reply && (parsedWeather.isWeather || parsed.category === 'weather_query')) {
     const targetLocation = parsedWeather.location || draftState.settings.weatherLocation;
@@ -875,6 +896,13 @@ export async function executeClientOfflineCommand(
       );
     } else {
       reply = `Weather data for "${targetLocation}" could not be fetched (offline or unreachable).`;
+    }
+  }
+
+  if (!reply) {
+    const kbHit = lookupBuiltinKnowledge(command);
+    if (kbHit) {
+      reply = kbHit.summary;
     }
   }
 
@@ -900,7 +928,14 @@ export async function executeClientOfflineCommand(
   }
 
   if (!reply) {
-    reply = `Processed "${command}" in F.R.I.D.A.Y. Local Core. Try math ("calculate 250 multiplied by 35"), units ("10 km to miles"), translations ("translate hello into Marathi"), reminders ("remind me to study tomorrow"), or phone actions ("open youtube").`;
+    const cog = await getClientOrchestrator().processTurn({
+      rawText: command,
+      userName: draftState.settings.userName,
+      assistantName: draftState.settings.assistantName,
+      defaultLocation: draftState.settings.weatherLocation,
+      online: typeof navigator !== 'undefined' ? navigator.onLine : false,
+    });
+    reply = cog.reply;
   }
 
   const totalMs = Math.max(1, Date.now() - started);

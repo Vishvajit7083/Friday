@@ -24,7 +24,9 @@ const DEFAULT_HOLOGRAM: HologramSettings = {
 
 const STATE_COLOR_MAP: Record<VoiceState, number> = {
   standby: 0xc084fc,
+  wake_word_detected: 0xf472b6,
   listening: 0xd946ef,
+  transcribing: 0xa78bfa,
   processing: 0xa855f7,
   searching: 0xe879f9,
   executing: 0xc026d3,

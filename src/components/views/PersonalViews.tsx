@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Circle,
   CloudSun,
+  Database,
   Download,
   History,
   Image as ImageIcon,
@@ -19,6 +20,7 @@ import {
   Shield,
   Sparkles,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import type {
@@ -822,7 +824,269 @@ export function MemoryView({
           ))
         )}
       </div>
+
+      {/* 6-Layer SQLite Cognitive Memory Inspector */}
+      <CognitiveMemoryInspector />
     </div>
+  );
+}
+
+interface CognitiveMemoryRow {
+  id: string;
+  layer: 'working' | 'short_term' | 'long_term' | 'episodic' | 'semantic' | 'procedural';
+  category: string;
+  key: string;
+  value: string;
+  importance: number;
+  confidence: number;
+  source: string;
+  accessCount: number;
+  updatedAt: string;
+}
+
+function CognitiveMemoryInspector() {
+  const layers: Array<'all' | CognitiveMemoryRow['layer']> = [
+    'all',
+    'working',
+    'short_term',
+    'long_term',
+    'episodic',
+    'semantic',
+    'procedural',
+  ];
+  const [selectedLayer, setSelectedLayer] = useState<'all' | CognitiveMemoryRow['layer']>('all');
+  const [query, setQuery] = useState('');
+  const [rows, setRows] = useState<CognitiveMemoryRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [newLayer, setNewLayer] = useState<CognitiveMemoryRow['layer']>('long_term');
+  const [newKey, setNewKey] = useState('');
+  const [newValue, setNewValue] = useState('');
+
+  const fetchCognitiveMemories = async (layer = selectedLayer, q = query) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (layer !== 'all') params.set('layer', layer);
+      if (q.trim()) params.set('q', q.trim());
+      const res = await fetch(`/api/cognitive/memory?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setRows(Array.isArray(data.memories) ? data.memories : []);
+      }
+    } catch {
+      // Standalone client fallback
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchCognitiveMemories(selectedLayer, query);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLayer]);
+
+  const handleAddCognitiveMemory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newKey.trim() || !newValue.trim()) return;
+    const res = await fetch('/api/cognitive/memory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        layer: newLayer,
+        category: 'user',
+        key: newKey.trim(),
+        value: newValue.trim(),
+      }),
+    });
+    if (res.ok) {
+      setNewKey('');
+      setNewValue('');
+      setNotice('Saved to 6-Layer SQLite Cognitive Memory.');
+      await fetchCognitiveMemories();
+    }
+  };
+
+  const handleDeleteRow = async (id: string) => {
+    const res = await fetch(`/api/cognitive/memory/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (res.ok) {
+      setRows((prev) => prev.filter((r) => r.id !== id));
+    }
+  };
+
+  const handleImportJson = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const res = await fetch('/api/cognitive/memory/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNotice(`Imported ${data.imported ?? 0} cognitive memory record(s).`);
+        await fetchCognitiveMemories();
+      }
+    } catch {
+      setNotice('Invalid cognitive memory JSON file.');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  return (
+    <section className="p-5 rounded-xl border border-cyan-500/20 bg-[#070c1a]/90 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+            <Database className="w-4 h-4 text-cyan-400" aria-hidden="true" />
+            <span>6-Layer SQLite Cognitive Memory ({rows.length})</span>
+          </h3>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Working, Short-Term, Long-Term, Episodic, Semantic, and Procedural memory persisted locally in SQLite.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href="/api/cognitive/memory/export"
+            download="friday-cognitive-memory.json"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 border border-slate-700 text-slate-200 hover:border-cyan-400/50"
+          >
+            <Download className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
+            <span>Export JSON</span>
+          </a>
+          <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 border border-slate-700 text-slate-200 hover:border-cyan-400/50 cursor-pointer">
+            <Upload className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
+            <span>Import JSON</span>
+            <input type="file" accept="application/json" onChange={handleImportJson} className="hidden" />
+          </label>
+          <button
+            type="button"
+            onClick={() => void fetchCognitiveMemories()}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs bg-slate-900 border border-slate-700 text-cyan-200 hover:border-cyan-400/50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+            <span>Refresh</span>
+          </button>
+        </div>
+      </div>
+
+      {notice && <p className="text-xs text-cyan-300">{notice}</p>}
+
+      <div className="flex flex-wrap gap-1.5">
+        {layers.map((layer) => (
+          <button
+            key={layer}
+            type="button"
+            onClick={() => setSelectedLayer(layer)}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium border capitalize transition-colors ${
+              selectedLayer === layer
+                ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200'
+                : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            {layer.replace('_', ' ')}
+          </button>
+        ))}
+      </div>
+
+      <form onSubmit={handleAddCognitiveMemory} className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <select
+          value={newLayer}
+          onChange={(e) => setNewLayer(e.target.value as CognitiveMemoryRow['layer'])}
+          aria-label="Cognitive memory layer"
+          className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+        >
+          <option value="working">Working</option>
+          <option value="short_term">Short-Term</option>
+          <option value="long_term">Long-Term</option>
+          <option value="episodic">Episodic</option>
+          <option value="semantic">Semantic</option>
+          <option value="procedural">Procedural</option>
+        </select>
+        <input
+          type="text"
+          value={newKey}
+          onChange={(e) => setNewKey(e.target.value)}
+          placeholder="Concept / Key..."
+          aria-label="Cognitive memory key"
+          className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+        />
+        <input
+          type="text"
+          value={newValue}
+          onChange={(e) => setNewValue(e.target.value)}
+          placeholder="Fact, context, or habit..."
+          aria-label="Cognitive memory value"
+          className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+        />
+        <button
+          type="submit"
+          className="px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+        >
+          Add Cognitive Entry
+        </button>
+      </form>
+
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search 6-layer cognitive memory..."
+          aria-label="Search cognitive memory"
+          className="flex-1 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+        />
+        <button
+          type="button"
+          onClick={() => void fetchCognitiveMemories(selectedLayer, query)}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 border border-slate-700 text-slate-200 hover:border-cyan-400/50"
+        >
+          Search
+        </button>
+      </div>
+
+      <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+        {rows.length === 0 ? (
+          <p className="text-xs text-slate-400">No entries in this cognitive memory layer yet.</p>
+        ) : (
+          rows.slice(0, 40).map((row) => (
+            <div
+              key={row.id}
+              className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 flex items-start justify-between gap-3 text-xs"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono-tabular text-[11px] uppercase text-cyan-300">
+                    {row.layer.replace('_', ' ')}
+                  </span>
+                  <span className="text-slate-500">·</span>
+                  <span className="text-slate-400">{row.source}</span>
+                  <span className="text-slate-500">·</span>
+                  <span className="font-mono-tabular text-slate-400">
+                    imp {Math.round(row.importance * 100)}%
+                  </span>
+                </div>
+                <div className="font-semibold text-slate-100 mt-0.5 truncate">{row.key}</div>
+                <div className="text-slate-300 mt-0.5 whitespace-pre-wrap">{row.value}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleDeleteRow(row.id)}
+                aria-label={`Delete cognitive memory ${row.key}`}
+                className="p-1.5 rounded text-slate-400 hover:text-rose-300 shrink-0"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -953,7 +1217,6 @@ export function SettingsView({
   const [newFavoriteCity, setNewFavoriteCity] = useState('');
   const [userNameDraft, setUserNameDraft] = useState(settings.userName);
   const [weatherLocationDraft, setWeatherLocationDraft] = useState(settings.weatherLocation);
-  const [ollamaModelDraft, setOllamaModelDraft] = useState(settings.ollamaModel || '');
   const [reopenShortcutDraft, setReopenShortcutDraft] = useState(settings.reopenShortcut);
   const debounceTimersRef = useRef<Record<string, number>>({});
 
@@ -964,10 +1227,6 @@ export function SettingsView({
   useEffect(() => {
     setWeatherLocationDraft(settings.weatherLocation);
   }, [settings.weatherLocation]);
-
-  useEffect(() => {
-    setOllamaModelDraft(settings.ollamaModel || '');
-  }, [settings.ollamaModel]);
 
   useEffect(() => {
     setReopenShortcutDraft(settings.reopenShortcut);
@@ -1299,29 +1558,29 @@ export function SettingsView({
             }
             className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
           >
-            <option value="local-auto">Local-First Auto (Built-In Local Core + Live Web · Free)</option>
-            <option value="local-core">Built-In Local Core Only (Zero External LLM)</option>
-            <option value="ollama">External Local LLM (Ollama / LM Studio · Optional)</option>
-            <option value="gemini-4-hydrogen">Gemini 4 Hydrogen (Optional Cloud Env Key)</option>
-            <option value="gemini-4-neon">Gemini 4 Neon (Optional Cloud Env Key)</option>
-            <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Optional Cloud Env Key)</option>
+            <option value="friday-cognitive">F.R.I.D.A.Y. Cognitive Engine (Self-Owned Offline-First)</option>
+            <option value="friday-language-core">F.R.I.D.A.Y. Language Core Adapter (Future Self-Trained Model)</option>
+            <option value="local-auto">Auto Cognitive + Live Public Web Research</option>
+            <option value="local-core">Deterministic Fast Local Core</option>
           </select>
         </label>
 
         <label className="block space-y-1.5">
-          <span className="text-slate-300 font-medium">Optional Local LLM Model Name</span>
-          <input
-            type="text"
-            value={ollamaModelDraft}
-            onChange={(e) => {
-              const v = e.target.value;
-              setOllamaModelDraft(v);
-              scheduleDebouncedUpdate('ollamaModel', { ollamaModel: v });
-            }}
-            onBlur={() => flushDebouncedUpdate('ollamaModel', { ollamaModel: ollamaModelDraft })}
-            placeholder="Not required (only if using LM Studio / Ollama)"
+          <span className="text-slate-300 font-medium">Response Language &amp; Style</span>
+          <select
+            value={settings.responseLanguagePreference || 'auto'}
+            onChange={(e) =>
+              onUpdateSettings({
+                responseLanguagePreference: e.target.value as AssistantSettings['responseLanguagePreference'],
+              })
+            }
             className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
-          />
+          >
+            <option value="auto">Auto (Match User Language: English / Hinglish / Hindi)</option>
+            <option value="hinglish">Hinglish Conversational</option>
+            <option value="hindi_simple">Simple Hindi (Romanized)</option>
+            <option value="english">English</option>
+          </select>
         </label>
 
         <label className="block space-y-1.5">
@@ -1358,7 +1617,7 @@ export function SettingsView({
           />
         </label>
 
-        <div className="flex flex-col justify-end gap-2">
+        <div className="flex flex-col justify-end gap-2 md:col-span-2">
           <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer">
             <input
               type="checkbox"
@@ -1367,6 +1626,15 @@ export function SettingsView({
               className="accent-cyan-400"
             />
             <span>Auto-Speak Assistant Replies Aloud</span>
+          </label>
+          <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings.optInDatasetCollection ?? false}
+              onChange={(e) => onUpdateSettings({ optInDatasetCollection: e.target.checked })}
+              className="accent-cyan-400"
+            />
+            <span>Opt-In: Collect Sanitized Local Interaction Pairs for Future Language Core Training</span>
           </label>
           <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer">
             <input
@@ -1386,6 +1654,16 @@ export function SettingsView({
             />
             <span>Start in Fullscreen Borderless Mode</span>
           </label>
+          <div className="pt-1">
+            <a
+              href="/api/cognitive/learning/dataset.jsonl"
+              download="friday-training-dataset.jsonl"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-cyan-200 hover:border-cyan-400/50"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
+              <span>Export Local Training Dataset (.JSONL · {apiStatus?.cognitiveStats?.datasetSamples ?? 0} samples)</span>
+            </a>
+          </div>
         </div>
       </section>
 
@@ -1495,16 +1773,16 @@ export function SettingsView({
         </div>
       </section>
 
-      {/* Read-Only Optional Server Integrations Status (Zero Secret Inputs in Frontend) */}
+      {/* Read-Only Cognitive Brain & Connectivity Status */}
       <section className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3 text-xs">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
               <Shield className="w-4 h-4 text-cyan-400" aria-hidden="true" />
-              <span>Optional Server Integrations Status (Read-Only)</span>
+              <span>F.R.I.D.A.Y. Cognitive Brain &amp; Connectivity Status (Read-Only)</span>
             </h3>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              Core voice, file search, Open-Meteo weather, and web research operate free with zero keys. Optional providers are configured strictly via server environment variables.
+              Self-owned 15-module cognitive architecture running locally in SQLite with zero external AI APIs or mandatory keys.
             </p>
           </div>
           {onCheckApiConnection && (
@@ -1521,41 +1799,25 @@ export function SettingsView({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
           <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1">
-            <div className="text-slate-400">Open-Meteo Weather</div>
-            <div className="font-semibold text-emerald-300">Active (Free · No Key)</div>
+            <div className="text-slate-400">Cognitive Engine</div>
+            <div className="font-semibold text-emerald-300">Active · Zero External APIs</div>
           </div>
           <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1">
-            <div className="text-slate-400">Free Web Research</div>
-            <div className="font-semibold text-emerald-300">
-              {apiStatus?.freeWebReady === false ? 'Unavailable' : 'Active (Free · No Key)'}
+            <div className="text-slate-400">Web Research &amp; Weather</div>
+            <div className={`font-semibold ${apiStatus?.freeWebReady === false ? 'text-amber-300' : 'text-emerald-300'}`}>
+              {apiStatus?.freeWebReady === false ? 'Offline Mode' : 'Active (Free Public Web)'}
             </div>
           </div>
           <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1">
-            <div className="text-slate-400">Ollama / Local OpenAI</div>
-            <div
-              className={`font-semibold ${
-                apiStatus?.optionalProviders?.ollamaConfigured || apiStatus?.optionalProviders?.localOpenAiConfigured
-                  ? 'text-emerald-300'
-                  : 'text-slate-300'
-              }`}
-            >
-              {apiStatus?.optionalProviders?.ollamaConfigured
-                ? 'Configured (Ollama Env)'
-                : apiStatus?.optionalProviders?.localOpenAiConfigured
-                  ? 'Configured (Local Env)'
-                  : 'Optional (Not Configured)'}
+            <div className="text-slate-400">6-Layer SQLite Memory</div>
+            <div className="font-semibold text-cyan-300">
+              {apiStatus?.cognitiveStats?.memoryCount ?? 0} memories · {apiStatus?.cognitiveStats?.knowledgeChunks ?? 0} chunks
             </div>
           </div>
           <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1">
-            <div className="text-slate-400">Optional Cloud Gemini</div>
-            <div
-              className={`font-semibold ${
-                apiStatus?.optionalProviders?.geminiConfigured ? 'text-emerald-300' : 'text-slate-300'
-              }`}
-            >
-              {apiStatus?.optionalProviders?.geminiConfigured
-                ? 'Configured (Server Env)'
-                : 'Optional (Not Configured)'}
+            <div className="text-slate-400">Language Core Adapter</div>
+            <div className={`font-semibold ${apiStatus?.cognitiveStats?.languageCoreReady ? 'text-emerald-300' : 'text-slate-300'}`}>
+              {apiStatus?.cognitiveStats?.languageCoreReady ? 'Checkpoint Loaded' : 'Scaffold Ready (L6 Trainer)'}
             </div>
           </div>
         </div>

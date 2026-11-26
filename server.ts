@@ -26,7 +26,6 @@ import {
   checkAiHealth,
   generateDailyBriefing,
   getRecentPipelineTimings,
-  hasValidGeminiKey,
   runAssistantCommand,
   runBrowserResearch,
   streamAssistantCommand,
@@ -34,6 +33,54 @@ import {
   synthesizeSpeechWav,
   transcribeAudioBase64,
 } from './server/aiService.ts';
+import {
+  appendTrainingDatasetSample,
+  addApprovedExternalPath,
+  deleteCognitiveMemory,
+  deleteDynamicIntent,
+  deleteWorkflowPreference,
+  exportCognitiveMemoriesJson,
+  getPreferenceProfile,
+  getSavedTokenizerArtifact,
+  importCognitiveMemoriesJson,
+  listCognitiveMemories,
+  listCustomLexicon,
+  listDynamicIntents,
+  listKnowledgeChunks,
+  listLearningCorrections,
+  listTaskPatternSuggestions,
+  listTaskPlans,
+  listTrainingDatasetSamples,
+  listWorkflowPreferences,
+  saveCognitiveMemory,
+  saveDynamicIntent,
+  saveLexiconEntry,
+  savePreferenceProfile,
+  saveTaskPatternSuggestion,
+  saveTokenizerArtifact,
+  saveWorkflowPreference,
+  searchCognitiveMemories,
+  updateCognitiveMemory,
+} from './server/cognitiveDb.ts';
+import { automationTaskManager } from './server/automation/workflowExecutor.ts';
+import {
+  addUserKnowledgeFact,
+  indexKnowledgeSources,
+  searchKnowledgeBase,
+} from './server/knowledgeEngine.ts';
+import { defaultSpeechProvider } from './server/speechProvider.ts';
+import {
+  checkNetworkOnline,
+  getServerCognitiveOrchestrator,
+  runCognitiveTurn,
+} from './server/cognitiveRuntime.ts';
+import { DynamicIntentRegistry } from './src/core/cognitive/intentRegistry.ts';
+import {
+  formatTrainingDatasetJsonl,
+  learnVocabularyTerm,
+  trainBpeStyleTokenizer,
+} from './src/core/cognitive/learningPipeline.ts';
+import type { MemoryLayer } from './src/core/cognitive/types.ts';
 import {
   closeWindowsWindow,
   focusWindowsWindow,
@@ -61,9 +108,18 @@ import {
 import { findDuplicateGroups, searchIndexedFiles } from './src/core/fileIndex.ts';
 import type { CalendarEvent, MediaControlAction, MemoryItem, NoteItem, TodoItem } from './src/core/types.ts';
 
+function resolveListenPort(): number {
+  const portFlagIdx = process.argv.indexOf('--port');
+  if (portFlagIdx !== -1 && process.argv[portFlagIdx + 1]) {
+    const parsed = Number(process.argv[portFlagIdx + 1]);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return Number(process.env.PORT) || 3000;
+}
+
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = resolveListenPort();
 
   app.use(express.json({ limit: '15mb' }));
 
@@ -90,8 +146,9 @@ async function startServer() {
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
-      hasApiKey: hasValidGeminiKey(),
+      hasApiKey: false,
       localEngineReady: true,
+      cognitiveEngineReady: true,
       timestamp: new Date().toISOString(),
     });
   });
@@ -103,7 +160,7 @@ async function startServer() {
       return res.json(cachedAiHealth.status);
     }
     const db = loadDb();
-    const status = await checkAiHealth(db.settings.aiModel, db.settings.ollamaModel);
+    const status = await checkAiHealth(db.settings.aiModel);
     cachedAiHealth = { checkedAt: now, status };
     res.json(status);
   });
@@ -412,13 +469,22 @@ async function startServer() {
 
   app.post('/api/assistant/confirm', async (req, res) => {
     try {
-      const { actionType, summary, approved } = req.body as {
+      const { actionType, summary, approved, payload } = req.body as {
         actionType: string;
         summary: string;
         approved: boolean;
+        payload?: Record<string, unknown>;
       };
       const db = loadDb();
+      const automationTaskId =
+        typeof payload?.automationTaskId === 'string' && payload.automationTaskId.trim()
+          ? payload.automationTaskId.trim()
+          : '';
+
       if (!approved) {
+        if (automationTaskId) {
+          await automationTaskManager.cancelTask(automationTaskId);
+        }
         appendActionLog(db, {
           agent: 'automation',
           action: 'Action Cancelled by User',
@@ -435,6 +501,49 @@ async function startServer() {
         db.chatHistory = [...db.chatHistory, msg].slice(-100);
         saveDb(db);
         return res.json({ message: msg });
+      }
+
+      if (automationTaskId) {
+        await automationTaskManager.resumeTask(automationTaskId, true);
+        // Wait briefly for quick local workflows to finish so chat confirmation shows verified output
+        let currentTask = automationTaskManager.getTask(automationTaskId);
+        const deadline = Date.now() + 4500;
+        while (
+          currentTask &&
+          (currentTask.state === 'pending' || currentTask.state === 'running' || currentTask.state === 'verifying' || currentTask.state === 'retrying') &&
+          Date.now() < deadline
+        ) {
+          await new Promise((r) => setTimeout(r, 80));
+          currentTask = automationTaskManager.getTask(automationTaskId);
+        }
+        const msg = {
+          id: `msg-${Date.now()}-a`,
+          role: 'assistant' as const,
+          content:
+            currentTask?.summary ||
+            `Approved and started workflow "${summary}" (state: ${currentTask?.state || 'running'}).`,
+          timestamp: new Date().toISOString(),
+          intent: 'workflow_run',
+          steps: currentTask?.steps.map((s) => ({
+            id: s.stepId,
+            agent: 'automation' as const,
+            title: s.title,
+            status:
+              s.status === 'completed'
+                ? ('completed' as const)
+                : s.status === 'failed' || s.status === 'cancelled'
+                  ? ('failed' as const)
+                  : s.status === 'running' || s.status === 'retrying'
+                    ? ('running' as const)
+                    : ('pending' as const),
+            detail: s.verificationDetail || s.output || s.error,
+          })),
+          sources: currentTask?.sources.length ? currentTask.sources : undefined,
+        };
+        const freshDb = loadDb();
+        freshDb.chatHistory = [...freshDb.chatHistory, msg].slice(-120);
+        saveDb(freshDb);
+        return res.json({ message: msg, task: currentTask });
       }
 
       if (actionType === 'calendar_schedule') {
@@ -512,6 +621,39 @@ async function startServer() {
         };
         db.chatHistory = [...db.chatHistory, msg].slice(-100);
         saveDb(db);
+        return res.json({ message: msg });
+      }
+
+      const goalCommand =
+        typeof payload?.goal === 'string' && payload.goal.trim()
+          ? payload.goal.trim()
+          : typeof payload?.originalCommand === 'string' && payload.originalCommand.trim()
+            ? payload.originalCommand.trim()
+            : '';
+
+      if (goalCommand) {
+        const cogConfirm = await runCognitiveTurn({
+          command: goalCommand,
+          confirmedAction: true,
+        });
+        appendActionLog(db, {
+          agent: cogConfirm.agents[0] || 'automation',
+          action: `Confirmed Cognitive Plan (${cogConfirm.intentId})`,
+          target: goalCommand.slice(0, 48),
+          status: 'completed',
+          detail: 'User approved cognitive task plan execution',
+        });
+        const msg = {
+          id: `msg-${Date.now()}-a`,
+          role: 'assistant' as const,
+          content: cogConfirm.reply,
+          timestamp: new Date().toISOString(),
+          intent: cogConfirm.intentId,
+          steps: cogConfirm.steps,
+        };
+        const freshDb = loadDb();
+        freshDb.chatHistory = [...freshDb.chatHistory, msg].slice(-100);
+        saveDb(freshDb);
         return res.json({ message: msg });
       }
 
@@ -648,10 +790,13 @@ async function startServer() {
 
   app.get('/api/diagnostics/voice', async (_req, res) => {
     try {
-      const caps = await getWindowsSpeechCapabilities();
+      const [caps, speechReport] = await Promise.all([
+        getWindowsSpeechCapabilities(),
+        defaultSpeechProvider.getCapabilities(),
+      ]);
       res.json({
         ...caps,
-        geminiSpeechAvailable: hasValidGeminiKey(),
+        cognitiveSpeech: speechReport,
       });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -929,6 +1074,25 @@ async function startServer() {
   app.patch('/api/settings', (req, res) => {
     const db = loadDb();
     db.settings = sanitizeSettingsPatch(req.body, db.settings);
+    const pref = getPreferenceProfile();
+    if (typeof db.settings.optInDatasetCollection === 'boolean') {
+      pref.optInDatasetCollection = db.settings.optInDatasetCollection;
+    }
+    if (db.settings.responseLanguagePreference) {
+      pref.preferredLanguage =
+        db.settings.responseLanguagePreference === 'hindi_simple'
+          ? 'hindi'
+          : db.settings.responseLanguagePreference;
+      pref.preferredStyle =
+        db.settings.responseLanguagePreference === 'hindi_simple'
+          ? 'hindi_simple'
+          : db.settings.responseLanguagePreference === 'hinglish'
+            ? 'hinglish'
+            : db.settings.responseLanguagePreference === 'english'
+              ? 'english'
+              : 'auto';
+    }
+    savePreferenceProfile(pref);
     cachedAiHealth = null;
     invalidateFileIndexCache();
     saveDb(db);
@@ -1048,13 +1212,463 @@ async function startServer() {
     res.json({ cleared: true });
   });
 
+  // ---------- F.R.I.D.A.Y. COGNITIVE ENGINE API ROUTES ----------
+  app.get('/api/cognitive/status', async (_req, res) => {
+    try {
+      const db = loadDb();
+      const [online, health, speechReport] = await Promise.all([
+        checkNetworkOnline(),
+        checkAiHealth(db.settings.aiModel),
+        defaultSpeechProvider.getCapabilities(),
+      ]);
+      const orchestrator = getServerCognitiveOrchestrator();
+      res.json({
+        online,
+        health,
+        context: orchestrator.getContextState(),
+        preferences: getPreferenceProfile(),
+        speechCapabilities: speechReport,
+        tokenizer: getSavedTokenizerArtifact(),
+        recentPlans: listTaskPlans(10),
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/cognitive/turn', async (req, res) => {
+    try {
+      const { command, confirmedAction, source } = req.body as {
+        command?: string;
+        confirmedAction?: boolean;
+        source?: 'text' | 'voice';
+      };
+      if (!command?.trim()) return res.status(400).json({ error: 'command is required' });
+      const result = await runCognitiveTurn({
+        command: command.trim(),
+        confirmedAction,
+        source,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // 6-Layer Memory Endpoints
+  app.get('/api/cognitive/memory', (req, res) => {
+    const layer = typeof req.query.layer === 'string' && req.query.layer !== 'all'
+      ? (req.query.layer as MemoryLayer)
+      : undefined;
+    const query = typeof req.query.q === 'string' ? req.query.q : undefined;
+    const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+    const memories =
+      query || category || layer
+        ? searchCognitiveMemories({ query, layer, category, limit: 150 })
+        : listCognitiveMemories(undefined, 200);
+    res.json({ memories });
+  });
+
+  app.post('/api/cognitive/memory', (req, res) => {
+    const { layer, category, key, value, tags, importance } = req.body as {
+      layer?: MemoryLayer;
+      category?: string;
+      key?: string;
+      value?: string;
+      tags?: string[];
+      importance?: number;
+    };
+    if (!key?.trim() || !value?.trim()) {
+      return res.status(400).json({ error: 'key and value are required' });
+    }
+    const validLayers: MemoryLayer[] = ['working', 'short_term', 'long_term', 'episodic', 'semantic', 'procedural'];
+    const targetLayer = validLayers.includes(layer as MemoryLayer) ? (layer as MemoryLayer) : 'long_term';
+    const saved = saveCognitiveMemory({
+      layer: targetLayer,
+      category: category?.trim() || 'user',
+      key: key.trim(),
+      value: value.trim(),
+      tags: Array.isArray(tags) ? tags : ['manual'],
+      importance: typeof importance === 'number' ? importance : 0.8,
+      confidence: 1.0,
+      source: 'user_provided',
+    });
+    res.json({ memory: saved });
+  });
+
+  app.patch('/api/cognitive/memory/:id', (req, res) => {
+    const updated = updateCognitiveMemory(req.params.id, req.body || {});
+    if (!updated) return res.status(404).json({ error: 'Cognitive memory not found' });
+    res.json({ memory: updated });
+  });
+
+  app.delete('/api/cognitive/memory/:id', (req, res) => {
+    const ok = deleteCognitiveMemory(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'Cognitive memory not found' });
+    res.json({ deleted: true });
+  });
+
+  app.get('/api/cognitive/memory/export', (_req, res) => {
+    const json = exportCognitiveMemoriesJson();
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename="friday-cognitive-memory.json"');
+    res.send(json);
+  });
+
+  app.post('/api/cognitive/memory/import', (req, res) => {
+    const count = importCognitiveMemoriesJson(req.body);
+    res.json({ imported: count });
+  });
+
+  // Dynamic Intents (Teach Custom Commands)
+  app.get('/api/cognitive/intents', (_req, res) => {
+    const registry = new DynamicIntentRegistry(listDynamicIntents());
+    res.json({ intents: registry.getAllIntents() });
+  });
+
+  app.post('/api/cognitive/intents', (req, res) => {
+    const { phrase, actionsText } = req.body as { phrase?: string; actionsText?: string };
+    if (!phrase?.trim() || !actionsText?.trim()) {
+      return res.status(400).json({ error: 'phrase and actionsText are required' });
+    }
+    const registry = new DynamicIntentRegistry(listDynamicIntents());
+    const taught = registry.teachCustomIntent(phrase.trim(), actionsText.trim());
+    saveDynamicIntent(taught);
+    res.json({ intent: taught });
+  });
+
+  app.delete('/api/cognitive/intents/:id', (req, res) => {
+    const ok = deleteDynamicIntent(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'Custom intent not found or built-in' });
+    res.json({ deleted: true });
+  });
+
+  // Knowledge Base
+  app.get('/api/cognitive/knowledge', (req, res) => {
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (q) {
+      return res.json({ results: searchKnowledgeBase(q, 12), chunks: listKnowledgeChunks(100) });
+    }
+    res.json({ results: [], chunks: listKnowledgeChunks(120) });
+  });
+
+  app.post('/api/cognitive/knowledge', (req, res) => {
+    const { action, title, content, tags } = req.body as {
+      action?: 'reindex' | 'add_fact';
+      title?: string;
+      content?: string;
+      tags?: string[];
+    };
+    const db = loadDb();
+    if (action === 'reindex') {
+      const idx = indexKnowledgeSources({
+        allowedFolders: db.settings.allowedFolders,
+        pausedIndexing: db.settings.pausedIndexing,
+        notes: db.notes,
+      });
+      return res.json(idx);
+    }
+    if (!title?.trim() || !content?.trim()) {
+      return res.status(400).json({ error: 'title and content are required' });
+    }
+    const chunk = addUserKnowledgeFact({ title, content, tags });
+    res.json({ chunk });
+  });
+
+  // Learning Pipeline (L1-L6)
+  app.get('/api/cognitive/learning', (_req, res) => {
+    res.json({
+      lexicon: listCustomLexicon(),
+      corrections: listLearningCorrections(),
+      preferences: getPreferenceProfile(),
+      patterns: listTaskPatternSuggestions(),
+      datasetCount: listTrainingDatasetSamples(2000).length,
+      datasetPreview: listTrainingDatasetSamples(15),
+      tokenizer: getSavedTokenizerArtifact(),
+    });
+  });
+
+  app.get('/api/cognitive/learning/dataset.jsonl', (_req, res) => {
+    const samples = listTrainingDatasetSamples(5000);
+    const jsonl = formatTrainingDatasetJsonl(samples);
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="friday-training-dataset.jsonl"');
+    res.send(jsonl);
+  });
+
+  app.post('/api/cognitive/learning', (req, res) => {
+    const body = req.body as {
+      action?:
+        | 'add_vocab'
+        | 'accept_pattern'
+        | 'dismiss_pattern'
+        | 'toggle_dataset'
+        | 'train_tokenizer'
+        | 'add_sample';
+      phrase?: string;
+      canonical?: string;
+      patternId?: string;
+      enabled?: boolean;
+      prompt?: string;
+      response?: string;
+      intentId?: string;
+    };
+
+    if (body.action === 'add_vocab' && body.phrase?.trim() && body.canonical?.trim()) {
+      const current = listCustomLexicon();
+      const entry = learnVocabularyTerm(current, body.phrase, body.canonical, 'hinglish', 'verb');
+      saveLexiconEntry(entry);
+      return res.json({ entry });
+    }
+
+    if ((body.action === 'accept_pattern' || body.action === 'dismiss_pattern') && body.patternId) {
+      const all = listTaskPatternSuggestions();
+      const pat = all.find((p) => p.id === body.patternId);
+      if (!pat) return res.status(404).json({ error: 'Pattern not found' });
+      pat.status = body.action === 'accept_pattern' ? 'accepted' : 'dismissed';
+      saveTaskPatternSuggestion(pat);
+      if (body.action === 'accept_pattern') {
+        const registry = new DynamicIntentRegistry(listDynamicIntents());
+        const taught = registry.teachCustomIntent(pat.suggestedTrigger, pat.steps.join(' and '));
+        saveDynamicIntent(taught);
+      }
+      return res.json({ pattern: pat });
+    }
+
+    if (body.action === 'toggle_dataset') {
+      const pref = getPreferenceProfile();
+      pref.optInDatasetCollection = Boolean(body.enabled);
+      savePreferenceProfile(pref);
+      const db = loadDb();
+      db.settings.optInDatasetCollection = pref.optInDatasetCollection;
+      saveDb(db);
+      return res.json({ preferences: pref });
+    }
+
+    if (body.action === 'add_sample' && body.prompt?.trim() && body.response?.trim()) {
+      appendTrainingDatasetSample({
+        id: `ds-${Date.now()}`,
+        prompt: body.prompt.trim(),
+        normalizedPrompt: body.prompt.trim().toLowerCase(),
+        language: 'hinglish',
+        intentId: body.intentId || 'intent.general',
+        entities: { numbers: [] },
+        response: body.response.trim(),
+        qualityScore: 0.9,
+        approved: true,
+        createdAt: new Date().toISOString(),
+      });
+      return res.json({ count: listTrainingDatasetSamples(2000).length });
+    }
+
+    if (body.action === 'train_tokenizer') {
+      const samples = listTrainingDatasetSamples(2000);
+      const fallbackSamples =
+        samples.length > 0
+          ? samples
+          : [
+              {
+                id: 'seed-1',
+                prompt: 'Friday chrome kholo',
+                normalizedPrompt: 'chrome kholo',
+                language: 'hinglish' as const,
+                intentId: 'intent.open_app',
+                entities: { app: 'chrome', numbers: [] },
+                response: 'Ho gaya, Google Chrome launch kar diya hai.',
+                qualityScore: 0.95,
+                approved: true,
+                createdAt: new Date().toISOString(),
+              },
+              {
+                id: 'seed-2',
+                prompt: 'Kal ka weather check kar',
+                normalizedPrompt: 'kal ka weather check kar',
+                language: 'hinglish' as const,
+                intentId: 'intent.weather_check',
+                entities: { dateHint: 'tomorrow', numbers: [] },
+                response: 'Kal ka mausam update check kar liya.',
+                qualityScore: 0.95,
+                approved: true,
+                createdAt: new Date().toISOString(),
+              },
+              {
+                id: 'seed-3',
+                prompt: 'Thoda Hindi mein samjha',
+                normalizedPrompt: 'thoda hindi mein samjha',
+                language: 'hinglish' as const,
+                intentId: 'intent.explain_hindi_simple',
+                entities: { numbers: [] },
+                response: 'Aasaan Hindi mein: yeh local cognitive engine bina cloud ke kaam karta hai.',
+                qualityScore: 0.95,
+                approved: true,
+                createdAt: new Date().toISOString(),
+              },
+            ];
+      const artifact = trainBpeStyleTokenizer(fallbackSamples);
+      saveTokenizerArtifact(artifact);
+      return res.json({ artifact });
+    }
+
+    return res.status(400).json({ error: 'Unsupported learning action' });
+  });
+
+  // ---------- F.R.I.D.A.Y. AUTONOMOUS WORKFLOW ORCHESTRATOR ROUTES ----------
+  app.get('/api/automation/tasks', (_req, res) => {
+    try {
+      res.json({ tasks: automationTaskManager.listTasks(35) });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/automation/plan', (req, res) => {
+    try {
+      const { goal, confirmed } = req.body as { goal?: string; confirmed?: boolean };
+      if (!goal?.trim()) return res.status(400).json({ error: 'goal is required' });
+      const plan = automationTaskManager.planWorkflow(goal.trim(), Boolean(confirmed));
+      res.json({ plan });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/automation/execute', async (req, res) => {
+    try {
+      const { goal, confirmed, wait } = req.body as {
+        goal?: string;
+        confirmed?: boolean;
+        wait?: boolean;
+      };
+      if (!goal?.trim()) return res.status(400).json({ error: 'goal is required' });
+      const task = await automationTaskManager.createAndStartTask({
+        goal: goal.trim(),
+        confirmed: Boolean(confirmed),
+        waitForCompletion: Boolean(wait),
+      });
+      res.json({ task });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/automation/tasks/:id/pause', async (req, res) => {
+    try {
+      const task = await automationTaskManager.pauseTask(req.params.id);
+      if (!task) return res.status(404).json({ error: 'Background task not found' });
+      res.json({ task });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/automation/tasks/:id/resume', async (req, res) => {
+    try {
+      const task = await automationTaskManager.resumeTask(req.params.id, Boolean(req.body?.confirmed));
+      if (!task) return res.status(404).json({ error: 'Background task not found' });
+      res.json({ task });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/automation/tasks/:id/cancel', async (req, res) => {
+    try {
+      const task = await automationTaskManager.cancelTask(req.params.id);
+      if (!task) return res.status(404).json({ error: 'Background task not found' });
+      res.json({ task });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/automation/preferences', (_req, res) => {
+    try {
+      res.json({ preferences: listWorkflowPreferences() });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/automation/preferences', (req, res) => {
+    try {
+      const { key, label, value, category } = req.body as {
+        key?: string;
+        label?: string;
+        value?: string;
+        category?: 'folder' | 'browser' | 'editor' | 'office' | 'workflow';
+      };
+      if (!key?.trim() || !value?.trim()) {
+        return res.status(400).json({ error: 'key and value are required' });
+      }
+      const allowedCats = new Set(['folder', 'browser', 'editor', 'office', 'workflow']);
+      const safeCat = category && allowedCats.has(category) ? category : 'workflow';
+      const saved = saveWorkflowPreference({
+        key: key.trim().slice(0, 80),
+        label: (label?.trim() || key.trim()).slice(0, 140),
+        value: value.trim().slice(0, 500),
+        category: safeCat,
+      });
+      if (safeCat === 'folder') {
+        addApprovedExternalPath(value.trim());
+      }
+      res.json({ preference: saved });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete('/api/automation/preferences/:key', (req, res) => {
+    try {
+      const deleted = deleteWorkflowPreference(req.params.key);
+      if (!deleted) return res.status(404).json({ error: 'Workflow preference not found' });
+      res.json({ deleted: true });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/automation/plugins', (_req, res) => {
+    try {
+      res.json({ plugins: automationTaskManager.getRegistry().listPlugins() });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/automation/plugins/:id/toggle', (req, res) => {
+    try {
+      const registry = automationTaskManager.getRegistry();
+      const pluginId = req.params.id as Parameters<typeof registry.setEnabled>[0];
+      const enabled = Boolean(req.body?.enabled);
+      const ok = registry.setEnabled(pluginId, enabled);
+      if (!ok) return res.status(404).json({ error: 'Automation plugin not found' });
+      res.json({ plugin: registry.getPlugin(pluginId) });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/automation/apps', (_req, res) => {
+    try {
+      res.json({ apps: automationTaskManager.getApplicationManager().getAllProfiles() });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Vite middleware in development, static serve in production
+  let viteServer: { close: () => Promise<void> } | null = null;
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR !== 'true',
+        watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      },
       appType: 'spa',
     });
+    viteServer = vite;
     app.use(vite.middlewares);
   } else {
     const distPath = process.env.FRIDAY_DIST_DIR
@@ -1066,9 +1680,32 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`F.R.I.D.A.Y. Command Server active at http://localhost:${PORT}`);
   });
+
+  httpServer.on('error', (err) => {
+    console.error('[F.R.I.D.A.Y. Server] HTTP listener error:', err);
+  });
+
+  const shutdown = async () => {
+    try {
+      if (viteServer) await viteServer.close();
+    } catch {
+      // Ignore Vite close errors during shutdown
+    }
+    httpServer.close(() => process.exit(0));
+  };
+
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
 }
 
-startServer();
+process.on('unhandledRejection', (reason) => {
+  console.error('[F.R.I.D.A.Y. Server] Unhandled promise rejection:', reason);
+});
+
+startServer().catch((err) => {
+  console.error('[F.R.I.D.A.Y. Server] Fatal startup error:', err);
+  process.exit(1);
+});

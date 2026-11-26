@@ -1,4 +1,5 @@
 import type { VoiceState } from './types';
+import { cleanVoiceTranscript, isNoiseOrEmptyTranscript } from './voicePipeline';
 
 export interface SpeechEpochTracker {
   epoch: number;
@@ -61,15 +62,25 @@ export function shouldIgnoreDuplicateSubmission(
   return nowMs - prev.lastTimestampMs >= 0 && nowMs - prev.lastTimestampMs < windowMs;
 }
 
+export function isWithinPostSpeechEchoWindow(
+  speechEndedAtMs: number,
+  nowMs: number,
+  cooldownMs = 600
+): boolean {
+  if (!speechEndedAtMs || speechEndedAtMs <= 0) return false;
+  const elapsed = nowMs - speechEndedAtMs;
+  return elapsed >= 0 && elapsed <= cooldownMs;
+}
+
 /**
  * Prevents the assistant's own spoken output from triggering itself through open mic feedback.
  */
 export function isEchoOfAssistantSpeech(
   recognizedTranscript: string,
   activeSpokenText: string,
-  isSpeakingNow: boolean
+  isSpeakingOrCooldownNow: boolean
 ): boolean {
-  if (!isSpeakingNow) return false;
+  if (!isSpeakingOrCooldownNow) return false;
   const heard = recognizedTranscript.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
   const spoken = activeSpokenText.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
   if (!heard || heard.length < 4 || !spoken) return false;
@@ -84,6 +95,63 @@ export function isEchoOfAssistantSpeech(
   return false;
 }
 
+export interface WakeWordResolution {
+  action: 'command' | 'arm_wake_word' | 'ignore';
+  command: string;
+  armedUntilMs?: number;
+  disarmWakeWord?: boolean;
+}
+
+export function resolveWakeWordUtterance(params: {
+  transcript: string;
+  wakeWord: string;
+  wakeWordEnabled: boolean;
+  wakeWordArmedUntilMs?: number;
+  nowMs?: number;
+  armDurationMs?: number;
+}): WakeWordResolution {
+  const cleaned = cleanVoiceTranscript(params.transcript);
+  if (isNoiseOrEmptyTranscript(cleaned)) {
+    return { action: 'ignore', command: '' };
+  }
+
+  if (!params.wakeWordEnabled) {
+    return { action: 'command', command: cleaned, disarmWakeWord: false };
+  }
+
+  const nowMs = params.nowMs ?? Date.now();
+  const armDurationMs = params.armDurationMs ?? 8000;
+  const normalizedWake = params.wakeWord.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const wakePrefixPattern = normalizedWake
+    ? `(?:${normalizedWake}|hey[,\\s]+f\\.?r\\.?i\\.?d\\.?a\\.?y\\.?|hey[,\\s]+friday|ok[,\\s]+friday|hi[,\\s]+friday|f\\.?r\\.?i\\.?d\\.?a\\.?y\\.?)`
+    : `(?:hey[,\\s]+f\\.?r\\.?i\\.?d\\.?a\\.?y\\.?|hey[,\\s]+friday|ok[,\\s]+friday|hi[,\\s]+friday|f\\.?r\\.?i\\.?d\\.?a\\.?y\\.?)`;
+
+  const wakeRegex = new RegExp(wakePrefixPattern, 'i');
+  const hasWake = wakeRegex.test(cleaned);
+
+  if (hasWake) {
+    const stripped = cleanVoiceTranscript(
+      cleaned.replace(wakeRegex, ' ').replace(/^[\s,.:;!?-]+/, '').trim()
+    );
+    if (stripped && !isNoiseOrEmptyTranscript(stripped)) {
+      return { action: 'command', command: stripped, disarmWakeWord: true };
+    }
+    return {
+      action: 'arm_wake_word',
+      command: '',
+      armedUntilMs: nowMs + armDurationMs,
+      disarmWakeWord: false,
+    };
+  }
+
+  if ((params.wakeWordArmedUntilMs ?? 0) > nowMs) {
+    return { action: 'command', command: cleaned, disarmWakeWord: true };
+  }
+
+  return { action: 'ignore', command: '' };
+}
+
 export function resolvePostInterruptState(continuousListening: boolean): VoiceState {
   return continuousListening ? 'listening' : 'standby';
 }
+

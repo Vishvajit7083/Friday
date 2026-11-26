@@ -68,11 +68,15 @@ test('extracts command cleanly with punctuated wake word or direct mic mode', ()
   assert.equal(ignored.matched, false);
 });
 
-test('detects voice barge-in interruption phrases without false positives', () => {
+test('detects voice barge-in interruption phrases in English and Hinglish without false positives', () => {
   assert.equal(isInterruptionCommand('stop'), true);
   assert.equal(isInterruptionCommand('Friday, stop talking'), true);
   assert.equal(isInterruptionCommand('quiet please'), true);
   assert.equal(isInterruptionCommand('cancel'), true);
+  assert.equal(isInterruptionCommand('ruk ja'), true);
+  assert.equal(isInterruptionCommand('chup'), true);
+  assert.equal(isInterruptionCommand('bas kar'), true);
+  assert.equal(isInterruptionCommand('friday bas'), true);
   assert.equal(isInterruptionCommand('open chrome'), false);
   assert.equal(isInterruptionCommand('stop by the store tomorrow'), false);
 });
@@ -122,13 +126,14 @@ test('parses natural file search intent with folder, category, and relative date
   assert.equal(typeof results[0].matchReason, 'string');
 });
 
-test('sanitizes local-first AI model settings and rejects unsafe ollamaModel characters', () => {
+test('sanitizes self-owned Cognitive Engine model and language settings cleanly', () => {
   const baseSettings: AssistantSettings = {
     assistantName: 'F.R.I.D.A.Y.',
     userName: 'Vishvajit',
     wakeWord: 'Hey Friday',
-    aiModel: 'local-auto',
-    ollamaModel: 'llama3.2:3b',
+    aiModel: 'friday-cognitive',
+    responseLanguagePreference: 'auto',
+    optInDatasetCollection: false,
     voiceName: 'Kore',
     voiceGender: 'female',
     speakingSpeed: 1,
@@ -178,22 +183,27 @@ test('sanitizes local-first AI model settings and rejects unsafe ollamaModel cha
   };
 
   const validUpdate = sanitizeSettingsPatch(
-    { aiModel: 'ollama', ollamaModel: 'qwen2.5:7b-instruct' },
+    {
+      aiModel: 'friday-language-core',
+      responseLanguagePreference: 'hinglish',
+      optInDatasetCollection: true,
+    },
     baseSettings
   );
-  assert.equal(validUpdate.aiModel, 'ollama');
-  assert.equal(validUpdate.ollamaModel, 'qwen2.5:7b-instruct');
+  assert.equal(validUpdate.aiModel, 'friday-language-core');
+  assert.equal(validUpdate.responseLanguagePreference, 'hinglish');
+  assert.equal(validUpdate.optInDatasetCollection, true);
 
-  const clearedUpdate = sanitizeSettingsPatch({ aiModel: 'local-core', ollamaModel: '' }, baseSettings);
+  const clearedUpdate = sanitizeSettingsPatch({ aiModel: 'local-core', responseLanguagePreference: 'hindi_simple' }, baseSettings);
   assert.equal(clearedUpdate.aiModel, 'local-core');
-  assert.equal(clearedUpdate.ollamaModel, '');
+  assert.equal(clearedUpdate.responseLanguagePreference, 'hindi_simple');
 
   const rejectedUpdate = sanitizeSettingsPatch(
-    { aiModel: 'unknown-model', ollamaModel: 'llama3.2; rm -rf /' },
+    { aiModel: 'unknown-model', responseLanguagePreference: 'invalid-lang' },
     baseSettings
   );
-  assert.equal(rejectedUpdate.aiModel, 'local-auto');
-  assert.equal(rejectedUpdate.ollamaModel, 'llama3.2:3b');
+  assert.equal(rejectedUpdate.aiModel, 'friday-cognitive');
+  assert.equal(rejectedUpdate.responseLanguagePreference, 'auto');
 });
 
 test('evaluates safe math and percentage expressions without eval', () => {

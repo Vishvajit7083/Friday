@@ -4,6 +4,7 @@ import { tryConvertUnits } from './unitConverter';
 import { tryTranslateCommand } from './translator';
 import { parseProductivityCommand } from './productivityTools';
 import { parseWeatherQuery } from './weatherUtils';
+import { isHinglishInterruptionPhrase } from './cognitive/hinglishNlp';
 
 export type IntentCategory =
   | 'system_telemetry'
@@ -63,6 +64,7 @@ const FILE_PATTERNS = [
 
 const WEB_PATTERNS = [
   /\b(search\s+google|google\s+search|search\s+online|search\s+the\s+(web|internet)|latest\s+news|latest\s+information|research|website|summarize\s+https?:)\b/i,
+  /\bsearch\s+(?:for|about)\s+(?!my\s+(?:files?|folders?|downloads?|documents?)\b)(?!.*\b(?:file|files|folder|directory|resume|pdf|docx?|xlsx?|pptx?)\b).+/i,
   /\b(search\s+youtube|find\s+on\s+youtube|what\s+is\s+the\s+latest|who\s+won|news\s+about|best\s+.*projects)\b/i,
   /https?:\/\/\S+/i,
 ];
@@ -77,6 +79,7 @@ const PHONE_CONTROL_PATTERNS = [
 
 const APP_PATTERNS = [
   /\b(open|launch|start|switch\s+to|focus|minimize|maximize)\s+(?:the\s+)?(google\s+chrome|chrome|microsoft\s+edge|edge|msedge|vs\s*code|vscode|visual\s+studio(?:\s+code)?|whatsapp|android\s+studio|spotify|windows\s+terminal|terminal|powershell|command\s+prompt|cmd|file\s+explorer|explorer|notepad|calculator|calc|windows\s+settings|task\s+manager|taskmgr|paint|mspaint|browser|music\s+player|vlc)\b/i,
+  /\b(google\s+chrome|chrome|microsoft\s+edge|edge|msedge|vs\s*code|vscode|visual\s+studio(?:\s+code)?|whatsapp|android\s+studio|spotify|terminal|powershell|cmd|explorer|notepad|calculator|calc|vlc)\s+(?:ko\s+)?(?:open\s+karo?|kholo|khol\s+do|chalu\s+karo?|start\s+karo?)\b/i,
   /\b(open|launch|visit)\s+(?:website\s+)?(?:https?:\/\/\S+|[a-z0-9-]+\.(?:com|org|net|io|dev|in|edu|gov|ai)(?:\/\S*)?)\b/i,
   /\b(open|launch|start)\s+(?:the\s+)?(?:google|wikipedia)\b/i,
   /\b(open\s+the\s+app(lication)?\s+i\s+use\s+for\s+(coding|browsing|music|notes|messaging|files))\b/i,
@@ -104,15 +107,7 @@ const WORKFLOW_PATTERNS = [
 ];
 
 export function isInterruptionCommand(rawTranscript: string): boolean {
-  const clean = rawTranscript
-    .trim()
-    .toLowerCase()
-    .replace(/[.,!?]+$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return /^(?:(?:hey|ok)\s+)?(?:friday[,\s]+)?(?:stop(?:\s+(?:it|now|speaking|talking|reading|voice|audio|playback))?|quiet|be\s+quiet|shut\s+up|hush|mute(?:\s+(?:yourself|voice|audio))?|silence|cancel(?:\s+(?:that|it|speech|voice))?|abort|enough|never\s*mind|pause\s+voice)(?:\s+(?:please|friday))?$/.test(
-    clean
-  );
+  return isHinglishInterruptionPhrase(rawTranscript);
 }
 
 export function analyzeUserCommand(command: string): ParsedIntent {
@@ -425,7 +420,7 @@ export function isKnowledgeQuestion(rawCommand: string): boolean {
   const clean = rawCommand.trim().toLowerCase();
   if (!clean) return false;
   if (
-    /^(hi|hello|hey|thanks|thank you|good morning|good afternoon|good evening|bye|who are you|what can you do|help)\b/.test(
+    /^(h+i+|h+e+l+o+|h+e+y+|hlo+|thanks|thank you|good morning|good afternoon|good evening|namaste|namaskar|bye|who are you|what can you do|help)\b/.test(
       clean
     )
   ) {
@@ -435,6 +430,9 @@ export function isKnowledgeQuestion(rawCommand: string): boolean {
     return false;
   }
   if (/^(what|who|where|when|why|how|explain|define|tell me|compare|describe|summarize|difference between|meaning of)\b/.test(clean)) {
+    return true;
+  }
+  if (/\b(samjhao|samjha|kya\s+hai|kya\s+hota\s+hai)\b/.test(clean)) {
     return true;
   }
   return clean.endsWith('?') && clean.split(/\s+/).length >= 2;

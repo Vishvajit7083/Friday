@@ -57,6 +57,9 @@ export function registerPreloadBridge(electronOverride?: ElectronPreloadApi): bo
     openWebsite: (urlOrAlias: string) => ipcRenderer.invoke('friday:open-website', String(urlOrAlias)),
     openFolder: (folderNameOrPath: string) =>
       ipcRenderer.invoke('friday:open-folder', String(folderNameOrPath)),
+    getActiveWindow: () => ipcRenderer.invoke('friday:active-window'),
+    inspectScreenUi: (processFilter?: string) =>
+      ipcRenderer.invoke('friday:inspect-screen-ui', processFilter ? String(processFilter) : undefined),
     getWindowsDiagnostics: () => ipcRenderer.invoke('friday:windows-diagnostics'),
     onStopSpeech: (callback: () => void) => {
       if (typeof ipcRenderer.on !== 'function') return () => {};

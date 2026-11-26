@@ -1,6 +1,7 @@
 import { openLocalPathInDefaultApp, sendWindowsMediaKey } from '../electron/windowsAutomation.ts';
 import { formatBytes, searchIndexedFiles } from '../src/core/fileIndex.ts';
 import type { IndexedFileItem, MediaControlAction } from '../src/core/types.ts';
+import { resolveAndPlayYouTube } from './automation/browserAndYoutube.ts';
 import { getCachedFileIndex } from './fileService.ts';
 
 export interface MediaCommandResult {
@@ -75,11 +76,28 @@ export async function handleMediaVoiceCommand(
 
   const matches = searchIndexedFiles(files, userCommand, category);
   if (matches.length === 0) {
+    const explicitLocalOnly = /\b(local|downloaded|offline|my\s+(?:music|songs?|folder))\b/.test(lower);
+    if (!wantVideo && !explicitLocalOnly && wantAudio) {
+      const cleanQuery = userCommand
+        .replace(/\b(hey\s+friday|friday|play|listen\s+to|some|please|chala|bajao|sunao)\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const ytRes = await resolveAndPlayYouTube({
+        query: cleanQuery || 'popular music playlist',
+        browser: 'chrome',
+        online: true,
+      });
+      return {
+        handled: true,
+        message: ytRes.detail,
+      };
+    }
+
     return {
       handled: true,
       message: wantVideo
-        ? 'No video files were found in your permitted folders (Downloads, Videos, Desktop, or workspace). Grant access to your Videos or Downloads folder in Settings.'
-        : 'No local music or audio files were found in your permitted folders (Music, Downloads, or workspace). Grant access to your Music or Downloads folder in Settings.',
+        ? 'No video files were found in your permitted folders (Downloads, Videos, Desktop, or workspace). Grant access to your Videos or Downloads folder in Settings, or say "open Chrome and play ..." for YouTube.'
+        : 'No local music or audio files were found in your permitted folders (Music, Downloads, or workspace). Grant access to your Music or Downloads folder in Settings, or say "open Chrome and play ..." to stream on YouTube.',
     };
   }
 

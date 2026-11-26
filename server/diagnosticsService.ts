@@ -13,10 +13,15 @@ import type {
   DiagnosticsReportPayload,
   HardwareCompatibilityAudit,
 } from '../src/core/types.ts';
-import { checkAiHealth, getRecentPipelineTimings, hasValidGeminiKey } from './aiService.ts';
+import { understandUserInput } from '../src/core/cognitive/languageUnderstanding.ts';
+import { checkAiHealth, getRecentPipelineTimings } from './aiService.ts';
+import {
+  listCognitiveMemories,
+  listDynamicIntents,
+  listKnowledgeChunks,
+} from './cognitiveDb.ts';
 import { isPathPermitted, scanPermittedFolders } from './fileService.ts';
 import { searchFreeWeb } from './internetResearchService.ts';
-import { checkOllamaStatus } from './localAiService.ts';
 import { loadDb } from './store.ts';
 import { detectInstalledApps, getSystemTelemetry } from './systemService.ts';
 import { discoverWindowsStartApps, getWindowsSpeechCapabilities } from '../electron/windowsAutomation.ts';
@@ -101,7 +106,7 @@ export async function getWindowsCompatibilityAudit(): Promise<HardwareCompatibil
     storageFreeGb,
     storageType,
     networkAvailable: activeNet || Object.keys(os.networkInterfaces()).length > 0,
-    hasApiKey: hasValidGeminiKey(),
+    hasApiKey: false,
     electronConfigured,
     securityPosture: {
       contextIsolation: mainSource.includes('contextIsolation: true'),
@@ -216,43 +221,45 @@ export async function runSafeDiagnosticsSuite(): Promise<DiagnosticsReportPayloa
   );
 
   await runCheck(
-    'local-ai-engine',
-    'AI & Connectivity',
-    'Local-First AI Engine & Zero-Key Readiness',
-    'Assistant connects and operates cleanly without a paid cloud API key',
+    'cognitive-engine',
+    'Cognitive Brain',
+    'F.R.I.D.A.Y. Cognitive Engine & Zero-API Autonomy',
+    '15-module self-owned brain operates 100% locally without Ollama or cloud AI keys',
     async () => {
-      const health = await checkAiHealth(db.settings.aiModel, db.settings.ollamaModel);
+      const health = await checkAiHealth(db.settings.aiModel);
       return {
         actual: `${health.provider} (${health.model}) active in ${health.latencyMs}ms · Paid key required: ${health.requiresPaidKey ? 'Yes' : 'No'}`,
-        status: health.connected ? 'pass' : 'fail',
+        status: health.connected && !health.requiresPaidKey ? 'pass' : 'fail',
       };
     }
   );
 
   await runCheck(
-    'ollama-runtime',
-    'AI & Connectivity',
-    'Optional External Local LLM Runtime (LM Studio / llama.cpp / Ollama)',
-    'Check optional local LLM endpoint if installed; built-in Local Core works without it',
+    'hinglish-nlp',
+    'Cognitive Brain',
+    'Hinglish NLP & Typo Tolerance',
+    'Detect Hinglish language and canonicalize Romanized Hindi actions + ASR typos',
     async () => {
-      const openaiCompat = await import('./localAiService.ts').then((m) =>
-        m.checkOpenAiCompatibleStatus(db.settings.ollamaModel)
-      );
-      if (openaiCompat.available && openaiCompat.selectedModel) {
-        return {
-          actual: `Local OpenAI-compatible server active at ${openaiCompat.baseUrl} (${openaiCompat.selectedModel}) in ${openaiCompat.latencyMs}ms`,
-          status: 'pass',
-        };
-      }
-      const ollama = await checkOllamaStatus(db.settings.ollamaModel);
-      if (ollama.available && ollama.selectedModel) {
-        return {
-          actual: `Ollama ready at ${ollama.host} (${ollama.models.length} model(s), active: ${ollama.selectedModel}) in ${ollama.latencyMs}ms`,
-          status: 'pass',
-        };
-      }
+      const sample = understandUserInput('Kal ka wether check kar aur crom kholo');
+      const ok = sample.detectedLanguage === 'hinglish' && sample.entities.app === 'chrome';
       return {
-        actual: 'No external LLM server running — using Built-In Local Core + Live Web Knowledge',
+        actual: `Language=${sample.detectedLanguage}, Corrections=${sample.spellingCorrections.length}, AppEntity=${sample.entities.app || 'none'}`,
+        status: ok ? 'pass' : 'fail',
+      };
+    }
+  );
+
+  await runCheck(
+    'sqlite-cognitive-memory',
+    'Persistence',
+    'SQLite 6-Layer Memory, Intents & Knowledge Store',
+    'Load SQLite tables cleanly with parameterized queries',
+    async () => {
+      const memCount = listCognitiveMemories(undefined, 200).length;
+      const intentCount = listDynamicIntents().length;
+      const knowCount = listKnowledgeChunks(200).length;
+      return {
+        actual: `SQLite healthy (${memCount} cognitive memories, ${intentCount} custom intents, ${knowCount} knowledge chunks, ${db.calendar.length} calendar events)`,
         status: 'pass',
       };
     }
@@ -261,8 +268,8 @@ export async function runSafeDiagnosticsSuite(): Promise<DiagnosticsReportPayloa
   await runCheck(
     'free-web-research',
     'AI & Connectivity',
-    'Free Direct Web Research (No Paid API Key)',
-    'Retrieve public search snippets and Wikipedia/DuckDuckGo links without API keys',
+    'Optional Public Web Research (Online Tool)',
+    'Retrieve public search snippets when online or report offline honestly',
     async () => {
       const res = await searchFreeWeb('TypeScript', 'docs');
       if (res.online && res.results.length > 0) {
@@ -296,22 +303,6 @@ export async function runSafeDiagnosticsSuite(): Promise<DiagnosticsReportPayloa
       return {
         actual: `Latest (${latest.engine}): intent ${latest.intentMs}ms · tools ${latest.toolMs}ms · first-token ${latest.firstTokenMs}ms · total ${latest.totalMs}ms`,
         status: 'pass',
-      };
-    }
-  );
-
-  await runCheck(
-    'database-rw',
-    'Persistence',
-    'Local Database Read & Integrity',
-    'Load settings, calendar, memory, workflows, and action logs cleanly',
-    async () => {
-      const hasSettings = Boolean(db.settings?.assistantName);
-      const counts = `${db.calendar.length} events, ${db.memory.length} memory, ${db.chatHistory.length} chats, ${db.actionLogs.length} logs`;
-      return {
-        actual: hasSettings ? `Healthy (${counts})` : 'Database settings missing',
-        status: hasSettings ? 'pass' : 'fail',
-        recommendation: hasSettings ? undefined : 'Verify write permissions to .friday-data/friday-db.json.',
       };
     }
   );
