@@ -16,10 +16,19 @@ import {
   searchWeatherLocations,
 } from './server/weatherService.ts';
 import {
+  cancelFileIndexing,
+  createPermittedFolder,
   getCachedFileIndex,
+  getFileIndexProgress,
+  getPersistedOrIndexedFiles,
   invalidateFileIndexCache,
   isPathPermitted,
+  pauseFileIndexing,
   readPermittedFilePreview,
+  removePermittedFolderFromIndex,
+  resumeFileIndexing,
+  startBackgroundFileIndexing,
+  validateAndNormalizeFolder,
 } from './server/fileService.ts';
 import {
   analyzeMediaOrScreen,
@@ -33,9 +42,21 @@ import {
   synthesizeSpeechWav,
   transcribeAudioBase64,
 } from './server/aiService.ts';
+import { performVisualAnalysis } from './server/visualAnalysisEngine.ts';
+import type { VisualAnalysisRequest } from './src/core/visualAnalysisTypes.ts';
+import {
+  defaultOpenJarvisOrchestrator,
+  profileSystemHardware,
+  getOpenJarvisModelCatalog,
+  startSafeModelDownload,
+  getDownloadStatus,
+  cancelModelDownload,
+  defaultTraceRecorder,
+} from './server/openjarvis/index.ts';
 import {
   appendTrainingDatasetSample,
   addApprovedExternalPath,
+  closeCognitiveSqlite,
   deleteCognitiveMemory,
   deleteDynamicIntent,
   deleteWorkflowPreference,
@@ -89,6 +110,7 @@ import {
   openLocalPathInDefaultApp,
   openWindowsFolder,
   openWindowsWebsite,
+  revealFileInWindowsExplorer,
   sendWindowsMediaKey,
   setWindowsWindowState,
 } from './electron/windowsAutomation.ts';
@@ -117,9 +139,9 @@ function resolveListenPort(): number {
   return Number(process.env.PORT) || 3000;
 }
 
-async function startServer() {
+export async function startServer(portOverride?: number): Promise<{ port: number; close: () => Promise<void> }> {
   const app = express();
-  const PORT = resolveListenPort();
+  const PORT = portOverride ?? resolveListenPort();
 
   app.use(express.json({ limit: '15mb' }));
 
@@ -305,15 +327,172 @@ async function startServer() {
         | 'spreadsheet'
         | 'presentation'
         | 'other';
-      const indexed = getCachedFileIndex(db.settings.allowedFolders, db.settings.pausedIndexing, 300);
+      const indexed = getPersistedOrIndexedFiles(db.settings.allowedFolders, db.settings.pausedIndexing, 1500);
+      let progress = getFileIndexProgress(db.settings.allowedFolders, db.settings.pausedIndexing);
+      if (
+        !db.settings.pausedIndexing &&
+        db.settings.allowedFolders.length > 0 &&
+        indexed.length === 0 &&
+        progress.status !== 'indexing' &&
+        progress.status !== 'completed'
+      ) {
+        void startBackgroundFileIndexing(db.settings.allowedFolders);
+        progress = getFileIndexProgress(db.settings.allowedFolders, db.settings.pausedIndexing);
+      }
       const matches = searchIndexedFiles(indexed, query, category);
       const duplicates = findDuplicateGroups(indexed);
       res.json({
+        status: progress.status,
+        progress,
+        folderStatuses: progress.folderStatuses,
         paused: db.settings.pausedIndexing,
         allowedFolders: db.settings.allowedFolders,
         totalIndexed: indexed.length,
         files: matches,
         duplicates,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/files/status', (_req, res) => {
+    try {
+      const db = loadDb();
+      const progress = getFileIndexProgress(db.settings.allowedFolders, db.settings.pausedIndexing);
+      res.json({
+        ...progress,
+        allowedFolders: db.settings.allowedFolders,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/files/reindex', async (_req, res) => {
+    try {
+      const db = loadDb();
+      if (db.settings.pausedIndexing) {
+        db.settings.pausedIndexing = false;
+        saveDb(db);
+      }
+      const progress = await startBackgroundFileIndexing(db.settings.allowedFolders, { force: true });
+      res.json({ started: true, progress });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/files/pause', (_req, res) => {
+    try {
+      const db = loadDb();
+      db.settings.pausedIndexing = true;
+      saveDb(db);
+      pauseFileIndexing();
+      const progress = getFileIndexProgress(db.settings.allowedFolders, true);
+      res.json({ paused: true, progress });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/files/resume', async (_req, res) => {
+    try {
+      const db = loadDb();
+      db.settings.pausedIndexing = false;
+      saveDb(db);
+      const progress = await resumeFileIndexing(db.settings.allowedFolders);
+      res.json({ paused: false, progress });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/files/cancel', (_req, res) => {
+    try {
+      cancelFileIndexing();
+      const db = loadDb();
+      const progress = getFileIndexProgress(db.settings.allowedFolders, db.settings.pausedIndexing);
+      res.json({ cancelled: true, progress });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/files/folders', async (req, res) => {
+    try {
+      const { folderPath } = req.body as { folderPath?: string };
+      if (!folderPath || !folderPath.trim()) {
+        return res.status(400).json({ error: 'folderPath is required.' });
+      }
+      const check = validateAndNormalizeFolder(folderPath);
+      if (!check.ok) {
+        return res.status(check.exists ? 403 : 400).json({
+          error: check.error || 'Selected folder is invalid or inaccessible.',
+        });
+      }
+      const db = loadDb();
+      const existsAlready = db.settings.allowedFolders.some((f) =>
+        process.platform === 'win32'
+          ? path.resolve(f).toLowerCase() === check.path.toLowerCase()
+          : path.resolve(f) === check.path
+      );
+      if (!existsAlready) {
+        db.settings.allowedFolders = [...db.settings.allowedFolders, check.path];
+        saveDb(db);
+        appendActionLog(db, {
+          agent: 'file',
+          action: 'Grant Permitted Folder Access',
+          target: check.path,
+          status: 'completed',
+        });
+      }
+      invalidateFileIndexCache();
+      let progress = getFileIndexProgress(db.settings.allowedFolders, db.settings.pausedIndexing);
+      if (!db.settings.pausedIndexing) {
+        progress = await startBackgroundFileIndexing(db.settings.allowedFolders, { force: true });
+      }
+      res.json({
+        added: !existsAlready,
+        folder: check.path,
+        allowedFolders: db.settings.allowedFolders,
+        progress,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete('/api/files/folders', (req, res) => {
+    try {
+      const rawFolder = String((req.body as { folderPath?: string })?.folderPath || req.query.folderPath || '');
+      if (!rawFolder.trim()) {
+        return res.status(400).json({ error: 'folderPath is required.' });
+      }
+      const resolvedTarget = path.resolve(rawFolder.trim());
+      const db = loadDb();
+      const nextFolders = db.settings.allowedFolders.filter((f) =>
+        process.platform === 'win32'
+          ? path.resolve(f).toLowerCase() !== resolvedTarget.toLowerCase()
+          : path.resolve(f) !== resolvedTarget
+      );
+      db.settings.allowedFolders = nextFolders;
+      saveDb(db);
+      removePermittedFolderFromIndex(resolvedTarget);
+      if (nextFolders.length === 0) {
+        cancelFileIndexing();
+      }
+      appendActionLog(db, {
+        agent: 'file',
+        action: 'Revoke Permitted Folder Access',
+        target: resolvedTarget,
+        status: 'completed',
+      });
+      const progress = getFileIndexProgress(nextFolders, db.settings.pausedIndexing);
+      res.json({
+        removed: true,
+        allowedFolders: nextFolders,
+        progress,
       });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -366,6 +545,32 @@ async function startServer() {
     }
   });
 
+  app.post('/api/files/reveal', async (req, res) => {
+    try {
+      const { filePath } = req.body as { filePath?: string };
+      if (!filePath) return res.status(400).json({ error: 'filePath is required' });
+      const db = loadDb();
+      const resolved = path.resolve(filePath);
+      if (!isPathPermitted(resolved, db.settings.allowedFolders)) {
+        return res.status(403).json({ error: 'Access denied: file is outside user-permitted folders.' });
+      }
+      if (!fs.existsSync(resolved)) {
+        return res.status(404).json({ error: 'File not found.' });
+      }
+      const result = await revealFileInWindowsExplorer(resolved, db.settings.allowedFolders);
+      appendActionLog(db, {
+        agent: 'file',
+        action: 'Reveal File Location',
+        target: path.basename(resolved),
+        status: result.revealed ? 'completed' : 'blocked',
+        detail: result.message,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.get('/api/files/stream', (req, res) => {
     try {
       const rawPath = String(req.query.path ?? '');
@@ -386,27 +591,49 @@ async function startServer() {
 
   app.post('/api/files/folder', (req, res) => {
     try {
-      const { folderPath, confirmCreate } = req.body as { folderPath?: string; confirmCreate?: boolean };
-      if (!folderPath) {
-        return res.status(400).json({ error: 'folderPath is required' });
-      }
-      const db = loadDb();
-      const resolved = path.resolve(folderPath);
-      if (!isPathPermitted(resolved, db.settings.allowedFolders)) {
-        return res.status(403).json({ error: 'Target folder is outside permitted workspace directories.' });
-      }
+      const { parentFolder, folderName, folderPath, confirmCreate } = req.body as {
+        parentFolder?: string;
+        folderName?: string;
+        folderPath?: string;
+        confirmCreate?: boolean;
+      };
       if (!confirmCreate) {
         return res.status(400).json({ error: 'Explicit confirmation is required to create a folder.' });
       }
-      fs.mkdirSync(resolved, { recursive: true });
-      invalidateFileIndexCache();
+      const db = loadDb();
+      let targetParent = parentFolder?.trim() || '';
+      let targetName = folderName?.trim() || '';
+      if ((!targetParent || !targetName) && folderPath?.trim()) {
+        const resolvedLegacy = path.resolve(folderPath.trim());
+        targetParent = path.dirname(resolvedLegacy);
+        targetName = path.basename(resolvedLegacy);
+      }
+      if (!targetParent || !targetName) {
+        return res.status(400).json({ error: 'Select a parent folder and enter a folder name.' });
+      }
+      const outcome = createPermittedFolder({
+        parentFolder: targetParent,
+        folderName: targetName,
+        allowedFolders: db.settings.allowedFolders,
+      });
+      if (!outcome.created) {
+        return res.status(outcome.statusCode).json({
+          created: false,
+          conflict: Boolean(outcome.conflict),
+          path: outcome.path,
+          error: outcome.error,
+        });
+      }
       appendActionLog(db, {
         agent: 'file',
         action: 'Create Directory',
-        target: path.basename(resolved),
+        target: outcome.path || targetName,
         status: 'completed',
       });
-      res.json({ created: true, path: resolved });
+      if (!db.settings.pausedIndexing) {
+        void startBackgroundFileIndexing(db.settings.allowedFolders, { force: true });
+      }
+      res.json({ created: true, path: outcome.path });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -679,6 +906,105 @@ async function startServer() {
     }
   });
 
+  // OpenJarvis Architecture & Agent Endpoints
+  app.get('/api/openjarvis/status', (_req, res) => {
+    try {
+      const hardware = profileSystemHardware();
+      const models = getOpenJarvisModelCatalog(hardware);
+      const agents = defaultOpenJarvisOrchestrator.listAgents();
+      const recentTraces = defaultTraceRecorder.getRecentTraces(10);
+      res.json({
+        enabled: true,
+        version: '1.0.0',
+        hardware,
+        models,
+        agents,
+        recentTraces,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/openjarvis/models', (_req, res) => {
+    try {
+      const models = defaultOpenJarvisOrchestrator.getModelCatalog();
+      res.json({ models });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/openjarvis/models/download', async (req, res) => {
+    try {
+      const { modelId } = req.body as { modelId: string };
+      if (!modelId) {
+        return res.status(400).json({ error: 'modelId is required.' });
+      }
+      startSafeModelDownload(modelId).catch(() => {});
+      const status = getDownloadStatus(modelId);
+      res.json(status);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/openjarvis/models/download/status/:modelId', (req, res) => {
+    try {
+      const status = getDownloadStatus(req.params.modelId);
+      res.json(status);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/openjarvis/models/download/cancel', async (req, res) => {
+    try {
+      const { modelId } = req.body as { modelId: string };
+      const cancelled = await cancelModelDownload(modelId);
+      res.json({ cancelled });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/openjarvis/execute', async (req, res) => {
+    try {
+      const { command, confirmed } = req.body as { command: string; confirmed?: boolean };
+      if (!command || !command.trim()) {
+        return res.status(400).json({ error: 'command is required.' });
+      }
+      const result = await defaultOpenJarvisOrchestrator.processCommand(command, Boolean(confirmed));
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/openjarvis/traces', (_req, res) => {
+    try {
+      const traces = defaultTraceRecorder.getRecentTraces(30);
+      res.json({ traces });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/openjarvis/traces/feedback', (req, res) => {
+    try {
+      const { traceId, originalCommand, correctedIntent, reason } = req.body as {
+        traceId: string;
+        originalCommand: string;
+        correctedIntent: string;
+        reason: string;
+      };
+      defaultTraceRecorder.recordCorrection(traceId, originalCommand, correctedIntent, reason);
+      res.json({ recorded: true });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.post('/api/files/summarize', async (req, res) => {
     try {
       const { filePath, question } = req.body as { filePath?: string; question?: string };
@@ -727,21 +1053,38 @@ async function startServer() {
 
   app.post('/api/vision/analyze', async (req, res) => {
     try {
-      const { base64Data, mimeType, prompt } = req.body as {
-        base64Data?: string;
-        mimeType?: string;
-        prompt?: string;
-      };
+      const body = req.body as Partial<VisualAnalysisRequest> & { prompt?: string };
+      const { base64Data, mimeType, operationType, fileName, customPrompt, prompt, metadata } = body;
+
       if (!base64Data || !mimeType) {
         return res.status(400).json({ error: 'Media payload (base64Data and mimeType) is required.' });
       }
+
+      // Determine explicit operation type strictly (prevent function mixing)
+      let resolvedOp = operationType;
+      if (!resolvedOp) {
+        if (mimeType === 'application/pdf') resolvedOp = 'pdf_analysis';
+        else if (mimeType.startsWith('audio/')) resolvedOp = 'audio_analysis';
+        else resolvedOp = 'image_analysis';
+      }
+
       const db = loadDb();
-      const result = await analyzeMediaOrScreen({
+      const result = await performVisualAnalysis({
+        operationType: resolvedOp,
         base64Data,
         mimeType,
-        prompt: prompt || '',
-        model: db.settings.aiModel,
+        fileName,
+        customPrompt: customPrompt || prompt || '',
+        metadata,
       });
+
+      appendActionLog(db, {
+        agent: resolvedOp === 'audio_analysis' || resolvedOp === 'pdf_analysis' ? 'media' : 'vision',
+        action: `Visual Engine: ${resolvedOp}`,
+        target: fileName || metadata?.sourceName || mimeType,
+        status: result.success ? 'completed' : 'failed',
+      });
+
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -1096,6 +1439,15 @@ async function startServer() {
     cachedAiHealth = null;
     invalidateFileIndexCache();
     saveDb(db);
+    if (req.body?.pausedIndexing === true) {
+      pauseFileIndexing();
+    } else if (
+      (req.body?.pausedIndexing === false || Array.isArray(req.body?.allowedFolders)) &&
+      !db.settings.pausedIndexing &&
+      db.settings.allowedFolders.length > 0
+    ) {
+      void startBackgroundFileIndexing(db.settings.allowedFolders, { force: true });
+    }
     res.json(db.settings);
   });
 
@@ -1671,41 +2023,78 @@ async function startServer() {
     viteServer = vite;
     app.use(vite.middlewares);
   } else {
-    const distPath = process.env.FRIDAY_DIST_DIR
-      ? path.resolve(process.env.FRIDAY_DIST_DIR)
-      : path.resolve(process.cwd(), 'dist');
+    const candidateDistDirs = [
+      process.env.FRIDAY_DIST_DIR ? path.resolve(process.env.FRIDAY_DIST_DIR) : null,
+      path.resolve(process.cwd(), 'dist'),
+      path.resolve(import.meta.dirname || process.cwd(), '../dist'),
+      path.resolve(import.meta.dirname || process.cwd(), 'dist'),
+    ].filter((p): p is string => Boolean(p));
+    const distPath =
+      candidateDistDirs.find((dir) => fs.existsSync(path.join(dir, 'index.html'))) || candidateDistDirs[0];
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  const httpServer = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`F.R.I.D.A.Y. Command Server active at http://localhost:${PORT}`);
+  const listenHost = process.env.FRIDAY_EMBEDDED_IN_ELECTRON === '1' ? '127.0.0.1' : '0.0.0.0';
+  const httpServer = await new Promise<import('http').Server>((resolve, reject) => {
+    const srv = app.listen(PORT, listenHost, () => {
+      console.log(`F.R.I.D.A.Y. Command Server active at http://localhost:${PORT}`);
+      resolve(srv);
+    });
+    srv.once('error', (err) => {
+      console.error('[F.R.I.D.A.Y. Server] HTTP listener error:', err);
+      reject(err);
+    });
   });
 
-  httpServer.on('error', (err) => {
-    console.error('[F.R.I.D.A.Y. Server] HTTP listener error:', err);
-  });
+  // Warm non-blocking persistent file index in background on server start
+  try {
+    const initialDb = loadDb();
+    if (!initialDb.settings.pausedIndexing && initialDb.settings.allowedFolders.length > 0) {
+      void startBackgroundFileIndexing(initialDb.settings.allowedFolders);
+    }
+  } catch {
+    // Non-fatal startup warm-index error
+  }
 
   const shutdown = async () => {
+    cancelFileIndexing();
     try {
       if (viteServer) await viteServer.close();
     } catch {
       // Ignore Vite close errors during shutdown
     }
-    httpServer.close(() => process.exit(0));
+    await new Promise<void>((resolve) => {
+      httpServer.close(() => resolve());
+    });
+    try {
+      closeCognitiveSqlite();
+    } catch {
+      // Ignore SQLite close errors during shutdown
+    }
   };
 
-  process.on('SIGINT', () => void shutdown());
-  process.on('SIGTERM', () => void shutdown());
+  if (process.env.FRIDAY_EMBEDDED_IN_ELECTRON !== '1') {
+    process.on('SIGINT', () => {
+      void shutdown().then(() => process.exit(0));
+    });
+    process.on('SIGTERM', () => {
+      void shutdown().then(() => process.exit(0));
+    });
+  }
+
+  return { port: PORT, close: shutdown };
 }
 
 process.on('unhandledRejection', (reason) => {
   console.error('[F.R.I.D.A.Y. Server] Unhandled promise rejection:', reason);
 });
 
-startServer().catch((err) => {
-  console.error('[F.R.I.D.A.Y. Server] Fatal startup error:', err);
-  process.exit(1);
-});
+if (process.env.FRIDAY_EMBEDDED_IN_ELECTRON !== '1') {
+  startServer().catch((err) => {
+    console.error('[F.R.I.D.A.Y. Server] Fatal startup error:', err);
+    process.exit(1);
+  });
+}

@@ -543,17 +543,27 @@ export class CognitiveOrchestrator {
       agents.add('calendar');
       steps.push({ id: 'step-1', agent: 'calendar', title: 'Save reminder to SQLite schedule', status: res.ok ? 'completed' : 'failed' });
     } else if (topIntent?.handlerAction === 'tool.media_control' && this.deps.toolAdapter.mediaControl) {
-      const action = /\b(badha|increase|up|raise)\b/i.test(understanding.correctedInput)
+      const text = understanding.correctedInput;
+      const isSpecificSongRequest =
+        /\b(song|songs|gaana|music|track|video|movie|lagao|bajao|chalao|sunao)\b/i.test(text) &&
+        !/\b(pause|resume|next|previous|skip|mute|volume|badha|kam|rok|stop)\b/i.test(text);
+      const action = /\b(badha|increase|up|raise)\b/i.test(text)
         ? 'volume_up'
-        : /\b(kam|decrease|down|lower)\b/i.test(understanding.correctedInput)
+        : /\b(kam|decrease|down|lower)\b/i.test(text)
           ? 'volume_down'
-          : /\b(mute)\b/i.test(understanding.correctedInput)
+          : /\b(mute)\b/i.test(text)
             ? 'mute'
-            : 'play_pause';
+            : /\b(next|agla|skip)\b/i.test(text)
+              ? 'next'
+              : /\b(previous|pichla|prev)\b/i.test(text)
+                ? 'previous'
+                : isSpecificSongRequest
+                  ? turn.rawText
+                  : 'play_pause';
       const res = await this.deps.toolAdapter.mediaControl(action);
       toolResultSummary = res.summary;
       agents.add('media');
-      steps.push({ id: 'step-1', agent: 'media', title: `Media control (${action})`, status: res.ok ? 'completed' : 'failed' });
+      steps.push({ id: 'step-1', agent: 'media', title: `Media control (${isSpecificSongRequest ? 'play' : action})`, status: res.ok ? 'completed' : 'failed' });
     } else if (decision.route === 'online_research' && this.deps.toolAdapter.webResearch) {
       const res = await this.deps.toolAdapter.webResearch(understanding.correctedInput);
       isFailure = !res.ok;
@@ -587,7 +597,7 @@ export class CognitiveOrchestrator {
         activeTopic: this.context.activeTopic,
         seed: turn.rawText,
       });
-      steps.push({ id: 'step-1', agent: 'core', title: 'Synthesize conversational status reply', status: 'completed' });
+      steps.push({ id: 'step-1', agent: 'core', title: 'Prepare conversational reply', status: 'completed' });
     }
 
     const tToolEnd = performance.now();

@@ -10,6 +10,7 @@ import type {
   DesktopVoiceCapabilities,
   MediaControlAction,
 } from '../src/core/types.ts';
+import { evaluateWavPcm16Speech } from '../src/core/voicePipeline.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -349,6 +350,7 @@ const SAFE_SETTINGS_URIS: Record<string, string> = {
 let activeSapiSpeechProcess: ChildProcess | null = null;
 
 function normalizeAppLookupKey(raw: string): string | null {
+  if (typeof raw !== 'string') return null;
   const clean = raw.trim().toLowerCase();
   const matched = ALIAS_TO_CATALOG_KEY.find((a) => a.rx.test(clean));
   return matched ? matched.key : null;
@@ -497,6 +499,7 @@ export async function resolveWindowsExecutableForKey(catalogKey: string): Promis
 
 export async function isWindowsAppAvailable(commandOrName: string): Promise<boolean> {
   if (process.platform !== 'win32') return false;
+  if (typeof commandOrName !== 'string' || !commandOrName.trim()) return false;
   const catalogKey = normalizeAppLookupKey(commandOrName);
   if (catalogKey) {
     const resolved = await resolveWindowsExecutableForKey(catalogKey);
@@ -510,6 +513,7 @@ export async function isWindowsAppAvailable(commandOrName: string): Promise<bool
 }
 
 export function normalizeSafeWebsiteUrl(rawInput: string): { label: string; url: string } | null {
+  if (typeof rawInput !== 'string') return null;
   const clean = rawInput.trim();
   if (!clean) return null;
   const lower = clean.toLowerCase();
@@ -586,6 +590,22 @@ export async function openWindowsWebsite(
   };
 }
 
+export function isWindowsPathPermitted(targetPath: string, allowedFolders: string[]): boolean {
+  if (!targetPath || targetPath.includes('\0') || allowedFolders.length === 0) return false;
+  const norm = (p: string) => {
+    const resolved = path.resolve(p);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  const normTarget = norm(targetPath);
+  return allowedFolders.some((f) => {
+    if (!f || f.includes('\0')) return false;
+    const normRoot = norm(f);
+    if (normTarget === normRoot) return true;
+    const rootWithSep = normRoot.endsWith(path.sep) ? normRoot : normRoot + path.sep;
+    return normTarget.startsWith(rootWithSep);
+  });
+}
+
 export async function openWindowsFolder(
   folderQuery: string,
   allowedFolders: string[] = []
@@ -611,23 +631,22 @@ export async function openWindowsFolder(
     targetDir = named.dir;
     targetLabel = named.label;
   } else {
-    const winPathMatch = folderQuery.match(/([a-zA-Z]:\\[^\n\r"'<>|]+)/);
+    const winPathMatch =
+      folderQuery.match(/([a-zA-Z]:\\[^\n\r"'<>|]*)/) ||
+      folderQuery.match(/\b([a-zA-Z])\s*(?::|drive)\b/i);
     if (winPathMatch) {
-      const candidate = path.resolve(winPathMatch[1].trim());
+      const rawCandidate =
+        winPathMatch[1].length === 1 ? `${winPathMatch[1].toUpperCase()}:\\` : winPathMatch[1].trim();
+      const candidate = path.resolve(rawCandidate);
       const permitted =
-        candidate === home ||
-        candidate.startsWith(home + path.sep) ||
-        allowedFolders.some((f) => {
-          const r = path.resolve(f);
-          return candidate === r || candidate.startsWith(r + path.sep);
-        });
+        isWindowsPathPermitted(candidate, [home, ...allowedFolders]);
       if (permitted) {
         targetDir = candidate;
         targetLabel = candidate;
       } else {
         return {
           opened: false,
-          message: `Folder "${candidate}" is outside permitted user folders. Grant access in Settings -> File Permissions first.`,
+          message: `Folder "${candidate}" is outside permitted user folders. Grant access in File Explorer -> Permitted Folders or Settings first.`,
         };
       }
     }
@@ -667,6 +686,38 @@ export async function openWindowsFolder(
     path: targetDir,
     message: `Could not open File Explorer for "${targetDir}": ${spawnRes.error || 'Launch failed'}.`,
   };
+}
+
+export async function revealFileInWindowsExplorer(
+  filePath: string,
+  allowedFolders: string[] = []
+): Promise<{ revealed: boolean; path?: string; message: string }> {
+  if (!filePath || filePath.includes('\0')) {
+    return { revealed: false, message: 'Invalid file path.' };
+  }
+  const resolved = path.resolve(filePath);
+  if (allowedFolders.length > 0 && !isWindowsPathPermitted(resolved, allowedFolders)) {
+    return {
+      revealed: false,
+      path: resolved,
+      message: 'Access denied: file is outside user-permitted folders.',
+    };
+  }
+  if (!fs.existsSync(resolved)) {
+    return { revealed: false, path: resolved, message: `File "${resolved}" does not exist.` };
+  }
+  if (process.platform !== 'win32') {
+    return {
+      revealed: false,
+      path: resolved,
+      message: `Verified file "${resolved}". Revealing items in Explorer requires a Windows desktop session.`,
+    };
+  }
+  const explorerPath = path.join(getEnvDirs().systemRoot, 'explorer.exe');
+  const spawnRes = await spawnVerifiedExecutable(explorerPath, [`/select,${resolved}`]);
+  return spawnRes.started
+    ? { revealed: true, path: resolved, message: `Revealed "${path.basename(resolved)}" in File Explorer.` }
+    : { revealed: false, path: resolved, message: `Failed to reveal "${resolved}": ${spawnRes.error || 'Explorer error'}.` };
 }
 
 export async function listActiveWindows(): Promise<Array<{ id: number; name: string; title: string }>> {
@@ -776,10 +827,10 @@ export async function launchWindowsTarget(command: string): Promise<{
       errorCode: 'NOT_WINDOWS',
     };
   }
-  const clean = command.trim();
-  if (!clean) {
+  if (typeof command !== 'string' || !command.trim()) {
     return { launched: false, detail: 'No application name specified.', errorCode: 'INVALID_TARGET' };
   }
+  const clean = command.trim();
 
   const lower = clean.toLowerCase();
 
@@ -1042,6 +1093,168 @@ export async function getWindowsSpeechCapabilities(): Promise<DesktopVoiceCapabi
   }
 }
 
+export function buildWindowsSapiRecognitionScript(wavPath: string, language = 'en-US'): string {
+  const cleanLang = /^[a-z]{2}(-[A-Z]{2})?$/.test(language) ? language : 'en-US';
+  const escapedWav = wavPath.replace(/'/g, "''");
+  return `
+    Add-Type -AssemblyName System.Speech;
+    $installed = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers();
+    if (-not $installed -or $installed.Count -eq 0) {
+      @{ ok = $false; text = ''; errorCode = 'NO_RECOGNIZER'; error = 'No Windows Speech Recognition language pack is installed in Windows Settings -> Time & language -> Speech.' } | ConvertTo-Json -Compress;
+      exit 0
+    }
+    $targetLang = '${cleanLang}';
+    $baseLang = $targetLang.Split('-')[0];
+    $chosen = $installed | Where-Object { $_.Culture.Name -ieq $targetLang } | Select-Object -First 1;
+    if (-not $chosen) {
+      $chosen = $installed | Where-Object { $_.Culture.TwoLetterISOLanguageName -ieq $baseLang } | Select-Object -First 1;
+    }
+    if (-not $chosen) {
+      $chosen = $installed | Where-Object { $_.Culture.TwoLetterISOLanguageName -ieq 'en' } | Select-Object -First 1;
+    }
+    if (-not $chosen) { $chosen = $installed | Select-Object -First 1; }
+    try {
+      $cmdChoices = New-Object System.Speech.Recognition.Choices(@(
+        'Hey Friday',
+        'Friday',
+        'Hey Friday open Chrome',
+        'Hey Friday open YouTube',
+        'Hey Friday open Visual Studio Code',
+        'Hey Friday open Notepad',
+        'Hey Friday check my laptop performance',
+        'Hey Friday play music',
+        'Hey Friday play music on YouTube',
+        'Hey Friday create a folder on D drive',
+        'open Chrome',
+        'open Google Chrome',
+        'open browser',
+        'open YouTube',
+        'open Visual Studio Code',
+        'open VS Code',
+        'open Notepad',
+        'open Notepad and write a program',
+        'open Calculator',
+        'open File Explorer',
+        'open Downloads',
+        'open Terminal',
+        'open Settings',
+        'check my laptop performance',
+        'check system health',
+        'play music',
+        'play music on YouTube',
+        'create a folder on D drive',
+        'search for Python programming',
+        'search for C programming',
+        'what is the weather',
+        'what time is it',
+        'what is RAM',
+        'what is CPU',
+        'hello Friday',
+        'hi Friday',
+        'stop',
+        'pause',
+        'resume',
+        'cancel',
+        'Chrome kholo',
+        'YouTube kholo',
+        'YouTube par music chala',
+        'Mujhe Python samjhao'
+      ));
+
+      function Run-SapiPass([bool]$useCommands) {
+        $parts = New-Object System.Collections.Generic.List[string];
+        $bestConf = 0.0;
+        $rawAny = $false;
+        $eng = $null;
+        try {
+          $eng = New-Object System.Speech.Recognition.SpeechRecognitionEngine($chosen);
+          $eng.InitialSilenceTimeout = [TimeSpan]::FromSeconds(4);
+          $eng.BabbleTimeout = [TimeSpan]::FromSeconds(8);
+          $eng.EndSilenceTimeout = [TimeSpan]::FromSeconds(1.2);
+          $eng.EndSilenceTimeoutAmbiguous = [TimeSpan]::FromSeconds(1.5);
+          if ($useCommands) {
+            $gb = New-Object System.Speech.Recognition.GrammarBuilder;
+            $gb.Culture = $chosen.Culture;
+            $gb.Append($cmdChoices);
+            $cmdG = New-Object System.Speech.Recognition.Grammar($gb);
+            $cmdG.Name = 'FridayCommands';
+            $cmdG.Weight = 0.35;
+            $dictG = New-Object System.Speech.Recognition.DictationGrammar;
+            $dictG.Name = 'FridayDictation';
+            $dictG.Weight = 0.65;
+            $eng.LoadGrammar($dictG);
+            $eng.LoadGrammar($cmdG);
+          } else {
+            $dictOnly = New-Object System.Speech.Recognition.DictationGrammar;
+            $dictOnly.Name = 'FridayDictationOnly';
+            $eng.LoadGrammar($dictOnly);
+          }
+          $eng.SetInputToWaveFile('${escapedWav}');
+          for ($iter = 0; $iter -lt 6; $iter++) {
+            $r = $null;
+            try {
+              $r = $eng.Recognize();
+            } catch {
+              $recErr = $_.Exception.Message;
+              if ($rawAny -or ($recErr -match 'No audio input|audio input|wave|stream')) {
+                break;
+              }
+              throw;
+            }
+            if (-not $r) { break; }
+            $rawAny = $true;
+            $c = [double]$r.Confidence;
+            if ($c -gt $bestConf) { $bestConf = $c; }
+            $candidate = '';
+            if ($r.Text) { $candidate = $r.Text.Trim(); }
+            elseif ($r.Alternates -and $r.Alternates.Count -gt 0 -and $r.Alternates[0].Text) {
+              $candidate = $r.Alternates[0].Text.Trim();
+              $c = [double]$r.Alternates[0].Confidence;
+            }
+            $gName = '';
+            if ($r.Grammar) { $gName = [string]$r.Grammar.Name; }
+            if ($candidate -and (($gName -eq 'FridayCommands' -and $c -ge 0.12) -or ($gName -ne 'FridayCommands' -and $c -ge 0.05))) {
+              $parts.Add($candidate);
+            }
+          }
+        } finally {
+          if ($eng) {
+            try { $eng.SetInputToNull() } catch {}
+            try { $eng.Dispose() } catch {}
+          }
+        }
+        return @{
+          text = ($parts -join ' ').Trim();
+          conf = $bestConf;
+          rawAny = $rawAny;
+        };
+      }
+
+      $pass1 = Run-SapiPass $true;
+      $finalText = $pass1.text;
+      $finalConf = [double]$pass1.conf;
+      $hadResult = [bool]$pass1.rawAny;
+
+      if (-not $finalText) {
+        $pass2 = Run-SapiPass $false;
+        if ($pass2.text) {
+          $finalText = $pass2.text;
+          $finalConf = [double]$pass2.conf;
+        }
+        if ($pass2.rawAny) { $hadResult = $true; }
+      }
+
+      if (-not $finalText -and $hadResult -and $finalConf -lt 0.05) {
+        @{ ok = $false; text = ''; errorCode = 'LOW_CONFIDENCE'; recognizerCulture = $chosen.Culture.Name; error = 'Speech was unclear or very quiet — try speaking slightly louder or closer to the mic.' } | ConvertTo-Json -Compress;
+      } else {
+        @{ ok = $true; text = $finalText; recognizerCulture = $chosen.Culture.Name } | ConvertTo-Json -Compress;
+      }
+    } catch {
+      @{ ok = $false; text = ''; errorCode = 'RECOGNIZER_ERROR'; recognizerCulture = $chosen.Culture.Name; error = $_.Exception.Message } | ConvertTo-Json -Compress;
+    }
+  `;
+}
+
 export async function recognizeWindowsSpeechFromWav(
   wavBase64: string,
   language = 'en-US'
@@ -1077,41 +1290,21 @@ export async function recognizeWindowsSpeechFromWav(
     };
   }
 
-  const cleanLang = /^[a-z]{2}(-[A-Z]{2})?$/.test(language) ? language : 'en-US';
+  const speechEnergy = evaluateWavPcm16Speech(audioBuf);
+  if (!speechEnergy.hasSpeech) {
+    return {
+      ok: false,
+      text: '',
+      engine: 'windows-system-speech',
+      errorCode: 'SILENT_AUDIO',
+      error:
+        'Microphone captured only silence or faint background noise — speak clearly closer to the mic and try again.',
+    };
+  }
+
   const tempWavPath = path.join(os.tmpdir(), `friday-stt-${crypto.randomUUID()}.wav`);
   fs.writeFileSync(tempWavPath, audioBuf);
-
-  const escapedWav = tempWavPath.replace(/'/g, "''");
-  const script = `
-    Add-Type -AssemblyName System.Speech;
-    $installed = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers();
-    if (-not $installed -or $installed.Count -eq 0) {
-      @{ ok = $false; text = ''; errorCode = 'NO_RECOGNIZER'; error = 'No Windows Speech Recognition language pack is installed in Windows Settings -> Time & language -> Speech.' } | ConvertTo-Json -Compress;
-      exit 0
-    }
-    $targetLang = '${cleanLang}';
-    $baseLang = $targetLang.Split('-')[0];
-    $chosen = $installed | Where-Object { $_.Culture.Name -ieq $targetLang } | Select-Object -First 1;
-    if (-not $chosen) {
-      $chosen = $installed | Where-Object { $_.Culture.TwoLetterISOLanguageName -ieq $baseLang } | Select-Object -First 1;
-    }
-    if (-not $chosen) {
-      $chosen = $installed | Where-Object { $_.Culture.TwoLetterISOLanguageName -ieq 'en' } | Select-Object -First 1;
-    }
-    if (-not $chosen) { $chosen = $installed | Select-Object -First 1; }
-    try {
-      $engine = New-Object System.Speech.Recognition.SpeechRecognitionEngine($chosen);
-      $grammar = New-Object System.Speech.Recognition.DictationGrammar;
-      $engine.LoadGrammar($grammar);
-      $engine.SetInputToWaveFile('${escapedWav}');
-      $result = $engine.Recognize();
-      $engine.Dispose();
-      $txt = if ($result -and $result.Text) { $result.Text.Trim() } else { '' };
-      @{ ok = $true; text = $txt; recognizerCulture = $chosen.Culture.Name } | ConvertTo-Json -Compress;
-    } catch {
-      @{ ok = $false; text = ''; errorCode = 'RECOGNIZER_ERROR'; recognizerCulture = $chosen.Culture.Name; error = $_.Exception.Message } | ConvertTo-Json -Compress;
-    }
-  `;
+  const script = buildWindowsSapiRecognitionScript(tempWavPath, language);
 
   try {
     const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], {
@@ -1401,4 +1594,144 @@ export async function captureAndOcrScreenWindows(): Promise<{
     detail: `Extracted ${uiaLines.length} accessibility text items from active Windows desktop (${fg.detail}).`,
   };
 }
+
+export async function captureScreenWindowsGdi(): Promise<{
+  ok: boolean;
+  base64Data?: string;
+  mimeType: string;
+  sourceName?: string;
+  width?: number;
+  height?: number;
+  detail: string;
+  error?: string;
+}> {
+  if (process.platform !== 'win32') {
+    return {
+      ok: false,
+      mimeType: 'image/png',
+      detail: 'Native GDI screen capture requires a Windows desktop host.',
+      error: 'NOT_WINDOWS',
+    };
+  }
+  const script = `
+    Add-Type -AssemblyName System.Drawing;
+    Add-Type -AssemblyName System.Windows.Forms;
+    $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds;
+    $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height);
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap);
+    $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size);
+    $ms = New-Object System.IO.MemoryStream;
+    $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png);
+    $bytes = $ms.ToArray();
+    $b64 = [System.Convert]::ToBase64String($bytes);
+    $graphics.Dispose();
+    $bitmap.Dispose();
+    $ms.Dispose();
+    @{ ok = $true; width = $bounds.Width; height = $bounds.Height; base64 = $b64 } | ConvertTo-Json -Compress
+  `;
+  try {
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], {
+      timeout: 8000,
+      maxBuffer: 40 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout.trim() || '{}') as { ok?: boolean; width?: number; height?: number; base64?: string };
+    if (parsed.ok && parsed.base64) {
+      return {
+        ok: true,
+        base64Data: parsed.base64,
+        mimeType: 'image/png',
+        sourceName: 'Primary Windows Display',
+        width: parsed.width,
+        height: parsed.height,
+        detail: `Captured Primary Display (${parsed.width}x${parsed.height}) via Windows GDI.`,
+      };
+    }
+    return { ok: false, mimeType: 'image/png', detail: 'Failed to capture screen via Windows GDI.', error: 'CAPTURE_FAILED' };
+  } catch (err) {
+    return { ok: false, mimeType: 'image/png', detail: (err as Error).message, error: (err as Error).message };
+  }
+}
+
+export async function ocrBitmapWindows(base64Png: string): Promise<{
+  ok: boolean;
+  text: string;
+  wordCount: number;
+  engine: string;
+  detail: string;
+}> {
+  if (process.platform !== 'win32') {
+    return {
+      ok: false,
+      text: '',
+      wordCount: 0,
+      engine: 'non-windows-fallback',
+      detail: 'Windows WinRT OCR requires a live Windows 10/11 session.',
+    };
+  }
+
+  const safeB64 = base64Png.replace(/[^a-zA-Z0-9+/=]/g, '');
+  if (!safeB64) {
+    return { ok: false, text: '', wordCount: 0, engine: 'Windows.Media.Ocr', detail: 'Empty bitmap data' };
+  }
+
+  const script = `
+    try {
+      Add-Type -AssemblyName System.IO;
+      Add-Type -AssemblyName System.Drawing;
+      [Windows.Security.Cryptography.CryptographicBuffer, Windows.Security.Cryptography, ContentType = WindowsRuntime] | Out-Null;
+      [Windows.Storage.Streams.InMemoryRandomAccessStream, Windows.Storage.Streams, ContentType = WindowsRuntime] | Out-Null;
+      [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType = WindowsRuntime] | Out-Null;
+      [Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType = WindowsRuntime] | Out-Null;
+
+      $bytes = [System.Convert]::FromBase64String('${safeB64}');
+      $stream = New-Object Windows.Storage.Streams.InMemoryRandomAccessStream;
+      $writer = New-Object Windows.Storage.Streams.DataWriter($stream);
+      $writer.WriteBytes($bytes);
+      $writer.StoreAsync().AsTask().Wait();
+      $stream.Seek(0);
+
+      $decoder = [Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream).AsTask().Result;
+      $softwareBitmap = $decoder.GetSoftwareBitmapAsync().AsTask().Result;
+
+      $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages();
+      if (-not $engine) {
+        $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage([Windows.Globalization.Language]::new('en-US'));
+      }
+      if ($engine) {
+        $ocrRes = $engine.RecognizeAsync($softwareBitmap).AsTask().Result;
+        @{ ok = $true; text = $ocrRes.Text; engine = 'Windows.Media.Ocr' } | ConvertTo-Json -Compress
+      } else {
+        @{ ok = $false; text = ''; engine = 'Windows.Media.Ocr: unavailable' } | ConvertTo-Json -Compress
+      }
+    } catch {
+      @{ ok = $false; text = ''; error = $_.Exception.Message } | ConvertTo-Json -Compress
+    }
+  `;
+
+  try {
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], {
+      timeout: 10000,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout.trim() || '{}') as { ok?: boolean; text?: string; engine?: string; error?: string };
+    const text = (parsed.text || '').trim();
+    const wordCount = text ? text.split(/\s+/).length : 0;
+    return {
+      ok: Boolean(parsed.ok && text),
+      text,
+      wordCount,
+      engine: parsed.engine || 'Windows.Media.Ocr',
+      detail: parsed.ok ? `Recognized ${wordCount} words via native Windows WinRT OCR.` : (parsed.error || 'No OCR text extracted'),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      text: '',
+      wordCount: 0,
+      engine: 'Windows.Media.Ocr',
+      detail: (err as Error).message,
+    };
+  }
+}
+
 

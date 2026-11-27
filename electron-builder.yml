@@ -10,8 +10,15 @@ files:
   - server/**/*
   - src/core/**/*
   - electron/**/*
+  - electron-builder.yml
   - package.json
+asarUnpack:
+  - dist/**/*
+  - electron-builder.yml
+  - electron/icon.ico
+  - electron/icon.png
 win:
+  icon: electron/icon.ico
   target:
     - target: nsis
       arch:
@@ -24,3 +31,6 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: F.R.I.D.A.Y.
+  installerIcon: electron/icon.ico
+  uninstallerIcon: electron/icon.ico
+  installerHeaderIcon: electron/icon.ico

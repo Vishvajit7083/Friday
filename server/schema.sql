@@ -170,3 +170,28 @@ CREATE TABLE IF NOT EXISTS workflow_preferences (
   updated_at TEXT NOT NULL
 );
 
+-- Persistent File Explorer Index & Folder State
+CREATE TABLE IF NOT EXISTS file_index (
+  id TEXT PRIMARY KEY,
+  root_folder TEXT NOT NULL,
+  name TEXT NOT NULL,
+  path TEXT NOT NULL UNIQUE,
+  relative_path TEXT NOT NULL,
+  extension TEXT NOT NULL,
+  category TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  modified_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  preview_text TEXT,
+  content_excerpt TEXT,
+  indexed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS file_index_folders (
+  root_folder TEXT PRIMARY KEY,
+  file_count INTEGER NOT NULL DEFAULT 0,
+  readable INTEGER NOT NULL DEFAULT 1,
+  last_indexed_at TEXT,
+  last_error TEXT
+);
+

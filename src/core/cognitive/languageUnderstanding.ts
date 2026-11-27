@@ -347,7 +347,9 @@ export function understandUserInput(
     /\b(?:kya\s+hai|kya\s+hota\s+hai|kya\s+kar\s+rahi|kaisa\s+hai|andar\s+kya\s+hai|samjhao|samjha\s+do)\b/i.test(lower);
   const isCommand =
     canonicalTokens.some((t) => ['open', 'close', 'set', 'save', 'find', 'show', 'repeat', 'continue'].includes(t)) ||
-    /\b(?:open|close|launch|start|create|organize|delete|schedule|remind|laga|kholo|bata|dikha|samjha)\b/i.test(lower);
+    /\b(?:open|close|launch|start|create|organize|delete|schedule|remind|play|laga|lagao|bajao|chala|chalao|banao|kholo|bata|batao|dikha|dikhao|samjha|samjhao|dhund|dhoondo|dhundo)\b/i.test(
+      lower
+    );
 
   const isFollowUp =
     isRepeatRequest ||

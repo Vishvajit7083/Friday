@@ -96,6 +96,54 @@ export function encodeMonoWav16kBase64(samples: Float32Array, inputSampleRate: n
   return bytesToBase64(wavBytes);
 }
 
+/**
+ * Trims excessive leading/trailing silence (>200ms) and normalizes quiet laptop microphone
+ * recordings toward a healthy peak (~0.72) before feeding local speech recognizers (SAPI5).
+ */
+export function prepareSpeechAudioForStt(samples: Float32Array, inputSampleRate: number): Float32Array {
+  if (!samples.length) return samples;
+  const safeRate = Number.isFinite(inputSampleRate) && inputSampleRate > 0 ? inputSampleRate : 16000;
+
+  let peak = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    const abs = samples[i] < 0 ? -samples[i] : samples[i];
+    if (abs > peak) peak = abs;
+  }
+  if (peak < 0.002) return samples;
+
+  // Locate first and last speech activity above adaptive threshold
+  const gate = Math.max(0.005, peak * 0.08);
+  let firstActive = -1;
+  let lastActive = -1;
+  for (let i = 0; i < samples.length; i += 1) {
+    const abs = samples[i] < 0 ? -samples[i] : samples[i];
+    if (abs >= gate) {
+      if (firstActive === -1) firstActive = i;
+      lastActive = i;
+    }
+  }
+
+  const padSamples = Math.floor(safeRate * 0.2);
+  const startIdx = firstActive === -1 ? 0 : Math.max(0, firstActive - padSamples);
+  const endIdx = lastActive === -1 ? samples.length : Math.min(samples.length, lastActive + padSamples);
+  const sliced = samples.subarray(startIdx, Math.max(startIdx + 1, endIdx));
+
+  // Boost quiet mic audio cleanly up to ~0.72 peak (capped at 8x to avoid amplifying pure hiss)
+  const targetPeak = 0.72;
+  const gain = peak < targetPeak ? Math.min(8, targetPeak / peak) : 1;
+  const out = new Float32Array(sliced.length);
+  for (let i = 0; i < sliced.length; i += 1) {
+    const scaled = sliced[i] * gain;
+    out[i] = scaled > 0.98 ? 0.98 : scaled < -0.98 ? -0.98 : scaled;
+  }
+  return out;
+}
+
+export function encodeSpeechWav16kBase64(samples: Float32Array, inputSampleRate: number): string {
+  const prepared = prepareSpeechAudioForStt(samples, inputSampleRate);
+  return encodeMonoWav16kBase64(prepared, inputSampleRate);
+}
+
 export function computeRmsLevel(samples: Float32Array): number {
   if (!samples.length) return 0;
   let sumSq = 0;

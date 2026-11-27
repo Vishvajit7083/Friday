@@ -200,29 +200,6 @@ export function AIChatFullView({
                 </div>
               ) : null}
 
-              {msg.steps && msg.steps.length > 0 && (
-                <div className="mt-2.5 pt-2 border-t border-slate-800 space-y-1">
-                  {msg.steps.map((step) => (
-                    <div key={step.id} className="flex items-center gap-2 text-[11px] text-slate-400">
-                      <span className="font-mono-tabular text-cyan-400 uppercase">{step.agent}</span>
-                      <span aria-hidden="true">·</span>
-                      <span className="text-slate-300 flex-1">{step.title}</span>
-                      <span
-                        className={`font-mono-tabular ${
-                          step.status === 'completed'
-                            ? 'text-emerald-300'
-                            : step.status === 'failed'
-                            ? 'text-rose-300'
-                            : 'text-amber-300'
-                        }`}
-                      >
-                        {step.status}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
               {msg.sources && msg.sources.length > 0 && (
                 <div className="mt-2.5 pt-2 border-t border-slate-800">
                   <div className="text-[11px] font-semibold text-slate-400 mb-1">Verified Sources</div>

@@ -42,6 +42,7 @@ import {
 import { AutomationFileManager } from '../../../server/automation/fileManager';
 import { automationTaskManager } from '../../../server/automation/workflowExecutor';
 import {
+  closeCognitiveSqlite,
   deleteWorkflowPreference,
   listBackgroundTaskRecords,
   listWorkflowPreferences,
@@ -50,7 +51,12 @@ import {
 import { loadDb, saveDb } from '../../../server/store';
 
 test.after(() => {
-  fs.rmSync(tempRoot, { recursive: true, force: true });
+  closeCognitiveSqlite();
+  try {
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  } catch {
+    // Windows Defender or OS file handle release delay on temp dir cleanup
+  }
 });
 
 test('AutomationRegistry registers all 11 plugins and supports enable/disable toggles', () => {
@@ -123,6 +129,16 @@ test('WorkflowPlanner plans Hinglish/English goals, workflow controls, and Workf
   assert.equal(loginPlan.scenarioKey, 'vscode_login_website');
   assert.ok(loginPlan.usesPreferences.some((p) => p.includes('D:\\WebProjects')));
   assert.equal(loginPlan.steps.length, 4);
+
+  assert.equal(WorkflowPlanner.isAutomationGoal('Create a folder on D drive'), true);
+  assert.equal(WorkflowPlanner.isAutomationGoal('D drive mein ek folder banao'), true);
+  const folderPlan = AutomationBrain.plan('Create a folder on D drive', {
+    allowedFolders: [tempWorkDir],
+    preferences: [],
+  });
+  assert.equal(folderPlan.scenarioKey, 'create_folder');
+  assert.equal(folderPlan.steps.length >= 1, true);
+  assert.equal(folderPlan.steps[0]?.params.folderPath, 'D:\\FridayFolder');
 });
 
 test('SafetyManager and PermissionManager block prohibited actions and gate high-risk terminal/delete ops', () => {

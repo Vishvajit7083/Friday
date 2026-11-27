@@ -59,7 +59,10 @@ export async function handleMediaVoiceCommand(
       message: res.executed ? 'Returned to previous media track.' : res.detail,
     };
   }
-  if (/\b(pause|resume)\b/.test(lower) && !/\bplay\b.*\b(music|song|video|downloaded|favourite|favorite)\b/.test(lower)) {
+  if (
+    lower.trim() === 'play_pause' ||
+    (/\b(pause|resume)\b/.test(lower) && !/\b(play|lagao|bajao|chalao|sunao)\b.*\b(music|song|gaana|video|downloaded|favourite|favorite)\b/.test(lower))
+  ) {
     const res = await sendWindowsMediaKey('play_pause');
     return {
       handled: true,
@@ -67,23 +70,31 @@ export async function handleMediaVoiceCommand(
       message: res.executed ? 'Toggled media playback (Play/Pause).' : res.detail,
     };
   }
+  if (lower.trim() === 'volume_up' || lower.trim() === 'volume_down' || lower.trim() === 'mute' || lower.trim() === 'next' || lower.trim() === 'previous') {
+    const res = await sendWindowsMediaKey(lower.trim() as MediaControlAction);
+    return {
+      handled: true,
+      mediaAction: lower.trim() as MediaControlAction,
+      message: res.executed ? `Executed media action: ${lower.trim()}.` : res.detail,
+    };
+  }
 
   // 2. Local music / video / image lookup & open
   const files = getCachedFileIndex(allowedFolders, pausedIndexing, 300);
   const wantVideo = /\b(video|movie|clip)\b/.test(lower);
-  const wantAudio = /\b(music|song|audio|track|listen|favourite|favorite)\b/.test(lower);
-  const category = wantVideo ? 'video' : wantAudio ? 'audio' : 'all';
+  const wantAudio = /\b(music|song|songs|gaana|audio|track|listen|favourite|favorite|lagao|bajao|chalao|sunao)\b/.test(lower);
+  const category = wantVideo ? 'video' : 'audio';
 
-  const matches = searchIndexedFiles(files, userCommand, category);
+  const matches = wantVideo || wantAudio ? searchIndexedFiles(files, userCommand, category) : [];
   if (matches.length === 0) {
     const explicitLocalOnly = /\b(local|downloaded|offline|my\s+(?:music|songs?|folder))\b/.test(lower);
     if (!wantVideo && !explicitLocalOnly && wantAudio) {
       const cleanQuery = userCommand
-        .replace(/\b(hey\s+friday|friday|play|listen\s+to|some|please|chala|bajao|sunao)\b/gi, ' ')
+        .replace(/\b(hey\s+friday|friday|play|listen\s+to|some|please|ek|achha|accha|sa|koi|gaana|lagao|chala|chalao|bajao|sunao|kar|de)\b/gi, ' ')
         .replace(/\s+/g, ' ')
         .trim();
       const ytRes = await resolveAndPlayYouTube({
-        query: cleanQuery || 'popular music playlist',
+        query: cleanQuery === 'song' || !cleanQuery ? 'popular music playlist' : cleanQuery,
         browser: 'chrome',
         online: true,
       });

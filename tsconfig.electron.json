@@ -12,5 +12,5 @@
     "rewriteRelativeImportExtensions": true,
     "types": ["node"]
   },
-  "include": ["electron/**/*.ts", "src/core/types.ts"]
+  "include": ["electron/**/*.ts", "src/core/types.ts", "src/core/voicePipeline.ts"]
 }

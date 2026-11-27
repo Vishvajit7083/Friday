@@ -227,17 +227,68 @@ export interface DesktopAppItem {
   description: string;
 }
 
+export type FileIndexerStatus =
+  | 'not_configured'
+  | 'permission_required'
+  | 'ready'
+  | 'indexing'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'permission_denied';
+
+export interface FolderPermissionStatus {
+  path: string;
+  exists: boolean;
+  readable: boolean;
+  error?: string;
+  fileCount: number;
+  lastIndexedAt?: string;
+}
+
+export interface FileIndexerProgress {
+  status: FileIndexerStatus;
+  totalFolders: number;
+  processedFolders: number;
+  filesIndexed: number;
+  updatedCount: number;
+  skippedCount: number;
+  errorCount: number;
+  currentFolder: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  lastError: string | null;
+  paused: boolean;
+  folderStatuses: FolderPermissionStatus[];
+}
+
+export interface FileMediaMetadata {
+  format?: string;
+  width?: number;
+  height?: number;
+  durationSec?: number;
+  sampleRate?: number;
+  channels?: number;
+  bitsPerSample?: number;
+  pageCount?: number;
+  title?: string;
+  author?: string;
+}
+
 export interface IndexedFileItem {
   id: string;
   name: string;
   path: string;
   relativePath: string;
+  rootFolder?: string;
   extension: string;
   category: 'document' | 'code' | 'image' | 'video' | 'audio' | 'spreadsheet' | 'presentation' | 'other';
   sizeBytes: number;
   modifiedAt: string;
   createdAt: string;
   previewText?: string;
+  contentExcerpt?: string;
+  indexedAt?: string;
   matchReason?: string;
 }
 
@@ -305,7 +356,9 @@ export type AIModelPreference =
   | 'friday-cognitive'
   | 'friday-language-core'
   | 'local-auto'
-  | 'local-core';
+  | 'local-core'
+  | 'openjarvis-local-core'
+  | 'openjarvis-gguf';
 
 export interface NoteItem {
   id: string;
@@ -410,6 +463,21 @@ export interface ApiConnectionStatus {
     knowledgeChunks: number;
     datasetSamples: number;
     languageCoreReady: boolean;
+  };
+  openJarvis?: {
+    active: boolean;
+    agentsCount: number;
+    hardwareProfile?: {
+      cpuModel: string;
+      logicalCores: number;
+      totalRamMb: number;
+      freeRamMb: number;
+      gpuName: string;
+      hasAvx2: boolean;
+      recommendedTier: string;
+      recommendedModelId: string;
+    };
+    activeEngine: string;
   };
 }
 
@@ -535,11 +603,36 @@ export interface FridayDesktopBridge {
   launchApp?: (target: string) => Promise<DesktopAppLaunchResult>;
   openWebsite?: (urlOrAlias: string) => Promise<{ opened: boolean; url?: string; message: string }>;
   openFolder?: (folderNameOrPath: string) => Promise<{ opened: boolean; path?: string; message: string }>;
+  selectFolder?: () => Promise<{ canceled: boolean; folderPath?: string; error?: string }>;
+  revealFileInExplorer?: (filePath: string) => Promise<{ revealed: boolean; path?: string; message: string }>;
+  openFile?: (filePath: string) => Promise<{ opened: boolean; detail: string }>;
   getActiveWindow?: () => Promise<{ ok: boolean; pid?: number; processName?: string; title?: string; detail: string }>;
   inspectScreenUi?: (processFilter?: string) => Promise<{ ok: boolean; text?: string; detail: string }>;
+  captureScreen?: (opts?: {
+    target?: 'screen' | 'window';
+    sourceId?: string;
+    windowName?: string;
+  }) => Promise<{
+    ok: boolean;
+    base64Data?: string;
+    mimeType: string;
+    sourceName?: string;
+    width?: number;
+    height?: number;
+    detail?: string;
+    error?: string;
+  }>;
+  listScreenSources?: () => Promise<Array<{
+    id: string;
+    name: string;
+    isScreen: boolean;
+    thumbnailBase64?: string;
+  }>>;
   getWindowsDiagnostics?: () => Promise<Record<string, unknown>>;
   onStopSpeech?: (callback: () => void) => () => void;
   isDesktopShell: boolean;
 }
+
+export * from './visualAnalysisTypes.ts';
 
 

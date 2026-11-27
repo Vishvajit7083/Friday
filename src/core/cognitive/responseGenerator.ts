@@ -9,21 +9,25 @@ import type {
 import { adaptToneAndVoiceFriendliness, pickVariant } from './personalityEngine';
 
 export function translateSummaryToSimpleHindi(summary: string, topic?: string): string {
-  if (!summary.trim()) {
+  const trimmed = summary.trim();
+  if (!trimmed) {
     return 'Abhi pichla reply available nahi hai jise Hindi mein samjha sakun.';
   }
+  if (/^aasaan hindi mein/i.test(trimmed)) {
+    return trimmed;
+  }
 
-  // Clean technical phrasing into clear, conversational simple Hindi/Hinglish
-  const simplified = summary
-    .replace(/CPU/gi, 'processor (CPU)')
-    .replace(/RAM/gi, 'memory (RAM)')
-    .replace(/telemetry/gi, 'system ki live report')
-    .replace(/weather/gi, 'mausam')
-    .replace(/temperature/gi, 'taapman')
-    .replace(/reminder/gi, 'yaad dilane wala alert')
-    .replace(/confirmation/gi, 'aapki permission')
-    .replace(/offline/gi, 'bina internet')
-    .replace(/retrieved from local/gi, 'local folder ya notes se mila');
+  // Clean technical phrasing into clear, conversational simple Hindi/Hinglish using strict word boundaries
+  const simplified = trimmed
+    .replace(/\bCPU\b/gi, 'processor (CPU)')
+    .replace(/\bRAM\b/gi, 'memory (RAM)')
+    .replace(/\btelemetry\b/gi, 'system ki live report')
+    .replace(/\bweather\b/gi, 'mausam')
+    .replace(/\btemperature\b/gi, 'taapman')
+    .replace(/\breminder\b/gi, 'yaad dilane wala alert')
+    .replace(/\bconfirmation\b/gi, 'aapki permission')
+    .replace(/\boffline\b/gi, 'bina internet')
+    .replace(/\bretrieved from local\b/gi, 'local folder ya notes se mila');
 
   const prefix = topic
     ? `Aasaan Hindi mein (${topic}): `

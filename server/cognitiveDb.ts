@@ -18,6 +18,7 @@ import type {
 import { createDefaultPreferenceProfile } from '../src/core/cognitive/learningPipeline.ts';
 import { stringSimilarity } from '../src/core/cognitive/languageUnderstanding.ts';
 import type { BackgroundTaskRecord, WorkflowPreferenceItem } from '../src/core/automation/types.ts';
+import type { IndexedFileItem } from '../src/core/types.ts';
 
 function getDataDir(): string {
   return process.env.FRIDAY_DATA_DIR
@@ -178,6 +179,28 @@ CREATE TABLE IF NOT EXISTS workflow_preferences (
   category TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS file_index (
+  id TEXT PRIMARY KEY,
+  root_folder TEXT NOT NULL,
+  name TEXT NOT NULL,
+  path TEXT NOT NULL UNIQUE,
+  relative_path TEXT NOT NULL,
+  extension TEXT NOT NULL,
+  category TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  modified_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  preview_text TEXT,
+  content_excerpt TEXT,
+  indexed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS file_index_folders (
+  root_folder TEXT PRIMARY KEY,
+  file_count INTEGER NOT NULL DEFAULT 0,
+  readable INTEGER NOT NULL DEFAULT 1,
+  last_indexed_at TEXT,
+  last_error TEXT
+);
 `;
 
 export function getCognitiveSqlite(): DatabaseSync {
@@ -203,6 +226,22 @@ export function getCognitiveSqlite(): DatabaseSync {
   cachedDb = db;
   cachedDbPath = dbPath;
   return db;
+}
+
+export function closeCognitiveSqlite(): void {
+  if (!cachedDb) return;
+  try {
+    cachedDb.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+  } catch {
+    // ignore checkpoint errors if DB is read-only or closing
+  }
+  try {
+    cachedDb.close();
+  } catch {
+    // ignore close errors
+  }
+  cachedDb = null;
+  cachedDbPath = '';
 }
 
 function seedInitialCognitiveRecords(db: DatabaseSync): void {
@@ -397,9 +436,22 @@ export function searchCognitiveMemories(query: CognitiveMemorySearchQuery): Cogn
   const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
   const all = rows.map(mapMemoryRow);
 
+  const MEMORY_STOPWORDS = new Set([
+    'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one',
+    'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'man', 'new', 'now', 'old', 'see',
+    'two', 'way', 'who', 'did', 'its', 'let', 'put', 'say', 'she', 'too', 'use', 'want', 'wanted',
+    'with', 'that', 'this', 'from', 'they', 'will', 'have', 'what', 'when', 'where', 'which',
+    'about', 'there', 'their', 'would', 'could', 'should', 'were', 'been', 'being', 'into',
+    'some', 'them', 'then', 'than', 'very', 'just', 'like', 'more', 'only', 'also', 'please',
+  ]);
+  const SHORT_TECH = new Set(['ai', 'os', 'db', 'ui', 'ux', 'io', 'ip', 'js', 'ts', 'py', 'ml', 'dl']);
+
   const q = (query.query || '').trim().toLowerCase();
   const tagFilter = (query.tag || '').trim().toLowerCase();
-  const terms = q.split(/\s+/).filter((t) => t.length >= 2);
+  const terms = q
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => (t.length >= 3 || SHORT_TECH.has(t)) && !MEMORY_STOPWORDS.has(t));
   const nowMs = Date.now();
 
   const scored = all
@@ -407,18 +459,27 @@ export function searchCognitiveMemories(query: CognitiveMemorySearchQuery): Cogn
     .map((m) => {
       const hay = `${m.key} ${m.value} ${m.category} ${m.tags.join(' ')}`.toLowerCase();
       let matchScore = 0;
+      let keywordHits = 0;
       if (!q) {
         matchScore = 1;
       } else {
         for (const t of terms) {
-          if (hay.includes(t)) matchScore += 1.5;
+          const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          if (new RegExp(`\\b${escaped}\\b`, 'i').test(hay)) {
+            matchScore += 1.5;
+            keywordHits += 1;
+          }
         }
-        matchScore += stringSimilarity(q, m.key.toLowerCase()) * 2;
+        const sim = stringSimilarity(q, m.key.toLowerCase());
+        if (sim >= 0.45) {
+          matchScore += sim * 2;
+        }
       }
       const ageDays = Math.max(0, (nowMs - new Date(m.updatedAt).getTime()) / (1000 * 60 * 60 * 24));
       const recencyBoost = 1 / (1 + ageDays * 0.15);
       const total = matchScore * 0.55 + m.importance * 0.3 + recencyBoost * 0.15;
-      return { m, total, matched: !q || matchScore > 0.45 };
+      const matched = !q || keywordHits > 0 || matchScore >= 0.9;
+      return { m, total, matched };
     })
     .filter((x) => x.matched)
     .sort((a, b) => b.total - a.total)
@@ -859,4 +920,159 @@ export function addApprovedExternalPath(targetPath: string): string[] {
   }
   return existing;
 }
+
+// ---------- Persistent File Explorer Index ----------
+
+export function listIndexedFilesFromSqlite(rootFolders?: string[]): IndexedFileItem[] {
+  const db = getCognitiveSqlite();
+  let rows: Array<Record<string, unknown>>;
+  if (rootFolders && rootFolders.length > 0) {
+    const resolvedRoots = Array.from(new Set(rootFolders.map((r) => path.resolve(r))));
+    const placeholders = resolvedRoots.map(() => '?').join(',');
+    rows = db
+      .prepare(`SELECT * FROM file_index WHERE root_folder IN (${placeholders}) ORDER BY modified_at DESC`)
+      .all(...resolvedRoots) as Array<Record<string, unknown>>;
+  } else {
+    rows = db.prepare('SELECT * FROM file_index ORDER BY modified_at DESC').all() as Array<Record<string, unknown>>;
+  }
+  return rows.map((r) => ({
+    id: String(r.id),
+    rootFolder: String(r.root_folder),
+    name: String(r.name),
+    path: String(r.path),
+    relativePath: String(r.relative_path),
+    extension: String(r.extension),
+    category: String(r.category) as IndexedFileItem['category'],
+    sizeBytes: Number(r.size_bytes ?? 0),
+    modifiedAt: String(r.modified_at),
+    createdAt: String(r.created_at),
+    previewText: r.preview_text ? String(r.preview_text) : undefined,
+    contentExcerpt: r.content_excerpt ? String(r.content_excerpt) : undefined,
+    indexedAt: r.indexed_at ? String(r.indexed_at) : undefined,
+  }));
+}
+
+export function upsertIndexedFilesInSqlite(items: IndexedFileItem[]): void {
+  if (items.length === 0) return;
+  const db = getCognitiveSqlite();
+  const stmt = db.prepare(
+    `INSERT INTO file_index (
+      id, root_folder, name, path, relative_path, extension, category, size_bytes, modified_at, created_at, preview_text, content_excerpt, indexed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(path) DO UPDATE SET
+      id = excluded.id,
+      root_folder = excluded.root_folder,
+      name = excluded.name,
+      relative_path = excluded.relative_path,
+      extension = excluded.extension,
+      category = excluded.category,
+      size_bytes = excluded.size_bytes,
+      modified_at = excluded.modified_at,
+      created_at = excluded.created_at,
+      preview_text = excluded.preview_text,
+      content_excerpt = excluded.content_excerpt,
+      indexed_at = excluded.indexed_at`
+  );
+  const now = new Date().toISOString();
+  db.exec('BEGIN IMMEDIATE;');
+  try {
+    for (const item of items) {
+      stmt.run(
+        item.id,
+        path.resolve(item.rootFolder || path.dirname(item.path)),
+        item.name,
+        path.resolve(item.path),
+        item.relativePath,
+        item.extension,
+        item.category,
+        item.sizeBytes,
+        item.modifiedAt,
+        item.createdAt,
+        item.previewText ?? null,
+        item.contentExcerpt ?? null,
+        item.indexedAt || now
+      );
+    }
+    db.exec('COMMIT;');
+  } catch (err) {
+    db.exec('ROLLBACK;');
+    throw err;
+  }
+}
+
+export function pruneIndexedFilesForRoot(rootFolder: string, validPaths: Set<string>): number {
+  const db = getCognitiveSqlite();
+  const resolvedRoot = path.resolve(rootFolder);
+  const existing = db
+    .prepare('SELECT path FROM file_index WHERE root_folder = ?')
+    .all(resolvedRoot) as Array<{ path: string }>;
+  const stale = existing.filter((row) => !validPaths.has(row.path)).map((row) => row.path);
+  if (stale.length === 0) return 0;
+  const del = db.prepare('DELETE FROM file_index WHERE path = ?');
+  db.exec('BEGIN IMMEDIATE;');
+  try {
+    for (const p of stale) {
+      del.run(p);
+    }
+    db.exec('COMMIT;');
+  } catch (err) {
+    db.exec('ROLLBACK;');
+    throw err;
+  }
+  return stale.length;
+}
+
+export function removeIndexedFilesByRoot(rootFolder: string): number {
+  const db = getCognitiveSqlite();
+  const resolvedRoot = path.resolve(rootFolder);
+  const res = db.prepare('DELETE FROM file_index WHERE root_folder = ?').run(resolvedRoot);
+  db.prepare('DELETE FROM file_index_folders WHERE root_folder = ?').run(resolvedRoot);
+  return Number(res.changes);
+}
+
+export function saveIndexedFolderMeta(meta: {
+  rootFolder: string;
+  fileCount: number;
+  readable: boolean;
+  lastIndexedAt?: string;
+  lastError?: string | null;
+}): void {
+  const db = getCognitiveSqlite();
+  db.prepare(
+    `INSERT INTO file_index_folders (root_folder, file_count, readable, last_indexed_at, last_error)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(root_folder) DO UPDATE SET
+       file_count = excluded.file_count,
+       readable = excluded.readable,
+       last_indexed_at = excluded.last_indexed_at,
+       last_error = excluded.last_error`
+  ).run(
+    path.resolve(meta.rootFolder),
+    meta.fileCount,
+    meta.readable ? 1 : 0,
+    meta.lastIndexedAt ?? null,
+    meta.lastError ?? null
+  );
+}
+
+export function listIndexedFolderMeta(): Array<{
+  rootFolder: string;
+  fileCount: number;
+  readable: boolean;
+  lastIndexedAt?: string;
+  lastError?: string;
+}> {
+  const db = getCognitiveSqlite();
+  const rows = db.prepare('SELECT * FROM file_index_folders ORDER BY root_folder ASC').all() as Array<
+    Record<string, unknown>
+  >;
+  return rows.map((r) => ({
+    rootFolder: String(r.root_folder),
+    fileCount: Number(r.file_count ?? 0),
+    readable: Number(r.readable ?? 1) === 1,
+    lastIndexedAt: r.last_indexed_at ? String(r.last_indexed_at) : undefined,
+    lastError: r.last_error ? String(r.last_error) : undefined,
+  }));
+}
+
 

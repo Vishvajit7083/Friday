@@ -34,6 +34,7 @@ import { runCognitiveTurn } from './cognitiveRuntime.ts';
 import { FutureLanguageCoreProvider } from '../src/core/cognitive/learningPipeline.ts';
 import { WorkflowPlanner } from '../src/core/automation/workflowPlanner.ts';
 import { automationTaskManager } from './automation/workflowExecutor.ts';
+import { defaultOpenJarvisOrchestrator, profileSystemHardware } from './openjarvis/index.ts';
 
 export type StreamAssistantEvent =
   | {
@@ -109,6 +110,12 @@ export async function checkAiHealth(preferredPreference?: string) {
       knowledgeChunks: knowledge.length,
       datasetSamples: dataset.length,
       languageCoreReady: langCore.isReady(),
+    },
+    openJarvis: {
+      active: true,
+      agentsCount: 9,
+      hardwareProfile: profileSystemHardware(),
+      activeEngine: pref.includes('openjarvis') ? pref : 'friday-local-core',
     },
   };
 }
@@ -320,6 +327,82 @@ export async function streamAssistantCommand(
     saveDb(freshDb);
     onEvent({ type: 'done', userMessage, assistantMessage, activeAgents: agents });
     return { userMessage, assistantMessage, activeAgents: agents };
+  }
+
+  // OpenJarvis Autonomous Coding & Multi-Agent Execution
+  if (
+    /\b(?:scaffold|create\s+(?:a\s+)?project|write\s+(?:a\s+)?python|make\s+(?:a\s+)?react|build\s+(?:a\s+)?(?:web\s+)?app|openjarvis)\b/i.test(command)
+  ) {
+    onEvent({
+      type: 'status',
+      phase: 'executing',
+      agents: ['automation'],
+      steps: [{ id: 'step-oj-1', agent: 'automation', title: 'OpenJarvis Multi-Agent Dispatch', status: 'running' }],
+      intent: 'openjarvis_coding',
+    });
+
+    const ojTurn = await defaultOpenJarvisOrchestrator.processCommand(command, confirmedAction);
+    const mappedAgents: AgentId[] = ojTurn.activeAgents.map((a) =>
+      a === 'coding' ? 'automation' : a === 'computer' ? 'application' : (a as AgentId)
+    );
+    const mappedSteps: ExecutionStep[] = ojTurn.steps.map((s) => ({
+      id: s.stepId,
+      agent: (s.agentId === 'coding' ? 'automation' : s.agentId === 'computer' ? 'application' : s.agentId) as AgentId,
+      title: s.title,
+      status: s.status === 'completed' ? 'completed' : s.status === 'failed' ? 'failed' : s.status === 'pending_confirmation' ? 'pending' : 'running',
+      detail: s.detail || s.error,
+    }));
+
+    onEvent({
+      type: 'status',
+      phase: ojTurn.requiresConfirmation ? 'awaiting_confirmation' : 'executing',
+      agents: mappedAgents,
+      steps: mappedSteps,
+      intent: 'openjarvis_coding',
+    });
+
+    const chunks = ojTurn.reply.split(/(?<=\s)/);
+    let firstTokenMs = 0;
+    for (const chunk of chunks) {
+      if (signal?.aborted) break;
+      if (!firstTokenMs) firstTokenMs = Math.max(1, Date.now() - startedAt);
+      onEvent({ type: 'token', token: chunk });
+    }
+
+    const totalMs = Math.max(1, Date.now() - startedAt);
+    const timings: PipelineTimings = {
+      engine: 'openjarvis-engine',
+      intentMs: 2,
+      toolMs: ojTurn.durationMs,
+      firstTokenMs: firstTokenMs || totalMs,
+      modelMs: 0,
+      totalMs,
+    };
+    recordPipelineTiming(timings);
+
+    const assistantMessage: ChatMessage = {
+      id: `msg-${Date.now()}-a`,
+      role: 'assistant',
+      content: ojTurn.reply,
+      timestamp: new Date().toISOString(),
+      intent: 'openjarvis_turn',
+      steps: mappedSteps,
+      timings,
+      pendingConfirmation: ojTurn.requiresConfirmation
+        ? {
+            actionId: `act-${Date.now()}`,
+            summary: ojTurn.confirmationSummary || command,
+            actionType: 'openjarvis_turn',
+            payload: { originalCommand: command },
+          }
+        : undefined,
+    };
+
+    const freshDb = loadDb();
+    freshDb.chatHistory = [...freshDb.chatHistory, userMessage, assistantMessage].slice(-120);
+    saveDb(freshDb);
+    onEvent({ type: 'done', userMessage, assistantMessage, activeAgents: mappedAgents });
+    return { userMessage, assistantMessage, activeAgents: mappedAgents };
   }
 
   if (WorkflowPlanner.isAutomationGoal(command)) {

@@ -96,10 +96,82 @@ const STOPWORDS = new Set([
   'week',
   'file',
   'files',
+  'folder',
+  'drive',
   'open',
   'play',
   'preview',
+  'mere',
+  'mein',
+  'me',
+  'se',
+  'dhoondo',
+  'dhundo',
+  'nikalo',
+  'dikhao',
+  'kholo',
 ]);
+
+const WINDOWS_RESERVED_FOLDER_NAMES = new Set([
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  'COM1',
+  'COM2',
+  'COM3',
+  'COM4',
+  'COM5',
+  'COM6',
+  'COM7',
+  'COM8',
+  'COM9',
+  'LPT1',
+  'LPT2',
+  'LPT3',
+  'LPT4',
+  'LPT5',
+  'LPT6',
+  'LPT7',
+  'LPT8',
+  'LPT9',
+]);
+
+export function validateNewFolderName(rawName: string): { valid: boolean; cleanName: string; error?: string } {
+  const cleanName = rawName.trim();
+  if (!cleanName) {
+    return { valid: false, cleanName: '', error: 'Folder name cannot be empty.' };
+  }
+  if (cleanName === '.' || cleanName === '..') {
+    return { valid: false, cleanName, error: 'Folder name cannot be "." or "..".' };
+  }
+  if (cleanName.length > 180) {
+    return { valid: false, cleanName, error: 'Folder name must be 180 characters or fewer.' };
+  }
+  if (/[<>:"/\\|?*\x00-\x1f]/.test(cleanName)) {
+    return {
+      valid: false,
+      cleanName,
+      error: 'Folder name cannot contain Windows reserved characters: < > : " / \\ | ? *',
+    };
+  }
+  if (/[. ]$/.test(cleanName)) {
+    return {
+      valid: false,
+      cleanName,
+      error: 'Folder name cannot end with a space or period on Windows.',
+    };
+  }
+  const stem = cleanName.split('.')[0].toUpperCase();
+  if (WINDOWS_RESERVED_FOLDER_NAMES.has(stem)) {
+    return {
+      valid: false,
+      cleanName,
+      error: `"${cleanName}" is a reserved Windows device name.`,
+    };
+  }
+  return { valid: true, cleanName };
+}
 
 export function parseFileSearchIntent(rawQuery: string): FileSearchIntent {
   const q = rawQuery.trim().toLowerCase();
@@ -126,6 +198,12 @@ export function parseFileSearchIntent(rawQuery: string): FileSearchIntent {
     if (new RegExp(`\\b${folder}\\b`).test(q)) {
       folderHint = folder;
       break;
+    }
+  }
+  if (!folderHint) {
+    const driveMatch = q.match(/\b([a-z])\s*(?::\\|:\s*drive|:\b|\s+drive)\b/i);
+    if (driveMatch) {
+      folderHint = `${driveMatch[1].toLowerCase()}:`;
     }
   }
 
@@ -185,7 +263,7 @@ export function evaluateFileMatch(
   const intent = parseFileSearchIntent(q);
   const nameLower = file.name.toLowerCase();
   const pathLower = `${file.path} ${file.relativePath}`.toLowerCase();
-  const previewLower = (file.previewText ?? '').toLowerCase();
+  const previewLower = `${file.previewText ?? ''} ${file.contentExcerpt ?? ''}`.toLowerCase();
 
   let score = 0;
   const reasons: string[] = [];

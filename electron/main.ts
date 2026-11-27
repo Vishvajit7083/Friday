@@ -3,17 +3,23 @@
 // ESC hide-to-desktop without terminating background services, and global reopen shortcut.
 import fs from 'fs';
 import path from 'path';
+import net from 'net';
+import zlib from 'zlib';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { spawn, type ChildProcess } from 'child_process';
 import {
   captureAndOcrScreenWindows,
+  captureScreenWindowsGdi,
   detectActiveWindow,
   getWindowsSpeechCapabilities,
+  isWindowsPathPermitted,
   launchWindowsAppVerified,
   listUiElementsWindows,
+  openLocalPathInDefaultApp,
   openWindowsFolder,
   openWindowsWebsite,
   recognizeWindowsSpeechFromWav,
+  revealFileInWindowsExplorer,
   speakWindowsSapiTts,
   stopWindowsSapiTts,
 } from './windowsAutomation.ts';
@@ -42,56 +48,193 @@ export function getElectronConfig(): ElectronWindowConfig {
   };
 }
 
-// Inline 16x16 cyan geometric emblem PNG data URI so Windows Tray never renders an empty icon
-const TRAY_SVG_DATA_URL =
-  'data:image/svg+xml;base64,' +
-  Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <rect width="32" height="32" rx="8" fill="#050b18"/>
-      <circle cx="16" cy="16" r="12" fill="none" stroke="#22d3ee" stroke-width="2.2"/>
-      <polygon points="16,24 9,11 23,11" fill="none" stroke="#67e8f9" stroke-width="2"/>
-      <polygon points="16,19 13,13 19,13" fill="#22d3ee"/>
-    </svg>`
-  ).toString('base64');
+function crc32(buf: Buffer): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i += 1) {
+    c ^= buf[i];
+    for (let k = 0; k < 8; k += 1) {
+      c = (c >>> 1) ^ (c & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function makePngChunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const typeBuf = Buffer.from(type, 'ascii');
+  const crcBuf = Buffer.alloc(4);
+  crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
+  return Buffer.concat([len, typeBuf, data, crcBuf]);
+}
+
+// Generate a real 16x16 RGBA PNG buffer so Windows Tray always renders a valid icon
+function createTrayPngBuffer(): Buffer {
+  const size = 16;
+  const rows: Buffer[] = [];
+  for (let y = 0; y < size; y += 1) {
+    const row = Buffer.alloc(1 + size * 4);
+    row[0] = 0; // filter none
+    for (let x = 0; x < size; x += 1) {
+      const dx = x - 7.5;
+      const dy = y - 7.5;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const off = 1 + x * 4;
+      if (dist <= 2.4) {
+        // Bright cyan/fuchsia core
+        row[off] = 232;
+        row[off + 1] = 121;
+        row[off + 2] = 249;
+        row[off + 3] = 255;
+      } else if (dist >= 5.1 && dist <= 6.8) {
+        // Neon violet ring
+        row[off] = 168;
+        row[off + 1] = 85;
+        row[off + 2] = 247;
+        row[off + 3] = 255;
+      } else if (dist <= 7.8) {
+        // Dark obsidian HUD backing
+        row[off] = 12;
+        row[off + 1] = 5;
+        row[off + 2] = 28;
+        row[off + 3] = 245;
+      } else {
+        row[off] = 0;
+        row[off + 1] = 0;
+        row[off + 2] = 0;
+        row[off + 3] = 0;
+      }
+    }
+    rows.push(row);
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // RGBA
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+  const idat = zlib.deflateSync(Buffer.concat(rows));
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    makePngChunk('IHDR', ihdr),
+    makePngChunk('IDAT', idat),
+    makePngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
 
 async function probeServerHealth(baseUrl: string): Promise<boolean> {
   try {
     const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/health`, {
       signal: AbortSignal.timeout(900),
     });
-    return res.ok;
+    if (!res.ok) return false;
+    const data = (await res.json().catch(() => null)) as { localEngineReady?: boolean; status?: string } | null;
+    return Boolean(data && (data.localEngineReady === true || data.status === 'ok'));
   } catch {
     return false;
   }
 }
 
-async function ensureLocalServerRunning(baseUrl: string, userDataDir?: string): Promise<ChildProcess | null> {
-  if (await probeServerHealth(baseUrl)) return null;
+function isLocalPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = net.createServer();
+    tester.once('error', () => resolve(false));
+    tester.once('listening', () => {
+      tester.close(() => resolve(true));
+    });
+    tester.listen(port, '127.0.0.1');
+  });
+}
 
-  const rootDir = path.resolve(currentDir, '../..');
-  const distDir = path.join(rootDir, 'dist');
-  const distServer = path.join(distDir, 'index.html');
-  const isProdBundle = fs.existsSync(distServer);
+function allocateEphemeralPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 3000;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+interface EmbeddedServerBootResult {
+  serverUrl: string;
+  childProcess: ChildProcess | null;
+  closeEmbeddedServer?: () => Promise<void>;
+  startupError?: string;
+}
+
+async function ensureLocalServerRunning(
+  preferredBaseUrl: string,
+  userDataDir?: string,
+  appPath?: string
+): Promise<EmbeddedServerBootResult> {
+  if (await probeServerHealth(preferredBaseUrl)) {
+    return { serverUrl: preferredBaseUrl, childProcess: null };
+  }
+
+  const parsedPreferred = new URL(preferredBaseUrl);
+  const preferredPort = Number(parsedPreferred.port) || 3000;
+  const chosenPort = (await isLocalPortAvailable(preferredPort))
+    ? preferredPort
+    : await allocateEphemeralPort();
+  const activeUrl = `${parsedPreferred.protocol}//127.0.0.1:${chosenPort}`;
+
+  const rootDir = appPath ? path.resolve(appPath) : path.resolve(currentDir, '../..');
+  const unpackedRoot = rootDir.replace(/app\.asar$/i, 'app.asar.unpacked');
+  const unpackedDist = path.join(unpackedRoot, 'dist');
+  const asarDist = path.join(rootDir, 'dist');
+  const distDir = fs.existsSync(path.join(unpackedDist, 'index.html')) ? unpackedDist : asarDist;
+  const isProdBundle = fs.existsSync(path.join(distDir, 'index.html'));
   const bundledServer = path.join(rootDir, 'dist-electron', 'server.mjs');
+
+  if (userDataDir) {
+    const resolvedDataDir = path.join(userDataDir, 'friday-data');
+    if (!fs.existsSync(resolvedDataDir)) {
+      fs.mkdirSync(resolvedDataDir, { recursive: true });
+    }
+    process.env.FRIDAY_DATA_DIR = resolvedDataDir;
+  }
+  process.env.FRIDAY_APP_ROOT = rootDir;
+  process.env.FRIDAY_DIST_DIR = distDir;
+  process.env.PORT = String(chosenPort);
 
   if (isProdBundle && fs.existsSync(bundledServer)) {
     process.env.NODE_ENV = 'production';
-    process.env.FRIDAY_DIST_DIR = distDir;
-    if (userDataDir) {
-      process.env.FRIDAY_DATA_DIR = path.join(userDataDir, 'friday-data');
-    }
+    process.env.FRIDAY_EMBEDDED_IN_ELECTRON = '1';
     try {
-      await import(pathToFileURL(bundledServer).href);
+      const serverMod = (await import(pathToFileURL(bundledServer).href)) as {
+        startServer?: (portOverride?: number) => Promise<{ port: number; close: () => Promise<void> }>;
+      };
+      let closeEmbeddedServer: (() => Promise<void>) | undefined;
+      if (typeof serverMod.startServer === 'function') {
+        const started = await serverMod.startServer(chosenPort);
+        closeEmbeddedServer = started.close;
+      }
       for (let i = 0; i < 24; i += 1) {
-        if (await probeServerHealth(baseUrl)) {
-          return null;
+        if (await probeServerHealth(activeUrl)) {
+          return { serverUrl: activeUrl, childProcess: null, closeEmbeddedServer };
         }
         await new Promise((r) => setTimeout(r, 250));
       }
+      return {
+        serverUrl: activeUrl,
+        childProcess: null,
+        closeEmbeddedServer,
+        startupError: 'Embedded F.R.I.D.A.Y. server started but health check timed out.',
+      };
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.error('Failed to start bundled server:', err);
+      return {
+        serverUrl: activeUrl,
+        childProcess: null,
+        startupError: `Failed to start bundled server: ${msg}`,
+      };
     }
-    return null;
   }
 
   const tsxBin =
@@ -107,20 +250,26 @@ async function ensureLocalServerRunning(baseUrl: string, userDataDir?: string): 
     env: {
       ...process.env,
       NODE_ENV: isProdBundle ? 'production' : process.env.NODE_ENV || 'development',
+      FRIDAY_APP_ROOT: rootDir,
       FRIDAY_DIST_DIR: distDir,
+      PORT: String(chosenPort),
       ...(userDataDir ? { FRIDAY_DATA_DIR: path.join(userDataDir, 'friday-data') } : {}),
     },
     stdio: 'ignore',
     shell: false,
   });
 
-  for (let i = 0; i < 24; i += 1) {
-    if (await probeServerHealth(baseUrl)) {
-      return child;
+  for (let i = 0; i < 28; i += 1) {
+    if (await probeServerHealth(activeUrl)) {
+      return { serverUrl: activeUrl, childProcess: child };
     }
     await new Promise((r) => setTimeout(r, 350));
   }
-  return child;
+  return {
+    serverUrl: activeUrl,
+    childProcess: child,
+    startupError: `Local server did not respond on ${activeUrl} within timeout.`,
+  };
 }
 
 export async function bootstrapElectronShell() {
@@ -129,6 +278,7 @@ export async function bootstrapElectronShell() {
     app,
     BrowserWindow,
     desktopCapturer,
+    dialog,
     globalShortcut,
     ipcMain,
     Menu,
@@ -148,15 +298,17 @@ export async function bootstrapElectronShell() {
   let mainWindow: InstanceType<typeof BrowserWindow> | null = null;
   let tray: InstanceType<typeof Tray> | null = null;
   let embeddedServerProcess: ChildProcess | null = null;
+  let closeEmbeddedServer: (() => Promise<void>) | undefined;
   let isQuitting = false;
   let floatingMode = false;
   const config = getElectronConfig();
+  let activeServerUrl = config.serverUrl;
   let activeShortcut = config.reopenShortcut;
 
   function isTrustedAppUrl(targetUrl: string): boolean {
     try {
       const parsedTarget = new URL(targetUrl);
-      const parsedBase = new URL(config.serverUrl);
+      const parsedBase = new URL(activeServerUrl);
       return (
         parsedTarget.origin === parsedBase.origin ||
         parsedTarget.hostname === 'localhost' ||
@@ -224,10 +376,48 @@ export async function bootstrapElectronShell() {
     };
   }
 
-  function createWindow() {
+  function renderStartupRecoveryPage(reason: string): string {
+    const safeReason = reason.replace(/[<>&"']/g, (ch) =>
+      ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[ch] || ch)
+    );
+    const safeUrl = activeServerUrl.replace(/[<>&"']/g, '');
+    return (
+      'data:text/html;charset=utf-8,' +
+      encodeURIComponent(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>F.R.I.D.A.Y. Startup Recovery</title></head>
+<body style="margin:0;background:#05020c;color:#f3e8ff;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;">
+  <div style="max-width:520px;padding:28px;border:1px solid rgba(217,70,239,0.45);border-radius:16px;background:#0d041d;">
+    <h1 style="margin:0 0 10px;font-size:20px;color:#e879f9;">F.R.I.D.A.Y. Startup Recovery</h1>
+    <p style="margin:0 0 12px;font-size:14px;line-height:1.5;color:#e9d5ff;">The desktop command server did not finish initializing cleanly.</p>
+    <pre style="margin:0 0 16px;padding:12px;border-radius:8px;background:#05020c;color:#fca5a5;font-size:12px;white-space:pre-wrap;">${safeReason}</pre>
+    <button onclick="location.href='${safeUrl}'" style="padding:10px 18px;border-radius:10px;border:1px solid #d946ef;background:#701a75;color:#fff;font-weight:600;cursor:pointer;">Retry Connection</button>
+  </div>
+</body></html>`)
+    );
+  }
+
+  function resolveAppIconPath(): string | undefined {
+    const appPath = app.isPackaged ? app.getAppPath() : path.resolve(currentDir, '../..');
+    const resourcesDir = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath || '';
+    const candidates = [
+      resourcesDir ? path.join(resourcesDir, 'app.asar.unpacked', 'electron', 'icon.png') : '',
+      path.join(appPath, 'electron', 'icon.png'),
+      path.join(currentDir, 'icon.png'),
+      path.join(process.cwd(), 'electron', 'icon.png'),
+      resourcesDir ? path.join(resourcesDir, 'app.asar.unpacked', 'electron', 'icon.ico') : '',
+      path.join(appPath, 'electron', 'icon.ico'),
+      path.join(process.cwd(), 'electron', 'icon.ico'),
+    ];
+    return candidates.find((c) => Boolean(c) && fs.existsSync(c));
+  }
+
+  function createWindow(startupError?: string) {
     const cjsPreload = path.join(currentDir, 'preload.cjs');
     const esmPreload = path.join(currentDir, 'preload.js');
     const preloadPath = fs.existsSync(cjsPreload) ? cjsPreload : esmPreload;
+    const iconPath = resolveAppIconPath();
+    const windowIcon = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createFromBuffer(createTrayPngBuffer());
+    let loadRetries = 0;
 
     mainWindow = new BrowserWindow({
       width: 1440,
@@ -237,7 +427,8 @@ export async function bootstrapElectronShell() {
       frame: false,
       transparent: false,
       fullscreen: config.fullscreen,
-      backgroundColor: '#050811',
+      backgroundColor: '#05020c',
+      icon: windowIcon,
       webPreferences: {
         preload: preloadPath,
         contextIsolation: true,
@@ -246,18 +437,40 @@ export async function bootstrapElectronShell() {
       },
     });
 
-    mainWindow.loadURL(config.serverUrl);
+    if (startupError) {
+      mainWindow.loadURL(renderStartupRecoveryPage(startupError)).catch(() => {});
+    } else {
+      mainWindow.loadURL(activeServerUrl).catch(() => {});
+    }
+
+    mainWindow.webContents.on(
+      'did-fail-load',
+      (_event: Event, errorCode: number, errorDescription: string, validatedURL: string) => {
+        if (isQuitting || !mainWindow || mainWindow.isDestroyed()) return;
+        if (validatedURL.startsWith('data:')) return;
+        if (loadRetries < 5) {
+          loadRetries += 1;
+          setTimeout(() => {
+            mainWindow?.loadURL(activeServerUrl).catch(() => {});
+          }, 600);
+          return;
+        }
+        mainWindow
+          .loadURL(renderStartupRecoveryPage(`Failed to load ${validatedURL} (${errorCode}: ${errorDescription})`))
+          .catch(() => {});
+      }
+    );
 
     mainWindow.webContents.on('render-process-gone', () => {
       if (!isQuitting && mainWindow && !mainWindow.isDestroyed()) {
         setTimeout(() => {
-          mainWindow?.loadURL(config.serverUrl).catch(() => {});
+          mainWindow?.loadURL(activeServerUrl).catch(() => {});
         }, 500);
       }
     });
 
     mainWindow.webContents.on('will-navigate', (event: Event, url: string) => {
-      if (!isTrustedAppUrl(url)) {
+      if (!isTrustedAppUrl(url) && !url.startsWith('data:text/html')) {
         event.preventDefault();
       }
     });
@@ -286,7 +499,11 @@ export async function bootstrapElectronShell() {
   });
 
   app.whenReady().then(async () => {
-    embeddedServerProcess = await ensureLocalServerRunning(config.serverUrl, app.getPath('userData'));
+    const appRootPath = app.isPackaged ? app.getAppPath() : path.resolve(currentDir, '../..');
+    const boot = await ensureLocalServerRunning(config.serverUrl, app.getPath('userData'), appRootPath);
+    activeServerUrl = boot.serverUrl;
+    embeddedServerProcess = boot.childProcess;
+    closeEmbeddedServer = boot.closeEmbeddedServer;
 
     const allowedPermissions = new Set([
       'media',
@@ -324,10 +541,16 @@ export async function bootstrapElectronShell() {
       );
     }
 
-    createWindow();
+    createWindow(boot.startupError);
     registerShortcut(activeShortcut);
 
-    const icon = nativeImage.createFromDataURL(TRAY_SVG_DATA_URL);
+    const trayIconPath = resolveAppIconPath();
+    const rawTrayImage = trayIconPath
+      ? nativeImage.createFromPath(trayIconPath)
+      : nativeImage.createFromBuffer(createTrayPngBuffer());
+    const icon = rawTrayImage.isEmpty()
+      ? nativeImage.createFromBuffer(createTrayPngBuffer())
+      : rawTrayImage.resize({ width: 16, height: 16 });
     tray = new Tray(icon);
     tray.setToolTip('F.R.I.D.A.Y. Personal AI Companion');
     tray.setContextMenu(
@@ -346,6 +569,7 @@ export async function bootstrapElectronShell() {
           label: 'Quit F.R.I.D.A.Y.',
           click: () => {
             isQuitting = true;
+            void closeEmbeddedServer?.();
             embeddedServerProcess?.kill();
             mainWindow?.destroy();
             app.quit();
@@ -407,6 +631,7 @@ export async function bootstrapElectronShell() {
     ipcMain.handle('friday:quit-app', () => {
       isQuitting = true;
       void stopWindowsSapiTts();
+      void closeEmbeddedServer?.();
       embeddedServerProcess?.kill();
       mainWindow?.destroy();
       app.quit();
@@ -481,8 +706,92 @@ export async function bootstrapElectronShell() {
       return openWindowsWebsite(String(urlOrAlias || ''));
     });
 
+    async function fetchLiveAllowedFolders(): Promise<string[]> {
+      try {
+        const res = await fetch(`${activeServerUrl.replace(/\/+$/, '')}/api/files/status`, {
+          signal: AbortSignal.timeout(1200),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { allowedFolders?: string[] };
+          if (Array.isArray(data.allowedFolders)) return data.allowedFolders;
+        }
+      } catch {
+        // Fallback when querying before server ready
+      }
+      return [process.cwd(), app.getPath('desktop'), app.getPath('downloads'), app.getPath('documents')];
+    }
+
     ipcMain.handle('friday:open-folder', async (_evt: unknown, folderNameOrPath: unknown) => {
-      return openWindowsFolder(String(folderNameOrPath || ''));
+      const allowed = await fetchLiveAllowedFolders();
+      return openWindowsFolder(String(folderNameOrPath || ''), allowed);
+    });
+
+    ipcMain.handle('friday:select-folder', async () => {
+      if (!dialog?.showOpenDialog) {
+        return { canceled: true, error: 'Native folder picker is unavailable in this environment.' };
+      }
+      const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+        title: 'Select Permitted Folder for F.R.I.D.A.Y.',
+        buttonLabel: 'Grant Folder Access',
+        properties: ['openDirectory', 'dontAddToRecent'],
+      });
+      if (result.canceled || !Array.isArray(result.filePaths) || result.filePaths.length === 0) {
+        return { canceled: true };
+      }
+      return { canceled: false, folderPath: path.resolve(result.filePaths[0]) };
+    });
+
+    ipcMain.handle('friday:reveal-file', async (_evt: unknown, filePath: unknown) => {
+      const raw = String(filePath || '');
+      if (!raw || raw.includes('\0')) {
+        return { revealed: false, message: 'Invalid file path.' };
+      }
+      const allowed = await fetchLiveAllowedFolders();
+      const resolved = path.resolve(raw);
+      if (!isWindowsPathPermitted(resolved, allowed)) {
+        return {
+          revealed: false,
+          path: resolved,
+          message: 'Access denied: file is outside user-permitted folders.',
+        };
+      }
+      if (!fs.existsSync(resolved)) {
+        return { revealed: false, path: resolved, message: 'File does not exist.' };
+      }
+      try {
+        shell.showItemInFolder(resolved);
+        return {
+          revealed: true,
+          path: resolved,
+          message: `Revealed "${path.basename(resolved)}" in system Explorer.`,
+        };
+      } catch {
+        return revealFileInWindowsExplorer(resolved, allowed);
+      }
+    });
+
+    ipcMain.handle('friday:open-file', async (_evt: unknown, filePath: unknown) => {
+      const raw = String(filePath || '');
+      if (!raw || raw.includes('\0')) {
+        return { opened: false, detail: 'Invalid file path.' };
+      }
+      const allowed = await fetchLiveAllowedFolders();
+      const resolved = path.resolve(raw);
+      if (!isWindowsPathPermitted(resolved, allowed)) {
+        return { opened: false, detail: 'Access denied: file is outside user-permitted folders.' };
+      }
+      if (!fs.existsSync(resolved)) {
+        return { opened: false, detail: 'File not found.' };
+      }
+      try {
+        const errText = await shell.openPath(resolved);
+        if (errText) {
+          return openLocalPathInDefaultApp(resolved);
+        }
+        return { opened: true, detail: `Opened "${path.basename(resolved)}" in default application.` };
+      } catch {
+        return openLocalPathInDefaultApp(resolved);
+      }
     });
 
     ipcMain.handle('friday:active-window', async () => {
@@ -494,6 +803,93 @@ export async function bootstrapElectronShell() {
         return listUiElementsWindows(String(processFilter));
       }
       return captureAndOcrScreenWindows();
+    });
+
+    ipcMain.handle(
+      'friday:capture-screen',
+      async (
+        _evt: unknown,
+        opts?: { target?: 'screen' | 'window'; sourceId?: string; windowName?: string }
+      ) => {
+        try {
+          if (desktopCapturer) {
+            const types: Array<'screen' | 'window'> =
+              opts?.target === 'window' ? ['window'] : ['screen', 'window'];
+            const sources = (await desktopCapturer.getSources({
+              types,
+              thumbnailSize: { width: 1920, height: 1080 },
+              fetchWindowIcons: true,
+            })) as Array<{
+              id: string;
+              name: string;
+              thumbnail: { toPNG: () => Buffer; getSize: () => { width: number; height: number } };
+            }>;
+            if (sources.length > 0) {
+              let source = sources[0];
+              if (opts?.sourceId) {
+                const matched = sources.find((s) => s.id === opts.sourceId);
+                if (matched) source = matched;
+              } else if (opts?.windowName) {
+                const lower = opts.windowName.toLowerCase();
+                const matched = sources.find((s) => s.name.toLowerCase().includes(lower));
+                if (matched) source = matched;
+              } else if (opts?.target === 'window' && sources.length > 1) {
+                const nonFriday = sources.find(
+                  (s) => !s.name.includes('F.R.I.D.A.Y.') && s.name.trim().length > 0
+                );
+                if (nonFriday) source = nonFriday;
+              }
+              const pngBuf = source.thumbnail.toPNG();
+              const size = source.thumbnail.getSize();
+              return {
+                ok: true,
+                base64Data: pngBuf.toString('base64'),
+                mimeType: 'image/png',
+                sourceName: source.name,
+                width: size.width,
+                height: size.height,
+                detail: `Captured "${source.name}" (${size.width}x${size.height}) via desktopCapturer.`,
+              };
+            }
+          }
+        } catch {
+          // Fallback to GDI
+        }
+        if (process.platform === 'win32') {
+          return captureScreenWindowsGdi();
+        }
+        return {
+          ok: false,
+          mimeType: 'image/png',
+          detail: 'Screen capture requires an active desktop display session or live Windows host.',
+          error: 'NO_DISPLAY',
+        };
+      }
+    );
+
+    ipcMain.handle('friday:list-screen-sources', async () => {
+      try {
+        if (desktopCapturer) {
+          const sources = (await desktopCapturer.getSources({
+            types: ['screen', 'window'],
+            thumbnailSize: { width: 320, height: 180 },
+            fetchWindowIcons: true,
+          })) as Array<{
+            id: string;
+            name: string;
+            thumbnail?: { toPNG: () => Buffer };
+          }>;
+          return sources.map((s) => ({
+            id: s.id,
+            name: s.name,
+            isScreen: s.id.startsWith('screen'),
+            thumbnailBase64: s.thumbnail ? s.thumbnail.toPNG().toString('base64') : undefined,
+          }));
+        }
+      } catch {
+        // Fallback
+      }
+      return [];
     });
 
     ipcMain.handle('friday:windows-diagnostics', async () => {
@@ -509,6 +905,13 @@ export async function bootstrapElectronShell() {
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
+    void stopWindowsSapiTts();
+    try {
+      tray?.destroy();
+    } catch {
+      // Ignore tray destroy error
+    }
+    void closeEmbeddedServer?.();
     embeddedServerProcess?.kill();
   });
 }

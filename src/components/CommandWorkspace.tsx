@@ -1,13 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   Calendar as CalendarIcon,
   Camera,
-  Check,
-  Copy,
   Cpu,
   Droplets,
-  ExternalLink,
   FileText,
   Gauge,
   HardDrive,
@@ -20,7 +17,6 @@ import {
   Send,
   ShieldAlert,
   Sparkles,
-  Volume2,
   VolumeX,
   Wind,
   X,
@@ -29,7 +25,6 @@ import type {
   AgentId,
   ApiConnectionStatus,
   CalendarEvent,
-  ChatMessage,
   DesktopAppItem,
   HologramSettings,
   IndexedFileItem,
@@ -49,7 +44,6 @@ interface CommandWorkspaceProps {
   animationQuality: 'high' | 'balanced' | 'low';
   activeAgents: AgentId[];
   hologram: HologramSettings;
-  messages: ChatMessage[];
   wakeWord: string;
   wakeWordEnabled: boolean;
   autoSpeakReplies: boolean;
@@ -69,19 +63,12 @@ interface CommandWorkspaceProps {
   temperatureUnit?: TemperatureUnit;
   onSelectSection: (section: NavSection) => void;
   onSubmitCommand: (command: string) => Promise<boolean | void>;
-  onConfirmAction: (
-    actionType: string,
-    summary: string,
-    approved: boolean,
-    payload?: Record<string, unknown>
-  ) => Promise<void>;
   onToggleListening: () => void;
   onToggleRecordAudio: () => void;
   onToggleWakeWord: () => void;
   onUpdateHologram: (patch: Partial<HologramSettings>) => void;
   onLaunchApp: (app: DesktopAppItem) => void;
   onToggleEvent: (id: string) => void;
-  onSpeakText: (text: string) => void;
   onStopSpeaking: () => void;
   onOpenWeatherDetails: () => void;
   onCheckApiConnection: () => void;
@@ -365,7 +352,6 @@ export function CommandWorkspace({
   animationQuality,
   activeAgents,
   hologram,
-  messages,
   wakeWord,
   wakeWordEnabled,
   isListening,
@@ -384,12 +370,10 @@ export function CommandWorkspace({
   temperatureUnit = 'celsius',
   onSelectSection,
   onSubmitCommand,
-  onConfirmAction,
   onToggleListening,
   onToggleWakeWord,
   onLaunchApp,
   onToggleEvent,
-  onSpeakText,
   onStopSpeaking,
   onOpenWeatherDetails,
   onCheckApiConnection,
@@ -398,7 +382,6 @@ export function CommandWorkspace({
 }: CommandWorkspaceProps) {
   const [input, setInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [copiedDrawer, setCopiedDrawer] = useState(false);
   const [recentFiles, setRecentFiles] = useState<IndexedFileItem[]>([]);
   const [loadingRecentFiles, setLoadingRecentFiles] = useState(false);
   const [recentFilesError, setRecentFilesError] = useState<string | null>(null);
@@ -407,9 +390,6 @@ export function CommandWorkspace({
     content: string;
     sizeBytes: number;
   } | null>(null);
-  const [showResponseDrawer, setShowResponseDrawer] = useState(false);
-  const prevMsgCountRef = useRef(messages.length);
-  const hasBootstrappedRef = useRef(false);
 
   const loadRecentFiles = useCallback(async () => {
     setLoadingRecentFiles(true);
@@ -435,28 +415,14 @@ export function CommandWorkspace({
     void loadRecentFiles();
   }, [loadRecentFiles]);
 
-  useEffect(() => {
-    if (!hasBootstrappedRef.current) {
-      if (messages.length > 0) {
-        hasBootstrappedRef.current = true;
-      }
-      prevMsgCountRef.current = messages.length;
-      return;
-    }
-    if (messages.length > prevMsgCountRef.current) {
-      setShowResponseDrawer(true);
-    }
-    prevMsgCountRef.current = messages.length;
-  }, [messages.length]);
-
   const handleSend = async (textToSend?: string) => {
     const cmd = (textToSend ?? input).trim();
     if (!cmd || submitting) return;
     setSubmitting(true);
     if (!textToSend) setInput('');
+    onSelectSection('ai-chat');
     try {
-      const ok = await onSubmitCommand(cmd);
-      setShowResponseDrawer(ok !== false);
+      await onSubmitCommand(cmd);
     } finally {
       setSubmitting(false);
     }
@@ -481,18 +447,6 @@ export function CommandWorkspace({
     }
   };
 
-  const handleCopyDrawerResponse = async (text: string) => {
-    if (!text) return;
-    try {
-      await navigator.clipboard?.writeText(text);
-      setCopiedDrawer(true);
-      window.setTimeout(() => setCopiedDrawer(false), 1600);
-    } catch {
-      // Clipboard blocked in non-HTTPS contexts
-    }
-  };
-
-  const latestAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
   const voiceMeta = VOICE_STATE_META[voiceState];
   const micActive = isListening || isRecordingAudio;
 
@@ -793,136 +747,6 @@ export function CommandWorkspace({
                 </p>
               </div>
             </div>
-
-            {/* Live Collapsible Assistant Response Overlay Card (appears only after user sends a command) */}
-            {showResponseDrawer && latestAssistant && (
-              <div
-                aria-label="Latest Assistant Response"
-                className="w-full max-w-xl mt-1 rounded-2xl border border-fuchsia-400/50 bg-[#0d041d]/95 p-3.5 shadow-[0_0_26px_rgba(192,38,211,0.35)] z-20 max-h-40 overflow-y-auto space-y-2"
-              >
-                <div className="flex items-center justify-between gap-2 text-[11px] text-fuchsia-300">
-                  <span className="font-semibold flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span>
-                      F.R.I.D.A.Y. Response
-                      {latestAssistant.timings
-                        ? ` · ${latestAssistant.timings.totalMs}ms (${latestAssistant.timings.engine})`
-                        : ''}
-                    </span>
-                  </span>
-                  <div className="flex items-center gap-2">
-                    {isSpeaking && (
-                      <button
-                        type="button"
-                        onClick={onStopSpeaking}
-                        aria-label="Stop speaking"
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/20 text-rose-200 border border-rose-400/40 hover:bg-rose-500/30"
-                      >
-                        <VolumeX className="w-3 h-3" />
-                        <span>Stop</span>
-                      </button>
-                    )}
-                    {latestAssistant.content && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => void handleCopyDrawerResponse(latestAssistant.content)}
-                          aria-label="Copy response"
-                          className="inline-flex items-center gap-1 text-purple-200 hover:text-white"
-                        >
-                          {copiedDrawer ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onSpeakText(latestAssistant.content)}
-                          aria-label="Speak response aloud"
-                          className="text-purple-200 hover:text-white"
-                        >
-                          <Volume2 className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => onSelectSection('ai-chat')}
-                      className="text-fuchsia-300 hover:text-white underline underline-offset-2"
-                    >
-                      Full Stream
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowResponseDrawer(false)}
-                      aria-label="Minimize response card"
-                      className="text-purple-300 hover:text-white"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                {latestAssistant.content ? (
-                  <p className="text-xs text-purple-50 whitespace-pre-wrap leading-relaxed">
-                    {latestAssistant.content}
-                  </p>
-                ) : (
-                  <p className="text-xs text-fuchsia-300 italic animate-pulse">
-                    F.R.I.D.A.Y. is thinking...
-                  </p>
-                )}
-
-                {latestAssistant.sources && latestAssistant.sources.length > 0 && (
-                  <div className="flex flex-wrap gap-2 pt-1 border-t border-purple-800/60">
-                    {latestAssistant.sources.slice(0, 3).map((src) => (
-                      <a
-                        key={src.uri}
-                        href={src.uri}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-[11px] text-fuchsia-300 hover:text-white underline underline-offset-2"
-                      >
-                        <ExternalLink className="w-3 h-3 shrink-0" aria-hidden="true" />
-                        <span className="truncate max-w-[180px]">{src.title}</span>
-                      </a>
-                    ))}
-                  </div>
-                )}
-
-                {latestAssistant.pendingConfirmation && (
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onConfirmAction(
-                          latestAssistant.pendingConfirmation!.actionType,
-                          latestAssistant.pendingConfirmation!.summary,
-                          true,
-                          latestAssistant.pendingConfirmation!.payload
-                        )
-                      }
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-500/20 text-emerald-200 border border-emerald-500/40 hover:bg-emerald-500/30"
-                    >
-                      <Check className="w-3 h-3" aria-hidden="true" />
-                      <span>Confirm Action</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onConfirmAction(
-                          latestAssistant.pendingConfirmation!.actionType,
-                          latestAssistant.pendingConfirmation!.summary,
-                          false,
-                          latestAssistant.pendingConfirmation!.payload
-                        )
-                      }
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs bg-purple-950 text-purple-200 border border-purple-700"
-                    >
-                      <X className="w-3 h-3" aria-hidden="true" />
-                      <span>Cancel</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {/* Synchronized Neon-Purple Waveform + Central Mic Button + Pill Prompt Input */}

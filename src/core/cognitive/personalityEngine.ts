@@ -10,16 +10,15 @@ export function selectResponseStyle(params: {
 }): ResponseStyle {
   if (params.isFailure) return 'failure';
   if (params.isClarification) return 'clarification';
-  if (params.isHindiSimplify || params.userPreference?.preferredStyle === 'hindi_simple') {
+  if (params.isHindiSimplify) {
     return 'hindi_simple';
   }
   if (
     params.detectedLanguage === 'hinglish' ||
     params.detectedLanguage === 'hindi' ||
-    params.detectedLanguage === 'mixed' ||
-    params.userPreference?.preferredStyle === 'hinglish'
+    params.detectedLanguage === 'mixed'
   ) {
-    return 'hinglish';
+    return params.userPreference?.preferredStyle === 'hindi_simple' ? 'hindi_simple' : 'hinglish';
   }
   if (params.isInformative) return 'informative';
   return 'casual';

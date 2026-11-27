@@ -434,12 +434,62 @@ test('SQLite 6-layer cognitive memory, dynamic intents, JSON export/import & Kno
 
     const kbHits = kbMod.searchKnowledgeBase('paid inference APIs', 5);
     assert.equal(kbHits.length >= 1, true);
+    dbMod.closeCognitiveSqlite();
   } finally {
     if (prevDir === undefined) {
       delete process.env.FRIDAY_DATA_DIR;
     } else {
       process.env.FRIDAY_DATA_DIR = prevDir;
     }
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      // Windows Defender or OS file handle release delay on temp dir cleanup
+    }
   }
 });
+
+test('CognitiveOrchestrator handles knowledge, Hinglish explanations, web search, greetings & clarification without generic LocalCore boilerplate', async () => {
+  const ports = new InMemoryCognitivePorts();
+  const orchestrator = new CognitiveOrchestrator({
+    memoryStore: ports,
+    knowledgeEngine: ports,
+    learningStore: ports,
+    toolAdapter: createMockToolAdapter(true),
+    modelProvider: new LocalCognitiveModelProvider(),
+    sessionId: 'test-no-generic',
+  });
+
+  const ramRes = await orchestrator.processTurn(turn('What is RAM?'));
+  assert.match(ramRes.reply, /random access memory|memory/i);
+  assert.equal(/built-in local core|processed .* via/i.test(ramRes.reply), false);
+
+  const pythonHinglish = await orchestrator.processTurn(turn('Mujhe Python samjhao.'));
+  assert.match(pythonHinglish.reply, /python/i);
+  assert.equal(/built-in local core|processed .* via/i.test(pythonHinglish.reply), false);
+
+  const searchRes = await orchestrator.processTurn(turn('Search for Python programming.'));
+  assert.match(searchRes.reply, /python programming/i);
+  assert.equal(/built-in local core|processed .* via/i.test(searchRes.reply), false);
+
+  const chromeHinglish = await orchestrator.processTurn(turn('Chrome kholo'));
+  assert.equal(chromeHinglish.intentId, 'intent.open_app');
+  assert.match(chromeHinglish.reply, /chrome/i);
+
+  const greetRes = await orchestrator.processTurn(turn('hiii'));
+  assert.equal(greetRes.intentId, 'intent.greeting_status');
+  assert.equal(/built-in local core|processed .* via/i.test(greetRes.reply), false);
+
+  const songHinglish = await orchestrator.processTurn(turn('Ek achha sa song lagao'));
+  assert.equal(songHinglish.intentId, 'intent.media_control');
+  assert.match(songHinglish.reply, /Ek achha sa song lagao/i);
+  assert.equal(/built-in local core|synthesize/i.test(songHinglish.reply), false);
+  const stepTitles = (songHinglish.taskPlan?.steps ?? []).map((s) => s.title).join(' ');
+  assert.equal(/synthesize local contextual response|synthesize conversational status reply/i.test(stepTitles), false);
+
+  const unclearRes = await orchestrator.processTurn(turn('We wanted'));
+  assert.equal(unclearRes.decision.route, 'ask_clarification');
+  assert.equal(/built-in local core|processed .* via/i.test(unclearRes.reply), false);
+});
+
+

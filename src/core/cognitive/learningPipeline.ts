@@ -104,14 +104,21 @@ export function updatePreferenceLearning(
 
   next.topCommands[usedIntentId] = (next.topCommands[usedIntentId] || 0) + 1;
 
-  if (understanding.isHindiSimplifyRequest) {
+  if (/\b(?:always\s+talk\s+in\s+hindi|hamesha\s+hindi\s+mein|prefer\s+hindi)\b/i.test(understanding.correctedInput)) {
     next.preferredStyle = 'hindi_simple';
-    next.preferredLanguage = 'hinglish';
+    next.preferredLanguage = 'hindi';
   } else if (/\b(?:always\s+talk\s+in\s+hinglish|hinglish\s+mein\s+baat\s+kar|prefer\s+hinglish)\b/i.test(understanding.correctedInput)) {
     next.preferredStyle = 'hinglish';
     next.preferredLanguage = 'hinglish';
   } else if (/\b(?:keep\s+it\s+short|short\s+mein\s+bata|concise)\b/i.test(understanding.correctedInput)) {
     next.preferredStyle = 'concise';
+  } else if (
+    understanding.detectedLanguage === 'english' &&
+    !understanding.isHindiSimplifyRequest &&
+    (next.preferredStyle === 'hindi_simple' || next.preferredStyle === 'hinglish')
+  ) {
+    next.preferredStyle = 'auto';
+    next.preferredLanguage = 'auto';
   }
 
   return next;

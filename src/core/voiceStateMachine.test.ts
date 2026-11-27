@@ -6,7 +6,9 @@ import {
   invalidateSpeechEpoch,
   isEchoOfAssistantSpeech,
   isSpeechTokenValid,
+  isWithinPostSpeechEchoWindow,
   resolvePostInterruptState,
+  resolveWakeWordUtterance,
   shouldIgnoreDuplicateSubmission,
 } from './voiceStateMachine';
 import { analyzeUserCommand, isInterruptionCommand } from './intentEngine';
@@ -72,6 +74,79 @@ test('anti-echo suppression rejects self-heard TTS while allowing unrelated comm
   assert.equal(isEchoOfAssistantSpeech('CPU load is 14 percent', activeSpeech, true), true);
   assert.equal(isEchoOfAssistantSpeech('CPU load is 14 percent', activeSpeech, false), false);
   assert.equal(isEchoOfAssistantSpeech('open notepad', activeSpeech, true), false);
+});
+
+test('isWithinPostSpeechEchoWindow enforces 600ms post-TTS echo cooldown', () => {
+  assert.equal(isWithinPostSpeechEchoWindow(0, 1000, 600), false);
+  assert.equal(isWithinPostSpeechEchoWindow(1000, 1250, 600), true);
+  assert.equal(isWithinPostSpeechEchoWindow(1000, 1600, 600), true);
+  assert.equal(isWithinPostSpeechEchoWindow(1000, 1601, 600), false);
+  assert.equal(
+    isEchoOfAssistantSpeech(
+      'Opening Chrome',
+      'Opening Chrome now.',
+      isWithinPostSpeechEchoWindow(1000, 1300, 600)
+    ),
+    true
+  );
+});
+
+test('resolveWakeWordUtterance supports disabled wake-word, inline wake-word, 2-stage arming, and ignore', () => {
+  const direct = resolveWakeWordUtterance({
+    transcript: 'open Chrome',
+    wakeWord: 'Hey Friday',
+    wakeWordEnabled: false,
+  });
+  assert.equal(direct.action, 'command');
+  assert.equal(direct.command, 'open Chrome');
+
+  const inline = resolveWakeWordUtterance({
+    transcript: 'Hey Friday, open Chrome',
+    wakeWord: 'Hey Friday',
+    wakeWordEnabled: true,
+    nowMs: 5000,
+  });
+  assert.equal(inline.action, 'command');
+  assert.equal(inline.command, 'open Chrome');
+  assert.equal(inline.disarmWakeWord, true);
+
+  const arm = resolveWakeWordUtterance({
+    transcript: 'Hey Friday',
+    wakeWord: 'Hey Friday',
+    wakeWordEnabled: true,
+    nowMs: 5000,
+    armDurationMs: 8000,
+  });
+  assert.equal(arm.action, 'arm_wake_word');
+  assert.equal(arm.armedUntilMs, 13000);
+
+  const followUp = resolveWakeWordUtterance({
+    transcript: 'open Chrome',
+    wakeWord: 'Hey Friday',
+    wakeWordEnabled: true,
+    wakeWordArmedUntilMs: arm.armedUntilMs,
+    nowMs: 8000,
+  });
+  assert.equal(followUp.action, 'command');
+  assert.equal(followUp.command, 'open Chrome');
+  assert.equal(followUp.disarmWakeWord, true);
+
+  const expired = resolveWakeWordUtterance({
+    transcript: 'open Chrome',
+    wakeWord: 'Hey Friday',
+    wakeWordEnabled: true,
+    wakeWordArmedUntilMs: arm.armedUntilMs,
+    nowMs: 14000,
+  });
+  assert.equal(expired.action, 'ignore');
+
+  const ignored = resolveWakeWordUtterance({
+    transcript: 'random background chatter',
+    wakeWord: 'Hey Friday',
+    wakeWordEnabled: true,
+    nowMs: 5000,
+  });
+  assert.equal(ignored.action, 'ignore');
 });
 
 test('post-interrupt state returns to listening only when continuous mode is enabled', () => {

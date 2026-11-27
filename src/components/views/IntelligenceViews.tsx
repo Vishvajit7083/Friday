@@ -1,50 +1,71 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  AlertCircle,
   Camera,
   Check,
   Copy,
   Download,
   ExternalLink,
   FileText,
+  Folder,
+  FolderOpen,
   FolderPlus,
   FolderSearch,
   Globe,
+  Loader2,
   Pause,
   Play,
+  RefreshCw,
   Search,
   Sparkles,
+  Trash2,
   Upload,
+  XCircle,
 } from 'lucide-react';
 import { formatBytes } from '../../core/fileIndex';
 import type {
   AssistantSettings,
+  FileIndexerProgress,
+  FileIndexerStatus,
+  FileMediaMetadata,
   GroundingSource,
   IndexedFileItem,
   ResearchMode,
+  VisualAnalysisOperationType,
+  VisualAnalysisRequest,
 } from '../../core/types';
 
-const SCREEN_ANALYSIS_PRESETS = [
+const SCREEN_ANALYSIS_PRESETS: Array<{
+  id: string;
+  operationType: VisualAnalysisOperationType;
+  label: string;
+  prompt: string;
+}> = [
   {
     id: 'general',
+    operationType: 'screen_analysis',
     label: 'Analyze Screen Window',
     prompt: 'Explain what is visible on this screen, identify active UI or errors, and summarize key information.',
   },
   {
     id: 'error',
+    operationType: 'error_analysis',
     label: 'Explain Error',
     prompt: 'Inspect this screen capture for error messages, stack traces, or warnings and explain how to fix them.',
   },
   {
     id: 'chart',
+    operationType: 'chart_analysis',
     label: 'Analyze Chart',
     prompt: 'Analyze charts, graphs, metrics, or tables visible on screen and summarize the key trends and numbers.',
   },
   {
     id: 'ocr',
+    operationType: 'text_extraction',
     label: 'Read Visible Text',
     prompt: 'Transcribe all important visible text on this screen cleanly and preserve structured sections.',
   },
-] as const;
+];
 
 const RESEARCH_MODES: Array<{ id: ResearchMode; label: string }> = [
   { id: 'web', label: 'General Web' },
@@ -52,6 +73,41 @@ const RESEARCH_MODES: Array<{ id: ResearchMode; label: string }> = [
   { id: 'docs', label: 'Technical Docs' },
   { id: 'video', label: 'Video & Talks' },
 ];
+
+const STATUS_BADGE_MAP: Record<FileIndexerStatus, { label: string; tone: string }> = {
+  not_configured: {
+    label: 'No Folder Permitted',
+    tone: 'bg-slate-800/80 text-slate-300 border-slate-700',
+  },
+  permission_required: {
+    label: 'Permission Required',
+    tone: 'bg-amber-500/15 text-amber-200 border-amber-500/40',
+  },
+  ready: {
+    label: 'Ready',
+    tone: 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40',
+  },
+  indexing: {
+    label: 'Indexing',
+    tone: 'bg-indigo-500/20 text-indigo-200 border-indigo-400/50',
+  },
+  paused: {
+    label: 'Paused',
+    tone: 'bg-amber-500/15 text-amber-200 border-amber-500/40',
+  },
+  completed: {
+    label: 'Index Complete',
+    tone: 'bg-emerald-500/15 text-emerald-200 border-emerald-500/40',
+  },
+  failed: {
+    label: 'Index Failed',
+    tone: 'bg-rose-500/15 text-rose-200 border-rose-500/40',
+  },
+  permission_denied: {
+    label: 'Access Denied',
+    tone: 'bg-rose-500/15 text-rose-200 border-rose-500/40',
+  },
+};
 
 export function FileExplorerView({
   settings,
@@ -66,11 +122,17 @@ export function FileExplorerView({
   const [duplicates, setDuplicates] = useState<IndexedFileItem[][]>([]);
   const [totalIndexed, setTotalIndexed] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [indexerProgress, setIndexerProgress] = useState<FileIndexerProgress | null>(null);
   const [selectedPreview, setSelectedPreview] = useState<{
     path: string;
     name: string;
     content: string;
     sizeBytes: number;
+    modifiedAt?: string;
+    createdAt?: string;
+    extension?: string;
+    category?: IndexedFileItem['category'];
+    mediaMeta?: FileMediaMetadata;
   } | null>(null);
   const [fileQuestion, setFileQuestion] = useState('');
   const [fileSummary, setFileSummary] = useState<string | null>(null);
@@ -85,8 +147,24 @@ export function FileExplorerView({
   } | null>(null);
   const [copiedMedia, setCopiedMedia] = useState(false);
   const [copiedSummary, setCopiedSummary] = useState(false);
+
+  const [folderPathInput, setFolderPathInput] = useState('');
+  const [folderSubmitting, setFolderSubmitting] = useState(false);
+  const [selectedParentFolder, setSelectedParentFolder] = useState(settings.allowedFolders[0] || '');
   const [newFolderName, setNewFolderName] = useState('');
   const [folderStatus, setFolderStatus] = useState<string | null>(null);
+  const [folderError, setFolderError] = useState<string | null>(null);
+  const [createFolderFeedback, setCreateFolderFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const prevStatusRef = useRef<FileIndexerStatus | null>(null);
+
+  useEffect(() => {
+    if (settings.allowedFolders.length === 0) {
+      setSelectedParentFolder('');
+    } else if (!settings.allowedFolders.includes(selectedParentFolder)) {
+      setSelectedParentFolder(settings.allowedFolders[0]);
+    }
+  }, [settings.allowedFolders, selectedParentFolder]);
 
   const fetchFiles = async (q = query, cat = category) => {
     setLoading(true);
@@ -95,20 +173,172 @@ export function FileExplorerView({
         `/api/files?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}`
       );
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load indexed files.');
       setFiles(data.files ?? []);
       setDuplicates(data.duplicates ?? []);
       setTotalIndexed(data.totalIndexed ?? 0);
+      if (data.progress) {
+        setIndexerProgress(data.progress);
+      }
+    } catch (err) {
+      setFolderError((err as Error).message);
     } finally {
       setLoading(false);
     }
   };
 
+  const fetchIndexerStatus = async () => {
+    try {
+      const res = await fetch('/api/files/status');
+      if (!res.ok) return;
+      const data = (await res.json()) as FileIndexerProgress;
+      setIndexerProgress(data);
+    } catch {
+      // Ignore transient poll errors
+    }
+  };
+
   useEffect(() => {
-    fetchFiles();
+    void fetchFiles();
   }, [settings.pausedIndexing, settings.allowedFolders.length]);
+
+  useEffect(() => {
+    const currentStatus = indexerProgress?.status ?? null;
+    if (prevStatusRef.current === 'indexing' && currentStatus && currentStatus !== 'indexing') {
+      void fetchFiles(query, category);
+    }
+    prevStatusRef.current = currentStatus;
+
+    if (currentStatus !== 'indexing') return;
+    const timer = window.setInterval(() => {
+      void fetchIndexerStatus();
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [indexerProgress?.status]);
+
+  const handleTogglePauseResume = async () => {
+    setFolderError(null);
+    const willPause = !settings.pausedIndexing;
+    try {
+      const res = await fetch(willPause ? '/api/files/pause' : '/api/files/resume', {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (data.progress) setIndexerProgress(data.progress);
+    } catch {
+      // Fall back to settings update
+    }
+    onUpdateSettings({ pausedIndexing: willPause });
+  };
+
+  const handleReindex = async () => {
+    setFolderError(null);
+    setFolderStatus(null);
+    try {
+      const res = await fetch('/api/files/reindex', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start re-index.');
+      if (data.progress) setIndexerProgress(data.progress);
+      if (settings.pausedIndexing) {
+        onUpdateSettings({ pausedIndexing: false });
+      }
+      setFolderStatus('Started fresh background indexing across permitted folders.');
+      window.setTimeout(() => void fetchFiles(query, category), 600);
+    } catch (err) {
+      setFolderError((err as Error).message);
+    }
+  };
+
+  const handleCancelIndexing = async () => {
+    try {
+      const res = await fetch('/api/files/cancel', { method: 'POST' });
+      const data = await res.json();
+      if (data.progress) setIndexerProgress(data.progress);
+      setFolderStatus('Indexing run stopped. Previously indexed entries remain available.');
+    } catch (err) {
+      setFolderError((err as Error).message);
+    }
+  };
+
+  const handleAddPermittedFolder = async (folderPath: string) => {
+    const clean = folderPath.trim();
+    if (!clean) {
+      setFolderError('Enter or select a valid folder path.');
+      return;
+    }
+    setFolderSubmitting(true);
+    setFolderError(null);
+    setFolderStatus(null);
+    try {
+      const res = await fetch('/api/files/folders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath: clean }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to authorize folder.');
+      if (Array.isArray(data.allowedFolders)) {
+        onUpdateSettings({ allowedFolders: data.allowedFolders });
+      }
+      if (data.progress) {
+        setIndexerProgress(data.progress);
+      }
+      setFolderPathInput('');
+      setFolderStatus(
+        data.added
+          ? `Authorized and indexing folder: ${data.folder}`
+          : `Folder already authorized: ${data.folder}`
+      );
+      window.setTimeout(() => void fetchFiles(query, category), 400);
+    } catch (err) {
+      setFolderError((err as Error).message);
+    } finally {
+      setFolderSubmitting(false);
+    }
+  };
+
+  const handleSelectNativeFolder = async () => {
+    setFolderError(null);
+    if (window.fridayDesktop?.selectFolder) {
+      const result = await window.fridayDesktop.selectFolder();
+      if (!result.canceled && result.folderPath) {
+        await handleAddPermittedFolder(result.folderPath);
+      } else if (result.error) {
+        setFolderError(result.error);
+      }
+      return;
+    }
+    folderInputRef.current?.focus();
+    setFolderStatus('Type a local folder path in the box and click "Add Folder" (native dialog runs in Windows EXE).');
+  };
+
+  const handleRemovePermittedFolder = async (folderPath: string) => {
+    setFolderError(null);
+    setFolderStatus(null);
+    try {
+      const res = await fetch('/api/files/folders', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to remove folder.');
+      if (Array.isArray(data.allowedFolders)) {
+        onUpdateSettings({ allowedFolders: data.allowedFolders });
+      }
+      if (data.progress) {
+        setIndexerProgress(data.progress);
+      }
+      setFolderStatus(`Removed folder access and cleared its index: ${folderPath}`);
+      await fetchFiles(query, category);
+    } catch (err) {
+      setFolderError((err as Error).message);
+    }
+  };
 
   const handleOpenPreview = async (file: IndexedFileItem) => {
     setFileSummary(null);
+    setFolderError(null);
     try {
       const res = await fetch('/api/files/read', {
         method: 'POST',
@@ -117,28 +347,79 @@ export function FileExplorerView({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to read file');
-      setSelectedPreview({ ...data, path: file.path });
+      setSelectedPreview({
+        ...data,
+        path: data.path || file.path,
+        category: data.category || file.category,
+        extension: data.extension || file.extension,
+      });
     } catch (err) {
       setSelectedPreview({
         path: file.path,
         name: file.name,
         content: (err as Error).message,
         sizeBytes: file.sizeBytes,
+        modifiedAt: file.modifiedAt,
+        createdAt: file.createdAt,
+        extension: file.extension,
+        category: file.category,
       });
     }
   };
 
   const handleOpenInDefaultApp = async (filePath: string) => {
+    setFolderError(null);
     try {
+      if (window.fridayDesktop?.openFile) {
+        const result = await window.fridayDesktop.openFile(filePath);
+        if (result.opened) {
+          setFolderStatus(result.detail || 'Opened file in default Windows app.');
+        } else {
+          setFolderError(result.detail || 'Unable to open file.');
+        }
+        return;
+      }
       const res = await fetch('/api/files/open', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filePath }),
       });
       const data = await res.json();
-      setFolderStatus(data.detail || (res.ok ? 'Opened file in default OS handler.' : data.error));
+      if (!res.ok || data.opened === false) {
+        setFolderError(data.error || data.detail || 'Unable to open file.');
+      } else {
+        setFolderStatus(data.detail || 'Opened file in default OS handler.');
+      }
     } catch (err) {
-      setFolderStatus((err as Error).message);
+      setFolderError((err as Error).message);
+    }
+  };
+
+  const handleRevealInExplorer = async (filePath: string) => {
+    setFolderError(null);
+    try {
+      if (window.fridayDesktop?.revealFileInExplorer) {
+        const result = await window.fridayDesktop.revealFileInExplorer(filePath);
+        if (result.revealed) {
+          setFolderStatus(result.message || 'Highlighted file in Windows Explorer.');
+        } else {
+          setFolderError(result.message || 'Unable to open file location.');
+        }
+        return;
+      }
+      const res = await fetch('/api/files/reveal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.revealed === false) {
+        setFolderError(data.error || data.message || 'Unable to reveal file location.');
+      } else {
+        setFolderStatus(data.message || 'Opened file location.');
+      }
+    } catch (err) {
+      setFolderError((err as Error).message);
     }
   };
 
@@ -166,9 +447,7 @@ export function FileExplorerView({
     }
   };
 
-  const runVisionAnalysisPayload = async (
-    payload: { base64Data: string; mimeType: string; prompt: string }
-  ) => {
+  const runVisionAnalysisPayload = async (payload: VisualAnalysisRequest) => {
     setAnalyzing(true);
     setMediaError(null);
     setMediaAnalysis(null);
@@ -179,7 +458,9 @@ export function FileExplorerView({
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Analysis failed');
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || data.analysis || 'Analysis failed');
+      }
       setMediaAnalysis(data.analysis);
     } catch (err) {
       setMediaError((err as Error).message || 'Media analysis failed.');
@@ -206,16 +487,34 @@ export function FileExplorerView({
         reader.readAsDataURL(file);
       });
 
+      const lowerName = file.name.toLowerCase();
+      let detectedMime = file.type || 'application/octet-stream';
+      if (detectedMime === 'application/octet-stream') {
+        if (lowerName.endsWith('.pdf')) detectedMime = 'application/pdf';
+        else if (lowerName.endsWith('.wav')) detectedMime = 'audio/wav';
+        else if (lowerName.endsWith('.mp3')) detectedMime = 'audio/mpeg';
+        else if (lowerName.endsWith('.png')) detectedMime = 'image/png';
+        else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) detectedMime = 'image/jpeg';
+      }
+
+      let operationType: VisualAnalysisOperationType = 'image_analysis';
+      if (detectedMime === 'application/pdf' || lowerName.endsWith('.pdf')) {
+        operationType = 'pdf_analysis';
+      } else if (detectedMime.startsWith('audio/') || /\.(wav|mp3|ogg|m4a|flac|webm)$/i.test(lowerName)) {
+        operationType = 'audio_analysis';
+      }
+
       const uploaded = {
         base64Data,
-        mimeType: file.type || 'application/octet-stream',
+        mimeType: detectedMime,
         name: file.name,
       };
       setLastUploadedMedia(uploaded);
       await runVisionAnalysisPayload({
+        operationType,
         base64Data: uploaded.base64Data,
         mimeType: uploaded.mimeType,
-        prompt: `Analyze "${uploaded.name}". Extract visible text, summarize key points, inspect charts/errors, or describe visual objects.`,
+        fileName: uploaded.name,
       });
     } catch (err) {
       setMediaError(`Unable to read uploaded file: ${(err as Error).message}`);
@@ -224,13 +523,16 @@ export function FileExplorerView({
   };
 
   const handleCaptureScreen = async (
-    promptText = 'Explain what is visible on this screen, identify active UI or errors, and summarize key information.'
+    operationType: VisualAnalysisOperationType = 'screen_analysis',
+    _promptText?: string
   ) => {
-    if (!settings.screenCaptureConsent && lastUploadedMedia) {
+    // Allow re-analyzing an already uploaded image with Error/Chart/OCR mode when screen capture consent is not toggled
+    if (!settings.screenCaptureConsent && lastUploadedMedia && lastUploadedMedia.mimeType.startsWith('image/')) {
       await runVisionAnalysisPayload({
+        operationType,
         base64Data: lastUploadedMedia.base64Data,
         mimeType: lastUploadedMedia.mimeType,
-        prompt: `${promptText} (File: ${lastUploadedMedia.name})`,
+        fileName: lastUploadedMedia.name,
       });
       return;
     }
@@ -247,6 +549,39 @@ export function FileExplorerView({
     setMediaAnalysis(null);
     let stream: MediaStream | null = null;
     try {
+      // 1. Prefer native Electron desktopCapturer / Windows GDI capture inside Windows EXE
+      if (window.fridayDesktop?.captureScreen) {
+        const activeWin = await window.fridayDesktop.getActiveWindow?.().catch(() => undefined);
+        const cap = await window.fridayDesktop.captureScreen({
+          target: operationType === 'screen_analysis' ? 'window' : 'screen',
+        });
+        if (!cap.ok || !cap.base64Data) {
+          throw new Error(cap.error || cap.detail || 'Native Windows screen capture failed.');
+        }
+        setLastUploadedMedia({
+          base64Data: cap.base64Data,
+          mimeType: cap.mimeType || 'image/png',
+          name: cap.sourceName || 'screen-capture.png',
+        });
+        await runVisionAnalysisPayload({
+          operationType,
+          base64Data: cap.base64Data,
+          mimeType: cap.mimeType || 'image/png',
+          fileName: cap.sourceName || 'screen-capture.png',
+          metadata: {
+            sourceName: cap.sourceName,
+            width: cap.width,
+            height: cap.height,
+            userConfirmedConsent: true,
+            activeWindow: activeWin?.ok
+              ? { title: activeWin.title, processName: activeWin.processName, pid: activeWin.pid }
+              : undefined,
+          },
+        });
+        return;
+      }
+
+      // 2. Fallback to Web getDisplayMedia when running in browser preview
       stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const video = document.createElement('video');
       video.muted = true;
@@ -275,9 +610,15 @@ export function FileExplorerView({
       const base64Data = dataUrl.split(',')[1];
       setLastUploadedMedia({ base64Data, mimeType: 'image/png', name: 'screen-capture.png' });
       await runVisionAnalysisPayload({
+        operationType,
         base64Data,
         mimeType: 'image/png',
-        prompt: promptText,
+        fileName: 'screen-capture.png',
+        metadata: {
+          width: canvas.width,
+          height: canvas.height,
+          userConfirmedConsent: true,
+        },
       });
     } catch (err) {
       setMediaError(`Screen capture cancelled or unavailable: ${(err as Error).message}`);
@@ -289,27 +630,52 @@ export function FileExplorerView({
 
   const handleCreatePermittedFolder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newFolderName.trim()) {
-      setFolderStatus('Enter a folder name first.');
+    setCreateFolderFeedback(null);
+    const folderName = newFolderName.trim();
+    if (!folderName) {
+      setCreateFolderFeedback({ ok: false, text: 'Enter a folder name first.' });
       return;
     }
-    const base = settings.allowedFolders[0] || '.';
-    const sep = base.includes('\\') ? '\\' : '/';
-    const cleanBase = base.replace(/[\\/]+$/, '');
-    const targetPath = `${cleanBase}${sep}${newFolderName.trim().replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-    const res = await fetch('/api/files/folder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folderPath: targetPath, confirmCreate: true }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      setFolderStatus(`Created folder: ${data.path}`);
-      setNewFolderName('');
-    } else {
-      setFolderStatus(data.error || 'Failed to create folder');
+    const parentFolder = selectedParentFolder || settings.allowedFolders[0] || '';
+    if (!parentFolder) {
+      setCreateFolderFeedback({
+        ok: false,
+        text: 'Authorize at least one permitted folder before creating a subfolder.',
+      });
+      return;
+    }
+    try {
+      const res = await fetch('/api/files/folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentFolder, folderName, confirmCreate: true }),
+      });
+      const data = await res.json();
+      if (res.ok && data.created) {
+        setCreateFolderFeedback({ ok: true, text: `Created verified folder: ${data.path}` });
+        setNewFolderName('');
+        void fetchFiles(query, category);
+      } else {
+        setCreateFolderFeedback({ ok: false, text: data.error || 'Failed to create folder.' });
+      }
+    } catch (err) {
+      setCreateFolderFeedback({ ok: false, text: (err as Error).message });
     }
   };
+
+  const effectiveStatus: FileIndexerStatus =
+    indexerProgress?.status ||
+    (settings.allowedFolders.length === 0
+      ? 'not_configured'
+      : settings.pausedIndexing
+        ? 'paused'
+        : 'ready');
+  const statusBadge = STATUS_BADGE_MAP[effectiveStatus] || STATUS_BADGE_MAP.ready;
+  const folderStatuses = indexerProgress?.folderStatuses || [];
+  const pct =
+    indexerProgress && indexerProgress.totalFolders > 0
+      ? Math.min(100, Math.round((indexerProgress.processedFolders / indexerProgress.totalFolders) * 100))
+      : 0;
 
   return (
     <div className="flex-1 h-full overflow-y-auto p-6 space-y-5">
@@ -319,29 +685,183 @@ export function FileExplorerView({
             Personal File, Screen & Multimedia Intelligence
           </h2>
           <p className="text-sm text-slate-400">
-            Permission-gated index ({totalIndexed} files across {settings.allowedFolders.length} permitted folder)
+            Permission-gated index ({totalIndexed} files across {settings.allowedFolders.length} permitted{' '}
+            {settings.allowedFolders.length === 1 ? 'folder' : 'folders'})
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => onUpdateSettings({ pausedIndexing: !settings.pausedIndexing })}
-          className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border ${
-            settings.pausedIndexing
-              ? 'bg-amber-500/15 text-amber-200 border-amber-500/40'
-              : 'bg-slate-900 text-slate-200 border-slate-700'
-          }`}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border ${statusBadge.tone}`}>
+            {effectiveStatus === 'indexing' && <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />}
+            <span>{statusBadge.label}</span>
+          </span>
+
+          <button
+            type="button"
+            onClick={() => void handleSelectNativeFolder()}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+          >
+            <FolderOpen className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>Select Folder</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void handleReindex()}
+            disabled={settings.allowedFolders.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-slate-900 border border-slate-700 text-slate-200 hover:border-cyan-400/50 disabled:opacity-40"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${effectiveStatus === 'indexing' ? 'animate-spin text-cyan-400' : ''}`} aria-hidden="true" />
+            <span>Re-index</span>
+          </button>
+
+          {effectiveStatus === 'indexing' && (
+            <button
+              type="button"
+              onClick={() => void handleCancelIndexing()}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-rose-500/15 text-rose-200 border border-rose-500/40"
+            >
+              <XCircle className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Stop</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void handleTogglePauseResume()}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border ${
+              settings.pausedIndexing
+                ? 'bg-amber-500/15 text-amber-200 border-amber-500/40'
+                : 'bg-slate-900 text-slate-200 border-slate-700'
+            }`}
+          >
+            {settings.pausedIndexing ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+            <span>{settings.pausedIndexing ? 'Resume Indexing' : 'Pause Indexing'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Permitted Folders & Real-Time Indexer Progress */}
+      <div className="p-4 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+            <Folder className="w-4 h-4 text-cyan-400" aria-hidden="true" />
+            <span>Authorized Local Folders</span>
+          </span>
+          {indexerProgress && (
+            <span className="text-[11px] font-mono-tabular text-slate-400">
+              {effectiveStatus === 'indexing'
+                ? `Scanning ${indexerProgress.currentFolder || '...'} · ${indexerProgress.filesIndexed} files (${indexerProgress.processedFolders}/${indexerProgress.totalFolders})`
+                : indexerProgress.completedAt
+                  ? `Last indexed ${new Date(indexerProgress.completedAt).toLocaleTimeString()} · ${indexerProgress.filesIndexed} files`
+                  : `${totalIndexed} indexed`}
+            </span>
+          )}
+        </div>
+
+        {effectiveStatus === 'indexing' && (
+          <div className="w-full h-1.5 rounded-full bg-slate-900 overflow-hidden">
+            <div
+              className="h-full bg-cyan-400 transition-all duration-300"
+              style={{ width: `${Math.max(8, pct)}%` }}
+            />
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          {settings.allowedFolders.length === 0 ? (
+            <p className="text-xs text-amber-300">
+              No local folders authorized yet. Click "Select Folder" or enter a folder path below (e.g., Desktop or Documents).
+            </p>
+          ) : (
+            settings.allowedFolders.map((folder) => {
+              const info = folderStatuses.find(
+                (fsItem) => fsItem.path.toLowerCase() === folder.toLowerCase()
+              );
+              return (
+                <div
+                  key={folder}
+                  className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-slate-800 text-xs max-w-full"
+                >
+                  <span className="font-mono-tabular text-slate-200 truncate max-w-[280px]" title={folder}>
+                    {folder}
+                  </span>
+                  {info && (
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                        info.readable
+                          ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                          : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                      }`}
+                    >
+                      {info.readable
+                        ? `${info.fileCount} files`
+                        : info.exists
+                          ? 'Denied'
+                          : 'Missing'}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void handleRemovePermittedFolder(folder)}
+                    aria-label={`Remove authorized folder ${folder}`}
+                    className="text-slate-400 hover:text-rose-300 p-0.5"
+                    title="Revoke folder access"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleAddPermittedFolder(folderPathInput);
+          }}
+          className="flex flex-wrap gap-2"
         >
-          {settings.pausedIndexing ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-          <span>{settings.pausedIndexing ? 'Resume Indexing' : 'Pause Indexing'}</span>
-        </button>
+          <input
+            ref={folderInputRef}
+            type="text"
+            value={folderPathInput}
+            onChange={(e) => setFolderPathInput(e.target.value)}
+            placeholder="Or paste Windows/local folder path (e.g. C:\Users\Name\Documents)..."
+            aria-label="Authorize local folder path"
+            className="flex-1 min-w-[220px] px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
+          />
+          <button
+            type="submit"
+            disabled={folderSubmitting || !folderPathInput.trim()}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 border border-slate-700 text-slate-100 hover:border-cyan-400/50 disabled:opacity-50"
+          >
+            {folderSubmitting ? 'Adding...' : 'Add Folder'}
+          </button>
+        </form>
+
+        {(folderError || indexerProgress?.lastError || folderStatus) && (
+          <div
+            className={`text-xs px-3 py-2 rounded-lg border flex items-start gap-2 ${
+              folderError || indexerProgress?.lastError
+                ? 'bg-rose-950/60 border-rose-500/40 text-rose-200'
+                : 'bg-cyan-950/40 border-cyan-500/30 text-cyan-200'
+            }`}
+          >
+            {(folderError || indexerProgress?.lastError) && (
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-300" aria-hidden="true" />
+            )}
+            <span>{folderError || indexerProgress?.lastError || folderStatus}</span>
+          </div>
+        )}
       </div>
 
       {/* Natural Language Search Bar */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          fetchFiles(query, category);
+          void fetchFiles(query, category);
         }}
         className="flex flex-wrap gap-2"
       >
@@ -361,7 +881,7 @@ export function FileExplorerView({
           onChange={(e) => {
             const next = e.target.value as 'all' | IndexedFileItem['category'];
             setCategory(next);
-            fetchFiles(query, next);
+            void fetchFiles(query, next);
           }}
           aria-label="Filter file type"
           className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-100"
@@ -396,7 +916,7 @@ export function FileExplorerView({
             <button
               key={preset.id}
               type="button"
-              onClick={() => handleCaptureScreen(preset.prompt)}
+              onClick={() => void handleCaptureScreen(preset.operationType, preset.prompt)}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-slate-900 border border-slate-700 text-slate-200 hover:border-cyan-400/50"
             >
               <Camera className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
@@ -477,21 +997,31 @@ export function FileExplorerView({
           </div>
 
           {loading ? (
-            <p className="text-xs text-slate-400">Scanning permitted directories...</p>
+            <p className="text-xs text-slate-400">Loading permitted index...</p>
+          ) : settings.allowedFolders.length === 0 ? (
+            <p className="text-xs text-slate-400">
+              Select or add a permitted folder above to scan and search your local files.
+            </p>
           ) : files.length === 0 ? (
             <p className="text-xs text-slate-400">
               {settings.pausedIndexing
-                ? 'Indexing is paused. Resume indexing to search files.'
-                : 'No files matched your query.'}
+                ? 'Indexing is paused. Click "Resume Indexing" above to index and search files.'
+                : effectiveStatus === 'indexing'
+                  ? 'Indexing permitted folders in the background...'
+                  : 'No files matched your query.'}
             </p>
           ) : (
             <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
-              {files.slice(0, 40).map((file) => (
+              {files.slice(0, 60).map((file) => (
                 <button
                   key={file.id}
                   type="button"
-                  onClick={() => handleOpenPreview(file)}
-                  className="w-full text-left p-2.5 rounded-lg bg-slate-900/75 border border-slate-800 hover:border-cyan-400/40 transition-colors"
+                  onClick={() => void handleOpenPreview(file)}
+                  className={`w-full text-left p-2.5 rounded-lg border transition-colors ${
+                    selectedPreview?.path === file.path
+                      ? 'bg-cyan-500/10 border-cyan-400/50'
+                      : 'bg-slate-900/75 border-slate-800 hover:border-cyan-400/40'
+                  }`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-medium text-slate-100 truncate">{file.name}</span>
@@ -508,39 +1038,68 @@ export function FileExplorerView({
             </div>
           )}
 
-          {/* Safe Folder Creation */}
-          <form onSubmit={handleCreatePermittedFolder} className="pt-2 border-t border-slate-800 flex gap-2">
-            <input
-              type="text"
-              value={newFolderName}
-              onChange={(e) => setNewFolderName(e.target.value)}
-              placeholder="New folder in workspace..."
-              aria-label="New workspace folder name"
-              className="flex-1 px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
-            />
-            <button
-              type="submit"
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium bg-slate-800 text-slate-200 border border-slate-700 hover:border-cyan-400/40"
-            >
-              <FolderPlus className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Create</span>
-            </button>
+          {/* Validated Folder Creation inside Permitted Roots */}
+          <form onSubmit={handleCreatePermittedFolder} className="pt-3 border-t border-slate-800 space-y-2">
+            {settings.allowedFolders.length > 1 && (
+              <select
+                value={selectedParentFolder}
+                onChange={(e) => setSelectedParentFolder(e.target.value)}
+                aria-label="Parent permitted folder"
+                className="w-full px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-200"
+              >
+                {settings.allowedFolders.map((folder) => (
+                  <option key={folder} value={folder}>
+                    Parent: {folder}
+                  </option>
+                ))}
+              </select>
+            )}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="New folder name inside permitted directory..."
+                aria-label="New workspace folder name"
+                className="flex-1 px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 text-xs text-slate-100"
+              />
+              <button
+                type="submit"
+                disabled={settings.allowedFolders.length === 0}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium bg-slate-800 text-slate-200 border border-slate-700 hover:border-cyan-400/40 disabled:opacity-40"
+              >
+                <FolderPlus className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Create</span>
+              </button>
+            </div>
+            {createFolderFeedback && (
+              <p className={`text-[11px] ${createFolderFeedback.ok ? 'text-cyan-300' : 'text-rose-300'}`}>
+                {createFolderFeedback.text}
+              </p>
+            )}
           </form>
-          {folderStatus && <p className="text-[11px] text-cyan-300">{folderStatus}</p>}
         </div>
 
         {/* File Preview & AI Summarize Pane */}
         <div className="rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5 min-w-0">
               <FileText className="w-4 h-4 text-cyan-400 shrink-0" aria-hidden="true" />
               <span className="truncate">{selectedPreview ? selectedPreview.name : 'Document Preview'}</span>
             </span>
             {selectedPreview && (
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
                 <button
                   type="button"
-                  onClick={() => handleOpenInDefaultApp(selectedPreview.path)}
+                  onClick={() => void handleRevealInExplorer(selectedPreview.path)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] bg-slate-900 border border-slate-700 text-slate-200 hover:border-cyan-400/50"
+                >
+                  <FolderOpen className="w-3 h-3 text-cyan-400" aria-hidden="true" />
+                  <span>Reveal in Explorer</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleOpenInDefaultApp(selectedPreview.path)}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] bg-slate-900 border border-slate-700 text-cyan-200 hover:border-cyan-400/50"
                 >
                   <ExternalLink className="w-3 h-3" aria-hidden="true" />
@@ -555,6 +1114,31 @@ export function FileExplorerView({
 
           {selectedPreview ? (
             <>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                <span className="font-mono-tabular truncate max-w-full" title={selectedPreview.path}>
+                  {selectedPreview.path}
+                </span>
+                {selectedPreview.modifiedAt && (
+                  <span>· Modified {new Date(selectedPreview.modifiedAt).toLocaleString()}</span>
+                )}
+                {selectedPreview.mediaMeta?.width && selectedPreview.mediaMeta?.height && (
+                  <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-cyan-300">
+                    {selectedPreview.mediaMeta.width}×{selectedPreview.mediaMeta.height}px
+                  </span>
+                )}
+                {selectedPreview.mediaMeta?.pageCount && (
+                  <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-cyan-300">
+                    {selectedPreview.mediaMeta.pageCount} pages
+                  </span>
+                )}
+                {selectedPreview.mediaMeta?.sampleRate && (
+                  <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-cyan-300">
+                    {selectedPreview.mediaMeta.sampleRate} Hz
+                    {selectedPreview.mediaMeta.durationSec ? ` · ${selectedPreview.mediaMeta.durationSec}s` : ''}
+                  </span>
+                )}
+              </div>
+
               <form onSubmit={handleSummarizeFile} className="flex flex-wrap gap-2">
                 <input
                   type="text"
@@ -600,6 +1184,38 @@ export function FileExplorerView({
                   <div className="whitespace-pre-wrap leading-relaxed">
                     {summarizingFile ? 'Analyzing file contents with F.R.I.D.A.Y....' : fileSummary}
                   </div>
+                </div>
+              )}
+
+              {selectedPreview.category === 'image' && (
+                <div className="rounded-lg border border-slate-800 bg-slate-950/90 p-2 flex justify-center">
+                  <img
+                    src={`/api/files/stream?path=${encodeURIComponent(selectedPreview.path)}`}
+                    alt={selectedPreview.name}
+                    className="max-h-64 w-auto object-contain rounded"
+                  />
+                </div>
+              )}
+
+              {selectedPreview.category === 'audio' && (
+                <div className="rounded-lg border border-slate-800 bg-slate-950/90 p-3">
+                  <audio
+                    controls
+                    preload="metadata"
+                    src={`/api/files/stream?path=${encodeURIComponent(selectedPreview.path)}`}
+                    className="w-full"
+                  />
+                </div>
+              )}
+
+              {selectedPreview.category === 'video' && (
+                <div className="rounded-lg border border-slate-800 bg-black p-1">
+                  <video
+                    controls
+                    preload="metadata"
+                    src={`/api/files/stream?path=${encodeURIComponent(selectedPreview.path)}`}
+                    className="max-h-64 w-full rounded"
+                  />
                 </div>
               )}
 

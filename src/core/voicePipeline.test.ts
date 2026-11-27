@@ -2,16 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   classifyMicrophoneError,
+  cleanVoiceTranscript,
   computeRmsLevel,
   downsampleTo16kPcm,
   encodeMonoWav16kBase64,
   encodePcm16WavBytes,
+  encodeSpeechWav16kBase64,
+  evaluateAudioCaptureSpeech,
+  evaluateWavPcm16Speech,
+  isNoiseOrEmptyTranscript,
   mergeFloat32Chunks,
+  prepareSpeechAudioForStt,
   selectPreferredSpeechVoice,
 } from './voicePipeline';
 import { analyzeUserCommand, extractVoiceCommand } from './intentEngine';
 import { sanitizeSettingsPatch } from './diagnostics';
 import { registerPreloadBridge } from '../../electron/preload';
+import { buildWindowsSapiRecognitionScript } from '../../electron/windowsAutomation';
 
 test('downsampleTo16kPcm & encodeMonoWav16kBase64 produce valid 16kHz PCM16 RIFF WAV', () => {
   const inputRate = 48000;
@@ -211,3 +218,77 @@ test('registerPreloadBridge exposes complete FridayDesktopBridge channels synchr
     ['friday:launch-app', 'friday:recognize-speech-wav', 'friday:request-mic-permission']
   );
 });
+
+test('cleanVoiceTranscript removes ASR markers, hesitation fillers, and duplicate adjacent words', () => {
+  assert.equal(cleanVoiceTranscript('  [BLANK_AUDIO] um open open Chrome uh  '), 'open Chrome');
+  assert.equal(cleanVoiceTranscript('(background noise) Hey Friday, what is RAM?'), 'Hey Friday, what is RAM?');
+  assert.equal(cleanVoiceTranscript('   '), '');
+});
+
+test('isNoiseOrEmptyTranscript rejects silence, single chars, punctuation, and hallucinated noise markers', () => {
+  assert.equal(isNoiseOrEmptyTranscript(''), true);
+  assert.equal(isNoiseOrEmptyTranscript('...'), true);
+  assert.equal(isNoiseOrEmptyTranscript('a'), true);
+  assert.equal(isNoiseOrEmptyTranscript('uhm'), false);
+  assert.equal(isNoiseOrEmptyTranscript('umm'), true);
+  assert.equal(isNoiseOrEmptyTranscript('thank you for watching'), true);
+  assert.equal(isNoiseOrEmptyTranscript('open Chrome'), false);
+});
+
+test('evaluateAudioCaptureSpeech & evaluateWavPcm16Speech distinguish silence from real speech', () => {
+  const shortBuf = new Float32Array(100);
+  assert.equal(evaluateAudioCaptureSpeech(shortBuf, 16000).hasSpeech, false);
+
+  const silenceBuf = new Float32Array(8000);
+  const silentEval = evaluateAudioCaptureSpeech(silenceBuf, 16000);
+  assert.equal(silentEval.hasSpeech, false);
+  assert.match(silentEval.reason || '', /silence/i);
+
+  const silentWav = encodePcm16WavBytes(downsampleTo16kPcm(silenceBuf, 16000), 16000);
+  assert.equal(evaluateWavPcm16Speech(silentWav).hasSpeech, false);
+
+  const speechBuf = new Float32Array(8000);
+  for (let i = 0; i < speechBuf.length; i += 1) {
+    speechBuf[i] = Math.sin((2 * Math.PI * 300 * i) / 16000) * 0.25;
+  }
+  const speechEval = evaluateAudioCaptureSpeech(speechBuf, 16000);
+  assert.equal(speechEval.hasSpeech, true);
+  assert.ok(speechEval.rms > 0.1);
+
+  const speechWav = encodePcm16WavBytes(downsampleTo16kPcm(speechBuf, 16000), 16000);
+  assert.equal(evaluateWavPcm16Speech(speechWav).hasSpeech, true);
+});
+
+test('prepareSpeechAudioForStt & encodeSpeechWav16kBase64 trim excess silence and boost quiet speech', () => {
+  const sampleRate = 16000;
+  // 1s leading silence + 0.3s quiet speech (amp 0.08) + 1s trailing silence
+  const samples = new Float32Array(sampleRate * 2.3);
+  for (let i = sampleRate; i < Math.floor(sampleRate * 1.3); i += 1) {
+    samples[i] = Math.sin((2 * Math.PI * 300 * i) / sampleRate) * 0.08;
+  }
+  const prepared = prepareSpeechAudioForStt(samples, sampleRate);
+  assert.ok(prepared.length < samples.length);
+  assert.ok(prepared.length >= Math.floor(sampleRate * 0.5));
+  let maxPeak = 0;
+  for (let i = 0; i < prepared.length; i += 1) {
+    const abs = Math.abs(prepared[i]);
+    if (abs > maxPeak) maxPeak = abs;
+  }
+  assert.ok(maxPeak > 0.5, `Expected boosted peak > 0.5, got ${maxPeak}`);
+
+  const b64 = encodeSpeechWav16kBase64(samples, sampleRate);
+  assert.ok(b64.startsWith('UklGR'));
+});
+
+test('buildWindowsSapiRecognitionScript guards SAPI5 Recognize() EOF No-audio-input exception and disposes cleanly', () => {
+  const script = buildWindowsSapiRecognitionScript("C:\\Users\\O'Brien\\AppData\\Local\\Temp\\friday-stt.wav", 'en-US');
+  assert.match(script, /C:\\Users\\O''Brien\\AppData\\Local\\Temp\\friday-stt\.wav/);
+  assert.doesNotMatch(script, /while\s*\(\$true\)/);
+  assert.match(script, /No audio input/);
+  assert.match(script, /\$eng\.SetInputToNull\(\)/);
+  assert.match(script, /\$eng\.Dispose\(\)/);
+  assert.match(script, /\$finalText/);
+});
+
+
+

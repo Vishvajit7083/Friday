@@ -145,6 +145,8 @@ const VALID_MODELS = new Set<AssistantSettings['aiModel']>([
   'friday-language-core',
   'local-auto',
   'local-core',
+  'openjarvis-local-core',
+  'openjarvis-gguf',
 ]);
 
 const VALID_VOICES = new Set<AssistantSettings['voiceName']>([

@@ -65,14 +65,27 @@ export async function getWindowsCompatibilityAudit(): Promise<HardwareCompatibil
   const cpuModel = cpu ? `${cpu.manufacturer} ${cpu.brand}`.trim() : os.cpus()[0]?.model ?? 'Unavailable';
   const cpuSpeedGhz = typeof cpu?.speed === 'number' && cpu.speed > 0 ? Number(cpu.speed.toFixed(2)) : null;
 
-  const electronMainPath = path.resolve(process.cwd(), 'electron/main.ts');
-  const electronPreloadPath = path.resolve(process.cwd(), 'electron/preload.ts');
-  const electronBuilderPath = path.resolve(process.cwd(), 'electron-builder.yml');
+  const appRoot = process.env.FRIDAY_APP_ROOT ? path.resolve(process.env.FRIDAY_APP_ROOT) : process.cwd();
+  const electronMainCandidates = [
+    path.join(appRoot, 'electron/main.ts'),
+    path.join(appRoot, 'dist-electron/electron/main.js'),
+  ];
+  const electronPreloadCandidates = [
+    path.join(appRoot, 'electron/preload.ts'),
+    path.join(appRoot, 'dist-electron/electron/preload.cjs'),
+  ];
+  const electronBuilderCandidates = [
+    path.join(appRoot, 'electron-builder.yml'),
+    path.join(appRoot.replace(/app\.asar$/i, 'app.asar.unpacked'), 'electron-builder.yml'),
+  ];
 
-  const mainSource = fs.existsSync(electronMainPath) ? fs.readFileSync(electronMainPath, 'utf-8') : '';
-  const preloadSource = fs.existsSync(electronPreloadPath) ? fs.readFileSync(electronPreloadPath, 'utf-8') : '';
-  const electronConfigured =
-    Boolean(mainSource) && Boolean(preloadSource) && fs.existsSync(electronBuilderPath);
+  const mainPath = electronMainCandidates.find((p) => fs.existsSync(p));
+  const preloadPath = electronPreloadCandidates.find((p) => fs.existsSync(p));
+  const builderPath = electronBuilderCandidates.find((p) => fs.existsSync(p));
+
+  const mainSource = mainPath ? fs.readFileSync(mainPath, 'utf-8') : '';
+  const preloadSource = preloadPath ? fs.readFileSync(preloadPath, 'utf-8') : '';
+  const electronConfigured = Boolean(mainSource) && Boolean(preloadSource) && Boolean(builderPath);
 
   const db = loadDb();
   const activeNet = Array.isArray(netIfaces)
@@ -437,7 +450,13 @@ export async function runSafeDiagnosticsSuite(): Promise<DiagnosticsReportPayloa
 
 export function writeTestReportFile(report: DiagnosticsReportPayload): string {
   const md = formatTestReportMarkdown(report);
-  const target = path.resolve(process.cwd(), 'TEST_REPORT.md');
+  const baseDir = process.env.FRIDAY_DATA_DIR
+    ? path.resolve(process.env.FRIDAY_DATA_DIR)
+    : process.cwd();
+  if (!fs.existsSync(baseDir)) {
+    fs.mkdirSync(baseDir, { recursive: true });
+  }
+  const target = path.join(baseDir, 'TEST_REPORT.md');
   fs.writeFileSync(target, md, 'utf-8');
   return target;
 }

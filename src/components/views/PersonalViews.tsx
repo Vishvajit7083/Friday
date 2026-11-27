@@ -7,6 +7,7 @@ import {
   CloudSun,
   Database,
   Download,
+  FolderOpen,
   History,
   Image as ImageIcon,
   Layers,
@@ -1214,6 +1215,8 @@ export function SettingsView({
   onCheckApiConnection?: () => void;
 }) {
   const [newFolder, setNewFolder] = useState('');
+  const [folderFeedback, setFolderFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const [folderBusy, setFolderBusy] = useState(false);
   const [newFavoriteCity, setNewFavoriteCity] = useState('');
   const [userNameDraft, setUserNameDraft] = useState(settings.userName);
   const [weatherLocationDraft, setWeatherLocationDraft] = useState(settings.weatherLocation);
@@ -1559,6 +1562,8 @@ export function SettingsView({
             className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100"
           >
             <option value="friday-cognitive">F.R.I.D.A.Y. Cognitive Engine (Self-Owned Offline-First)</option>
+            <option value="openjarvis-local-core">OpenJarvis Multi-Agent Local Core (Zero Download)</option>
+            <option value="openjarvis-gguf">OpenJarvis GGUF / llama.cpp (Local Engine)</option>
             <option value="friday-language-core">F.R.I.D.A.Y. Language Core Adapter (Future Self-Trained Model)</option>
             <option value="local-auto">Auto Cognitive + Live Public Web Research</option>
             <option value="local-core">Deterministic Fast Local Core</option>
@@ -1823,43 +1828,223 @@ export function SettingsView({
         </div>
       </section>
 
+      {/* OpenJarvis 5-Primitive & 9-Agent Architecture */}
+      <section className="p-5 rounded-xl border border-purple-500/20 bg-[#090415]/90 space-y-4 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-purple-200 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-fuchsia-400" aria-hidden="true" />
+              <span>OpenJarvis Local-First Multi-Agent Architecture</span>
+            </h3>
+            <p className="text-[11px] text-purple-300/80 mt-0.5">
+              5 Core Primitives (Intelligence · Engine · Agents · Tools &amp; Memory · Learning) with 9 Autonomous Agents.
+            </p>
+          </div>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/15 border border-emerald-400/40 text-emerald-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            9 Agents Active
+          </span>
+        </div>
+
+        {/* Hardware & Inference Profile */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+          <div className="p-3 rounded-lg bg-purple-950/40 border border-purple-800/40 space-y-1">
+            <div className="text-purple-300/70">Hardware Detection</div>
+            <div className="font-semibold text-white truncate">
+              {apiStatus?.openJarvis?.hardwareProfile?.cpuModel || 'Multi-Core CPU'}
+            </div>
+            <div className="text-[10px] text-purple-300/60">
+              {apiStatus?.openJarvis?.hardwareProfile?.logicalCores || 4} Cores · AVX2 {apiStatus?.openJarvis?.hardwareProfile?.hasAvx2 ? 'Supported' : 'Standard'}
+            </div>
+          </div>
+
+          <div className="p-3 rounded-lg bg-purple-950/40 border border-purple-800/40 space-y-1">
+            <div className="text-purple-300/70">Memory &amp; GPU</div>
+            <div className="font-semibold text-white">
+              {apiStatus?.openJarvis?.hardwareProfile?.totalRamMb ? `${Math.round(apiStatus.openJarvis.hardwareProfile.totalRamMb / 1024)} GB RAM` : 'System RAM'}
+            </div>
+            <div className="text-[10px] text-purple-300/60 truncate">
+              {apiStatus?.openJarvis?.hardwareProfile?.gpuName || 'DirectX Acceleration'}
+            </div>
+          </div>
+
+          <div className="p-3 rounded-lg bg-purple-950/40 border border-purple-800/40 space-y-1">
+            <div className="text-purple-300/70">Active Inference Layer</div>
+            <div className="font-semibold text-emerald-300">
+              Built-in Fast LocalCore
+            </div>
+            <div className="text-[10px] text-purple-300/60">
+              0 MB Download · Zero API Keys
+            </div>
+          </div>
+
+          <div className="p-3 rounded-lg bg-purple-950/40 border border-purple-800/40 space-y-1">
+            <div className="text-purple-300/70">Autonomous Coding &amp; DAG</div>
+            <div className="font-semibold text-fuchsia-300">
+              Coding Agent Ready
+            </div>
+            <div className="text-[10px] text-purple-300/60">
+              Scaffold, Verify &amp; VS Code Launch
+            </div>
+          </div>
+        </div>
+
+        {/* 9 Specialized Agents Grid */}
+        <div className="space-y-1.5 pt-1">
+          <div className="text-[11px] font-semibold text-purple-200 uppercase tracking-wider">
+            Specialized OpenJarvis Agents
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            {[
+              { id: 'core', name: 'Core Agent', role: 'Decomposition & Gating' },
+              { id: 'computer', name: 'Computer Agent', role: 'Windows Apps & Media' },
+              { id: 'file', name: 'File Agent', role: 'Index & Explorer Reveal' },
+              { id: 'coding', name: 'Coding Agent', role: 'Autonomous Projects & Tests' },
+              { id: 'browser', name: 'Browser Agent', role: 'Live Search & YouTube' },
+              { id: 'voice', name: 'Voice Agent', role: 'Hinglish NLP & Barge-In' },
+              { id: 'system', name: 'System Agent', role: 'Telemetry & Processes' },
+              { id: 'memory', name: 'Memory Agent', role: '6-Layer SQLite Facts' },
+              { id: 'workflow', name: 'Workflow Agent', role: 'Multi-Step DAG & Retries' },
+            ].map((ag) => (
+              <div
+                key={ag.id}
+                className="p-2.5 rounded-lg bg-[#110624] border border-purple-800/30 flex flex-col justify-between gap-1"
+              >
+                <div className="font-medium text-white flex items-center justify-between">
+                  <span>{ag.name}</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                </div>
+                <div className="text-[10px] text-purple-300/70 leading-tight">{ag.role}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Permitted Folders & Least-Privilege Security */}
       <section className="p-5 rounded-xl border border-cyan-500/15 bg-[#070c1a]/90 space-y-3">
-        <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-          <Shield className="w-4 h-4 text-cyan-400" aria-hidden="true" />
-          <span>Authorized Local Folders (Least-Privilege Index)</span>
-        </h3>
-        <ul className="space-y-1.5 text-xs">
-          {settings.allowedFolders.map((folder) => (
-            <li
-              key={folder}
-              className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-900 border border-slate-800"
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            <Shield className="w-4 h-4 text-cyan-400" aria-hidden="true" />
+            <span>Authorized Local Folders (Least-Privilege Index)</span>
+          </h3>
+          {window.fridayDesktop?.selectFolder && (
+            <button
+              type="button"
+              disabled={folderBusy}
+              onClick={async () => {
+                setFolderFeedback(null);
+                const pick = await window.fridayDesktop?.selectFolder?.();
+                if (!pick || pick.canceled || !pick.folderPath) {
+                  if (pick?.error) setFolderFeedback({ ok: false, text: pick.error });
+                  return;
+                }
+                setFolderBusy(true);
+                try {
+                  const res = await fetch('/api/files/folders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folderPath: pick.folderPath }),
+                  });
+                  const data = await res.json();
+                  if (!res.ok) throw new Error(data.error || 'Unable to authorize folder.');
+                  if (Array.isArray(data.allowedFolders)) {
+                    onUpdateSettings({ allowedFolders: data.allowedFolders });
+                  }
+                  setFolderFeedback({
+                    ok: true,
+                    text: data.added
+                      ? `Authorized folder: ${data.folder}`
+                      : `Folder already authorized: ${data.folder}`,
+                  });
+                } catch (err) {
+                  setFolderFeedback({ ok: false, text: (err as Error).message });
+                } finally {
+                  setFolderBusy(false);
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 border border-slate-700 text-cyan-200 hover:border-cyan-400/50 disabled:opacity-50"
             >
-              <span className="font-mono-tabular text-slate-200 truncate">{folder}</span>
-              {settings.allowedFolders.length > 1 && (
+              <FolderOpen className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Select Folder...</span>
+            </button>
+          )}
+        </div>
+
+        <ul className="space-y-1.5 text-xs">
+          {settings.allowedFolders.length === 0 ? (
+            <li className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-amber-300">
+              No local folders authorized yet. Grant access below to allow file search and previews.
+            </li>
+          ) : (
+            settings.allowedFolders.map((folder) => (
+              <li
+                key={folder}
+                className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-slate-900 border border-slate-800"
+              >
+                <span className="font-mono-tabular text-slate-200 truncate">{folder}</span>
                 <button
                   type="button"
-                  onClick={() =>
-                    onUpdateSettings({
-                      allowedFolders: settings.allowedFolders.filter((f) => f !== folder),
-                    })
-                  }
-                  className="text-rose-300 hover:text-rose-200 text-xs"
+                  disabled={folderBusy}
+                  onClick={async () => {
+                    setFolderBusy(true);
+                    setFolderFeedback(null);
+                    try {
+                      const res = await fetch('/api/files/folders', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ folderPath: folder }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data.error || 'Failed to revoke folder access.');
+                      if (Array.isArray(data.allowedFolders)) {
+                        onUpdateSettings({ allowedFolders: data.allowedFolders });
+                      }
+                      setFolderFeedback({ ok: true, text: `Revoked folder access: ${folder}` });
+                    } catch (err) {
+                      setFolderFeedback({ ok: false, text: (err as Error).message });
+                    } finally {
+                      setFolderBusy(false);
+                    }
+                  }}
+                  className="text-rose-300 hover:text-rose-200 text-xs shrink-0 disabled:opacity-50"
                 >
                   Revoke
                 </button>
-              )}
-            </li>
-          ))}
+              </li>
+            ))
+          )}
         </ul>
         <form
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
-            if (!newFolder.trim()) return;
-            if (!settings.allowedFolders.includes(newFolder.trim())) {
-              onUpdateSettings({ allowedFolders: [...settings.allowedFolders, newFolder.trim()] });
+            const candidate = newFolder.trim();
+            if (!candidate) return;
+            setFolderBusy(true);
+            setFolderFeedback(null);
+            try {
+              const res = await fetch('/api/files/folders', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ folderPath: candidate }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || 'Selected folder is invalid or inaccessible.');
+              if (Array.isArray(data.allowedFolders)) {
+                onUpdateSettings({ allowedFolders: data.allowedFolders });
+              }
+              setNewFolder('');
+              setFolderFeedback({
+                ok: true,
+                text: data.added
+                  ? `Authorized folder: ${data.folder}`
+                  : `Folder already authorized: ${data.folder}`,
+              });
+            } catch (err) {
+              setFolderFeedback({ ok: false, text: (err as Error).message });
+            } finally {
+              setFolderBusy(false);
             }
-            setNewFolder('');
           }}
           className="flex gap-2"
         >
@@ -1873,11 +2058,17 @@ export function SettingsView({
           />
           <button
             type="submit"
-            className="px-4 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+            disabled={folderBusy || !newFolder.trim()}
+            className="px-4 py-2 rounded-lg text-xs font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
           >
-            Grant Folder Access
+            {folderBusy ? 'Validating...' : 'Grant Folder Access'}
           </button>
         </form>
+        {folderFeedback && (
+          <p className={`text-xs ${folderFeedback.ok ? 'text-cyan-300' : 'text-rose-300'}`}>
+            {folderFeedback.text}
+          </p>
+        )}
       </section>
     </div>
   );

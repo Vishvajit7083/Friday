@@ -50,6 +50,8 @@ const SYSTEM_PATTERNS = [
 
 const MEDIA_CONTROL_PATTERNS = [
   /\b(play|listen\s+to|pause|resume|next\s+track|previous\s+track|skip\s+song|stop\s+music)\b.*\b(music|song|songs|track|playlist|audio|video|movie|clip)\b/i,
+  /\b(lagao|bajao|chalao|play)\b.*\b(music|song|songs|gaana|gana|track|playlist)\b/i,
+  /\b(song|songs|gaana|gana|music)\b.*\b(lagao|bajao|chalao|play)\b/i,
   /\b(pause|resume)\s+(the\s+)?(video|music|audio|playback|song|media)\b/i,
   /\b(increase|decrease|raise|lower|mute|unmute|turn\s+up|turn\s+down)\s+(the\s+)?(volume|sound|audio)\b/i,
   /\b(next|previous)\s+(song|track)\b/i,
@@ -379,7 +381,7 @@ export function analyzeUserCommand(command: string): ParsedIntent {
     requiresConfirmation: false,
     extractedTarget: trimmed,
     steps: [
-      { id: 'step-1', agent: 'core', title: 'Synthesize local contextual response', status: 'running' },
+      { id: 'step-1', agent: 'core', title: 'Prepare response', status: 'running' },
     ],
   };
 }

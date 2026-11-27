@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <radialGradient id="fridayGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f5d0fe" stop-opacity="1" />
+      <stop offset="45%" stop-color="#d946ef" stop-opacity="0.65" />
+      <stop offset="100%" stop-color="#581c87" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <rect width="256" height="256" rx="52" fill="#05020c" />
+  <circle cx="128" cy="128" r="112" fill="url(#fridayGlow)" />
+  <circle cx="128" cy="128" r="90" fill="#0d041c" fill-opacity="0.92" stroke="#c084fc" stroke-width="8" />
+  <circle cx="128" cy="128" r="72" fill="none" stroke="#e879f9" stroke-width="5" stroke-dasharray="28 14" />
+  <polygon
+    points="128,188 68,86 188,86"
+    fill="none"
+    stroke="#f5d0fe"
+    stroke-width="11"
+    stroke-linejoin="round"
+  />
+  <polygon points="128,156 95,100 161,100" fill="#f0abfc" />
+</svg>

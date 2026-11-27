@@ -76,12 +76,19 @@ function extractFolderCreationSpec(rawGoal: string): {
 
   const explicit = extractExplicitPath(trimmed);
   const driveMatch = trimmed.match(/\b(?:on|in|mein|me|pe)?\s*([a-zA-Z])\s*drive\b/i);
+  const withoutDrivePhrase = trimmed
+    .replace(/\b(?:on|in|mein|me|pe)?\s*[a-zA-Z]\s*drive\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   const namedMatch =
-    trimmed.match(/\b(?:named|called|name)\s+["']?([a-zA-Z0-9 _.-]{2,40})["']?/i) ||
-    trimmed.match(/\bfolder\s+["']?([a-zA-Z0-9 _.-]{2,40})["']?(?:\s+(?:on|in|mein|me|pe)\b|$)/i);
+    withoutDrivePhrase.match(/\b(?:named|called|name)\s+["']?([a-zA-Z0-9 _.-]{2,40})["']?/i) ||
+    withoutDrivePhrase.match(/\b(?:folder|directory)\s+(?:named\s+|called\s+)?["']?([a-zA-Z0-9 _.-]{2,40})["']?$/i) ||
+    withoutDrivePhrase.match(/\b(?:create|make)\s+(?:a\s+|an\s+|new\s+)?([a-zA-Z0-9_.-]{2,40})\s+(?:folder|directory)\b/i);
 
   const rawName = namedMatch?.[1]?.trim();
-  const invalidName = !rawName || /^(?:on|in|mein|me|pe|drive|new|a|an|ek|banao|bana)$/i.test(rawName);
+  const invalidName =
+    !rawName ||
+    /^(?:on|in|mein|me|pe|drive|new|a|an|ek|banao|bana|de|do|create|make|folder|directory|on\s+drive)$/i.test(rawName);
   const folderName = invalidName ? 'FridayFolder' : rawName.replace(/[\\/:*?"<>|]/g, '').trim() || 'FridayFolder';
 
   return {

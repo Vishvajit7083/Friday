@@ -120,21 +120,39 @@ export function addUserKnowledgeFact(params: {
   return chunk;
 }
 
+const KNOWLEDGE_STOPWORDS = new Set([
+  'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one',
+  'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'man', 'new', 'now', 'old', 'see',
+  'two', 'way', 'who', 'did', 'its', 'let', 'put', 'say', 'she', 'too', 'use', 'want', 'wanted',
+  'with', 'that', 'this', 'from', 'they', 'will', 'have', 'what', 'when', 'where', 'which',
+  'about', 'there', 'their', 'would', 'could', 'should', 'were', 'been', 'being', 'into',
+  'some', 'them', 'then', 'than', 'very', 'just', 'like', 'more', 'only', 'also', 'please',
+  'tell', 'explain', 'define', 'meaning', 'kya', 'hai', 'hain', 'mujhe', 'karo', 'kar', 'mein',
+]);
+
+const SHORT_TECH_TERMS = new Set(['ai', 'os', 'db', 'ui', 'ux', 'io', 'ip', 'js', 'ts', 'py', 'ml', 'dl']);
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function searchKnowledgeBase(query: string, limit = 5): KnowledgeSearchResult[] {
   const clean = query.trim().toLowerCase();
   if (!clean) return [];
-  const terms = clean
+  const rawTerms = clean
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter((t) => t.length >= 2);
+    .filter((t) => (t.length >= 3 || SHORT_TECH_TERMS.has(t)) && !KNOWLEDGE_STOPWORDS.has(t));
+  const terms = Array.from(new Set(rawTerms));
   if (terms.length === 0) return [];
 
+  const asksAboutCodeOrFiles = /\b(file|code|test|function|module|script|ts|tsx|js|import|class|error|bug|source)\b/i.test(clean);
   const chunks = listKnowledgeChunks(300);
 
   // Also check custom + default Hinglish lexicon if user asks meaning of a vocabulary term
   const lexItems = [...DEFAULT_HINGLISH_LEXICON, ...listCustomLexicon()];
   const lexChunks: KnowledgeChunk[] = lexItems
-    .filter((l) => terms.some((t) => l.phrase.toLowerCase().includes(t) || l.canonical.toLowerCase().includes(t)))
+    .filter((l) => terms.some((t) => l.phrase.toLowerCase() === t || l.canonical.toLowerCase() === t))
     .slice(0, 3)
     .map((l) => ({
       id: `know-lex-${l.id}`,
@@ -164,11 +182,18 @@ export function searchKnowledgeBase(query: string, limit = 5): KnowledgeSearchRe
   const combined = [...builtinChunks, ...chunks, ...lexChunks];
 
   return combined
+    .filter((chunk) => {
+      if (chunk.sourceType === 'file' && !asksAboutCodeOrFiles && /\.test\.(?:ts|tsx|js|jsx)$/i.test(chunk.title)) {
+        return false;
+      }
+      return true;
+    })
     .map((chunk) => {
       const hay = `${chunk.title} ${chunk.content} ${chunk.tags.join(' ')}`.toLowerCase();
-      const matchedTerms = terms.filter((t) => hay.includes(t));
-      const titleBoost = terms.some((t) => chunk.title.toLowerCase().includes(t)) ? 1.5 : 0;
-      const sim = stringSimilarity(clean, chunk.title.toLowerCase()) * 1.5;
+      const titleLower = chunk.title.toLowerCase();
+      const matchedTerms = terms.filter((t) => new RegExp(`\\b${escapeRegex(t)}\\b`, 'i').test(hay));
+      const titleBoost = terms.some((t) => new RegExp(`\\b${escapeRegex(t)}\\b`, 'i').test(titleLower)) ? 1.5 : 0;
+      const sim = stringSimilarity(clean, titleLower) * 1.5;
       const score = Number((matchedTerms.length * 1.2 + titleBoost + sim).toFixed(2));
       return { chunk, score, matchedTerms };
     })

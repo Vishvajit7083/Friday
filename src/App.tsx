@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Maximize2 } from 'lucide-react';
 import { buildAgentList } from './core/agentRegistry';
-import { extractVoiceCommand, isInterruptionCommand } from './core/intentEngine';
+import { isInterruptionCommand } from './core/intentEngine';
 import {
   executeClientConfirmAction,
   executeClientOfflineCommand,
@@ -19,7 +19,9 @@ import {
   invalidateSpeechEpoch,
   isEchoOfAssistantSpeech,
   isSpeechTokenValid,
+  isWithinPostSpeechEchoWindow,
   resolvePostInterruptState,
+  resolveWakeWordUtterance,
   shouldIgnoreDuplicateSubmission,
   type SpeechEpochTracker,
   type SubmissionDedupState,
@@ -27,8 +29,11 @@ import {
 import { getNewSevereWeatherAlertKey, type TemperatureUnit } from './core/weatherUtils';
 import {
   classifyMicrophoneError,
+  cleanVoiceTranscript,
   computeRmsLevel,
-  encodeMonoWav16kBase64,
+  encodeSpeechWav16kBase64,
+  evaluateAudioCaptureSpeech,
+  isNoiseOrEmptyTranscript,
   mergeFloat32Chunks,
   selectPreferredSpeechVoice,
 } from './core/voicePipeline';
@@ -231,10 +236,15 @@ export default function App() {
   const captureModeRef = useRef<'speech' | 'manual'>('speech');
   const captureTimeoutRef = useRef<number | null>(null);
   const wavFinishingRef = useRef<boolean>(false);
+  const micStartLockRef = useRef<boolean>(false);
   const speechQueueRef = useRef<string[]>([]);
   const speechActiveRef = useRef<boolean>(false);
   const speechTrackerRef = useRef<SpeechEpochTracker>(createSpeechEpochTracker());
   const isSpeakingRef = useRef<boolean>(false);
+  const speechEndedAtRef = useRef<number>(0);
+  const lastSpokenTextRef = useRef<string>('');
+  const wakeWordArmedUntilRef = useRef<number>(0);
+  const wakeWordTimeoutRef = useRef<number | null>(null);
   const lastSubmissionRef = useRef<SubmissionDedupState | null>(null);
   const lastWeatherAlertKeyRef = useRef<string | null>(null);
 
@@ -499,6 +509,12 @@ export default function App() {
   }, [fetchWeatherData, settings.weatherLocation]);
 
   const stopSpeaking = useCallback(() => {
+    if (isSpeakingRef.current || speechActiveRef.current) {
+      speechEndedAtRef.current = Date.now();
+    }
+    if (speechTrackerRef.current.speakingText) {
+      lastSpokenTextRef.current = speechTrackerRef.current.speakingText;
+    }
     speechTrackerRef.current = invalidateSpeechEpoch(speechTrackerRef.current);
     speechQueueRef.current = [];
     speechActiveRef.current = false;
@@ -586,6 +602,9 @@ export default function App() {
       if (speechActiveRef.current) return;
       const nextSentence = speechQueueRef.current.shift();
       if (!nextSentence) {
+        if (isSpeakingRef.current) {
+          speechEndedAtRef.current = Date.now();
+        }
         speechActiveRef.current = false;
         isSpeakingRef.current = false;
         setIsSpeaking(false);
@@ -595,6 +614,7 @@ export default function App() {
         return;
       }
 
+      lastSpokenTextRef.current = `${lastSpokenTextRef.current} ${nextSentence}`.trim().slice(-600);
       const activeToken = speechTrackerRef.current.epoch;
 
       if (window.fridayAndroid?.speak) {
@@ -661,10 +681,19 @@ export default function App() {
           pumpLocalSpeechQueue(activeToken);
         }, 85);
       };
-      utter.onerror = () => {
+      utter.onerror = (ev) => {
         speechActiveRef.current = false;
+        const errCode = (ev as SpeechSynthesisErrorEvent | undefined)?.error;
+        if (errCode === 'canceled' || errCode === 'interrupted') {
+          return;
+        }
         if (!isSpeechTokenValid(speechTrackerRef.current, activeToken)) return;
         if (window.fridayDesktop?.speakWindowsTts) {
+          speechActiveRef.current = true;
+          isSpeakingRef.current = true;
+          setIsSpeaking(true);
+          setVoiceState('speaking');
+          setAudioLevel(0.6);
           window.fridayDesktop
             .speakWindowsTts({
               text: nextSentence,
@@ -674,7 +703,13 @@ export default function App() {
               pitch: settings.speakingPitch ?? 1.0,
             })
             .catch(() => {})
-            .finally(() => pumpLocalSpeechQueue(activeToken));
+            .finally(() => {
+              speechActiveRef.current = false;
+              if (!isSpeechTokenValid(speechTrackerRef.current, activeToken)) return;
+              window.setTimeout(() => {
+                pumpLocalSpeechQueue(activeToken);
+              }, 60);
+            });
           return;
         }
         pumpLocalSpeechQueue(activeToken);
@@ -722,6 +757,7 @@ export default function App() {
 
       const { next, token } = beginSpeechEpoch(speechTrackerRef.current, `tts-${Date.now()}`, cleanText);
       speechTrackerRef.current = next;
+      lastSpokenTextRef.current = cleanText;
 
       if (window.fridayAndroid?.speak) {
         const sentences = cleanText.match(/[^.!?\n]+[.!?\n]*/g) ?? [cleanText];
@@ -760,6 +796,7 @@ export default function App() {
           audioElRef.current = audio;
           audio.onended = () => {
             if (!isSpeechTokenValid(speechTrackerRef.current, token)) return;
+            speechEndedAtRef.current = Date.now();
             isSpeakingRef.current = false;
             setIsSpeaking(false);
             setAudioLevel(0);
@@ -820,6 +857,7 @@ export default function App() {
       abortRef.current?.abort();
       stopSpeaking();
       setErrorBanner(null);
+      setActiveSection((curr) => (curr === 'command-center' ? 'ai-chat' : curr));
       if (!options?.fromVoice) {
         setLiveTranscript(null);
       }
@@ -1097,7 +1135,10 @@ export default function App() {
     micProcessorRef.current = null;
     micSourceRef.current = null;
     micGainRef.current = null;
-    micStreamRef.current?.getTracks().forEach((t) => t.stop());
+    micStreamRef.current?.getTracks().forEach((t) => {
+      t.onended = null;
+      t.stop();
+    });
     micStreamRef.current = null;
     if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
       audioCtxRef.current.close().catch(() => {});
@@ -1106,6 +1147,7 @@ export default function App() {
   }, []);
 
   const stopMicCapture = useCallback(() => {
+    micStartLockRef.current = false;
     try {
       recognitionRef.current?.stop();
     } catch {
@@ -1118,15 +1160,106 @@ export default function App() {
     setIsRecordingAudio(false);
     setIsListening(false);
     setAudioLevel(0);
-    setVoiceState((curr) => (curr === 'listening' ? 'standby' : curr));
+    setVoiceState((curr) => (curr === 'listening' || curr === 'transcribing' ? 'standby' : curr));
   }, [cleanupWavNodes]);
 
   useEffect(() => {
     return () => {
+      if (wakeWordTimeoutRef.current !== null) {
+        window.clearTimeout(wakeWordTimeoutRef.current);
+      }
+      abortRef.current?.abort();
       stopMicCapture();
       stopSpeaking();
     };
   }, [stopMicCapture, stopSpeaking]);
+
+  const startWavCaptureRef = useRef<((mode: 'speech' | 'manual') => Promise<void>) | null>(null);
+
+  const processRecognizedVoiceTranscript = useCallback(
+    async (rawTranscript: string, source: 'wav' | 'web' | 'android') => {
+      const cleaned = cleanVoiceTranscript(rawTranscript);
+      if (isNoiseOrEmptyTranscript(cleaned)) {
+        setLiveTranscript('No clear speech detected — speak clearly and try again.');
+        setVoiceState('standby');
+        return;
+      }
+
+      if (isInterruptionCommand(cleaned)) {
+        interruptAssistant('Stopped speaking.');
+        if (source === 'web' && !settings.continuousListening) {
+          stopMicCapture();
+        }
+        return;
+      }
+
+      const activeSpoken = speechTrackerRef.current.speakingText || lastSpokenTextRef.current;
+      const inEchoWindow =
+        isSpeakingRef.current || isWithinPostSpeechEchoWindow(speechEndedAtRef.current, Date.now(), 600);
+      if (isEchoOfAssistantSpeech(cleaned, activeSpoken, inEchoWindow)) {
+        setLiveTranscript(null);
+        setVoiceState('standby');
+        return;
+      }
+
+      const resolution = resolveWakeWordUtterance({
+        transcript: cleaned,
+        wakeWord: settings.wakeWord,
+        wakeWordEnabled: settings.wakeWordEnabled,
+        wakeWordArmedUntilMs: wakeWordArmedUntilRef.current,
+        nowMs: Date.now(),
+        armDurationMs: 8000,
+      });
+
+      if (resolution.action === 'arm_wake_word') {
+        wakeWordArmedUntilRef.current = resolution.armedUntilMs ?? Date.now() + 8000;
+        if (wakeWordTimeoutRef.current !== null) {
+          window.clearTimeout(wakeWordTimeoutRef.current);
+        }
+        wakeWordTimeoutRef.current = window.setTimeout(() => {
+          wakeWordArmedUntilRef.current = 0;
+          setVoiceState((curr) => (curr === 'wake_word_detected' ? 'standby' : curr));
+          setLiveTranscript((curr) => (curr?.startsWith('Wake word detected') ? null : curr));
+        }, 8000);
+        setVoiceState('wake_word_detected');
+        setLiveTranscript('Wake word detected — speak your command now...');
+        if (source === 'wav') {
+          window.setTimeout(() => {
+            void startWavCaptureRef.current?.('speech');
+          }, 120);
+        }
+        return;
+      }
+
+      if (resolution.action === 'ignore') {
+        setLiveTranscript(`Heard "${cleaned}" — say "${settings.wakeWord}" first or toggle Wake Word off.`);
+        setVoiceState(settings.continuousListening && source === 'web' ? 'listening' : 'standby');
+        return;
+      }
+
+      if (resolution.disarmWakeWord) {
+        wakeWordArmedUntilRef.current = 0;
+        if (wakeWordTimeoutRef.current !== null) {
+          window.clearTimeout(wakeWordTimeoutRef.current);
+          wakeWordTimeoutRef.current = null;
+        }
+      }
+
+      setLiveTranscript(`Heard: "${resolution.command}"`);
+      if (source === 'web' && !settings.continuousListening) {
+        stopMicCapture();
+      }
+      await handleSubmitCommand(resolution.command, { fromVoice: true });
+    },
+    [
+      handleSubmitCommand,
+      interruptAssistant,
+      settings.continuousListening,
+      settings.wakeWord,
+      settings.wakeWordEnabled,
+      stopMicCapture,
+    ]
+  );
 
   const finishWavVoiceCapture = useCallback(async () => {
     if (wavFinishingRef.current) return;
@@ -1142,22 +1275,24 @@ export default function App() {
 
     try {
       const merged = mergeFloat32Chunks(chunks);
-      const minSamples = Math.floor(sampleRate * 0.25);
-      if (merged.length < minSamples) {
-        setLiveTranscript('No audio captured — speak clearly for 1–2 seconds and try again.');
+      const speechEnergy = evaluateAudioCaptureSpeech(merged, sampleRate);
+      if (!speechEnergy.hasSpeech) {
+        setLiveTranscript(
+          speechEnergy.reason || 'No clear speech captured — speak closer to the mic and try again.'
+        );
         setVoiceState('standby');
         return;
       }
 
-      const wavBase64 = encodeMonoWav16kBase64(merged, sampleRate);
+      const wavBase64 = encodeSpeechWav16kBase64(merged, sampleRate);
       if (!wavBase64) {
         setLiveTranscript('Could not encode captured audio.');
         setVoiceState('standby');
         return;
       }
 
-      setVoiceState('processing');
-      setLiveTranscript('Recognizing your voice...');
+      setVoiceState('transcribing');
+      setLiveTranscript('Transcribing your voice...');
 
       let recognizedText = '';
       let sttErrorReason = '';
@@ -1206,24 +1341,7 @@ export default function App() {
       }
 
       if (recognizedText) {
-        if (isInterruptionCommand(recognizedText)) {
-          interruptAssistant('Stopped speaking.');
-          return;
-        }
-        if (
-          isEchoOfAssistantSpeech(
-            recognizedText,
-            speechTrackerRef.current.speakingText,
-            isSpeakingRef.current
-          )
-        ) {
-          setLiveTranscript(null);
-          setVoiceState('standby');
-          return;
-        }
-        const parsedVoice = extractVoiceCommand(recognizedText, settings.wakeWord, false);
-        setLiveTranscript(`Heard: "${parsedVoice.command}"`);
-        await handleSubmitCommand(parsedVoice.command, { fromVoice: true });
+        await processRecognizedVoiceTranscript(recognizedText, 'wav');
         return;
       }
 
@@ -1239,66 +1357,78 @@ export default function App() {
     } finally {
       wavFinishingRef.current = false;
     }
-  }, [cleanupWavNodes, handleSubmitCommand, interruptAssistant, settings.language, settings.wakeWord]);
+  }, [cleanupWavNodes, processRecognizedVoiceTranscript, settings.language]);
 
   const startWavVoiceCapture = useCallback(
     async (mode: 'speech' | 'manual') => {
+      if (micStartLockRef.current) return;
+      micStartLockRef.current = true;
       stopSpeaking();
       stopMicCapture();
       setErrorBanner(null);
 
-      if (window.fridayDesktop?.requestMicPermission) {
-        try {
-          const perm = await window.fridayDesktop.requestMicPermission();
-          if (!perm.granted) {
-            setVoiceState('error');
-            setErrorBanner(perm.detail);
-            return;
-          }
-        } catch {
-          // Continue to browser getUserMedia check
-        }
-      }
-
-      if (!navigator.mediaDevices?.getUserMedia) {
-        const classified = classifyMicrophoneError(new Error('getUserMedia not supported'));
-        setVoiceState('error');
-        setErrorBanner(classified.message);
-        return;
-      }
-
-      const audioBaseConstraints: MediaTrackConstraints = {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      };
-
-      let stream: MediaStream;
       try {
-        if (settings.audioInputDeviceId) {
+        if (window.fridayDesktop?.requestMicPermission) {
           try {
-            stream = await navigator.mediaDevices.getUserMedia({
-              audio: { ...audioBaseConstraints, deviceId: { exact: settings.audioInputDeviceId } },
-            });
+            const perm = await window.fridayDesktop.requestMicPermission();
+            if (!perm.granted) {
+              setVoiceState('error');
+              setErrorBanner(perm.detail);
+              return;
+            }
           } catch {
+            // Continue to browser getUserMedia check
+          }
+        }
+
+        if (!navigator.mediaDevices?.getUserMedia) {
+          const classified = classifyMicrophoneError(new Error('getUserMedia not supported'));
+          setVoiceState('error');
+          setErrorBanner(classified.message);
+          return;
+        }
+
+        const audioBaseConstraints: MediaTrackConstraints = {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        };
+
+        let stream: MediaStream;
+        try {
+          if (settings.audioInputDeviceId) {
+            try {
+              stream = await navigator.mediaDevices.getUserMedia({
+                audio: { ...audioBaseConstraints, deviceId: { exact: settings.audioInputDeviceId } },
+              });
+            } catch {
+              stream = await navigator.mediaDevices.getUserMedia({ audio: audioBaseConstraints });
+            }
+          } else {
             stream = await navigator.mediaDevices.getUserMedia({ audio: audioBaseConstraints });
           }
-        } else {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: audioBaseConstraints });
+        } catch (err) {
+          const classified = classifyMicrophoneError(err);
+          setVoiceState('error');
+          setErrorBanner(classified.message);
+          setIsListening(false);
+          setIsRecordingAudio(false);
+          return;
         }
-      } catch (err) {
-        const classified = classifyMicrophoneError(err);
-        setVoiceState('error');
-        setErrorBanner(classified.message);
-        setIsListening(false);
-        setIsRecordingAudio(false);
-        return;
-      }
 
-      micStreamRef.current = stream;
-      void refreshAudioInputDevices();
+        micStreamRef.current = stream;
+        stream.getAudioTracks().forEach((track) => {
+          track.onended = () => {
+            if (wavFinishingRef.current) return;
+            stopMicCapture();
+            setLiveTranscript(null);
+            setVoiceState('error');
+            setErrorBanner('Microphone was disconnected during capture. Reconnect your mic or pick another input device.');
+            void refreshAudioInputDevices();
+          };
+        });
+        void refreshAudioInputDevices();
 
-      try {
         const audioCtx = new AudioContext();
         audioCtxRef.current = audioCtx;
         if (audioCtx.state === 'suspended') {
@@ -1331,7 +1461,7 @@ export default function App() {
 
           if (mode === 'speech') {
             const now = Date.now();
-            if (rms > 0.015) {
+            if (rms > 0.009) {
               if (!speechDetectedRef.current) {
                 speechDetectedRef.current = true;
                 setLiveTranscript('Listening — speech detected...');
@@ -1369,6 +1499,8 @@ export default function App() {
         const classified = classifyMicrophoneError(err);
         setVoiceState('error');
         setErrorBanner(classified.message);
+      } finally {
+        micStartLockRef.current = false;
       }
     },
     [
@@ -1381,6 +1513,8 @@ export default function App() {
       stopSpeaking,
     ]
   );
+
+  startWavCaptureRef.current = startWavVoiceCapture;
 
   const toggleRecordAudio = useCallback(async () => {
     if (isRecordingAudio || micProcessorRef.current) {
@@ -1400,6 +1534,7 @@ export default function App() {
       setLiveTranscript(null);
       return;
     }
+    if (micStartLockRef.current) return;
 
     stopSpeaking();
     setErrorBanner(null);
@@ -1425,12 +1560,16 @@ export default function App() {
       return;
     }
 
+    micStartLockRef.current = true;
     const rec = new SpeechRec();
     rec.continuous = settings.continuousListening;
     rec.interimResults = true;
     rec.lang = settings.language;
 
     rec.onaudiostart = () => {
+      micStartLockRef.current = false;
+      setIsListening(true);
+      setVoiceState('listening');
       setAudioLevel(0.35);
       setLiveTranscript(`Listening (${settings.language}) — speak your command...`);
     };
@@ -1455,38 +1594,28 @@ export default function App() {
       }
 
       if (interim) {
-        if (isInterruptionCommand(interim)) {
+        const cleanedInterim = cleanVoiceTranscript(interim);
+        if (isInterruptionCommand(cleanedInterim)) {
           interruptAssistant('Stopped speaking.');
           return;
         }
-        if (isEchoOfAssistantSpeech(interim, speechTrackerRef.current.speakingText, isSpeakingRef.current)) {
+        const activeSpoken = speechTrackerRef.current.speakingText || lastSpokenTextRef.current;
+        const inEchoWindow =
+          isSpeakingRef.current || isWithinPostSpeechEchoWindow(speechEndedAtRef.current, Date.now(), 600);
+        if (isEchoOfAssistantSpeech(cleanedInterim, activeSpoken, inEchoWindow)) {
           return;
         }
         setAudioLevel(0.8);
-        setLiveTranscript(`Hearing: "${interim}"`);
+        setLiveTranscript(`Hearing: "${cleanedInterim}"`);
       }
 
       if (finalText) {
-        if (isInterruptionCommand(finalText)) {
-          interruptAssistant('Stopped speaking.');
-          if (!settings.continuousListening) stopMicCapture();
-          return;
-        }
-        if (isEchoOfAssistantSpeech(finalText, speechTrackerRef.current.speakingText, isSpeakingRef.current)) {
-          return;
-        }
-        const parsedVoice = extractVoiceCommand(finalText, settings.wakeWord, false);
-        if (parsedVoice.matched && parsedVoice.command) {
-          setLiveTranscript(`Heard: "${parsedVoice.command}"`);
-          if (!settings.continuousListening) {
-            stopMicCapture();
-          }
-          void handleSubmitCommand(parsedVoice.command, { fromVoice: true });
-        }
+        void processRecognizedVoiceTranscript(finalText, 'web');
       }
     };
 
     rec.onerror = (ev) => {
+      micStartLockRef.current = false;
       if (
         ev.error === 'network' ||
         ev.error === 'service-not-allowed' ||
@@ -1508,10 +1637,12 @@ export default function App() {
       }
       const classified = classifyMicrophoneError(new Error(ev.error));
       setErrorBanner(classified.message);
+      setVoiceState('error');
       stopMicCapture();
     };
 
     rec.onend = () => {
+      micStartLockRef.current = false;
       if (!settings.continuousListening) {
         stopMicCapture();
       }
@@ -1519,23 +1650,21 @@ export default function App() {
 
     try {
       recognitionRef.current = rec;
-      setIsListening(true);
-      setVoiceState('listening');
-      setLiveTranscript(`Listening (${settings.language}) — speak your command...`);
+      setLiveTranscript(`Initializing microphone (${settings.language})...`);
       rec.start();
     } catch {
+      micStartLockRef.current = false;
       stopMicCapture();
       await startWavVoiceCapture('speech');
     }
   }, [
     finishWavVoiceCapture,
-    handleSubmitCommand,
     interruptAssistant,
     isListening,
     isRecordingAudio,
+    processRecognizedVoiceTranscript,
     settings.continuousListening,
     settings.language,
-    settings.wakeWord,
     startWavVoiceCapture,
     stopMicCapture,
     stopSpeaking,
@@ -1560,17 +1689,7 @@ export default function App() {
       onRecognizedText: (text: string) => {
         setIsListening(false);
         setAudioLevel(0);
-        if (isInterruptionCommand(text)) {
-          abortRef.current?.abort();
-          stopSpeaking();
-          setLiveTranscript('Stopped speaking.');
-          return;
-        }
-        const parsedVoice = extractVoiceCommand(text, settings.wakeWord, false);
-        if (parsedVoice.matched && parsedVoice.command) {
-          setLiveTranscript(`Heard: "${parsedVoice.command}"`);
-          void handleSubmitCommand(parsedVoice.command, { fromVoice: true });
-        }
+        void processRecognizedVoiceTranscript(text, 'android');
       },
       onListeningState: (active: boolean, status?: string) => {
         setIsListening(active);
@@ -1581,6 +1700,7 @@ export default function App() {
       onSpeechState: (speaking: boolean) => {
         speechActiveRef.current = speaking;
         if (!speaking) {
+          speechEndedAtRef.current = Date.now();
           setTimeout(() => pumpLocalSpeechQueue(), 85);
         }
       },
@@ -1588,7 +1708,7 @@ export default function App() {
     return () => {
       delete window.__fridayAndroidEvents;
     };
-  }, [handleSubmitCommand, pumpLocalSpeechQueue, settings.wakeWord, stopSpeaking]);
+  }, [processRecognizedVoiceTranscript, pumpLocalSpeechQueue, stopSpeaking]);
 
   const updateSettings = useCallback(
     async (patch: Partial<AssistantSettings>) => {
@@ -2299,7 +2419,6 @@ export default function App() {
               animationQuality={settings.animationQuality}
               activeAgents={activeAgents}
               hologram={settings.hologram}
-              messages={messages}
               wakeWord={settings.wakeWord}
               wakeWordEnabled={settings.wakeWordEnabled}
               autoSpeakReplies={settings.autoSpeakReplies}
@@ -2319,7 +2438,6 @@ export default function App() {
               temperatureUnit={(settings.temperatureUnit || 'celsius') as TemperatureUnit}
               onSelectSection={setActiveSection}
               onSubmitCommand={handleSubmitCommand}
-              onConfirmAction={handleConfirmAction}
               onToggleListening={toggleListening}
               onToggleRecordAudio={toggleRecordAudio}
               onToggleWakeWord={() =>
@@ -2328,7 +2446,6 @@ export default function App() {
               onUpdateHologram={handleUpdateHologram}
               onLaunchApp={handleLaunchApp}
               onToggleEvent={handleToggleEvent}
-              onSpeakText={speakText}
               onStopSpeaking={stopSpeaking}
               onOpenWeatherDetails={() => setWeatherModalOpen(true)}
               onCheckApiConnection={() => checkApiConnection(true)}
@@ -2504,9 +2621,7 @@ export default function App() {
       <BottomQuickActions
         onSelectSection={setActiveSection}
         onRunQuickCommand={(cmd) => {
-          if (activeSection !== 'command-center' && activeSection !== 'ai-chat') {
-            setActiveSection('command-center');
-          }
+          setActiveSection('ai-chat');
           handleSubmitCommand(cmd);
         }}
       />
